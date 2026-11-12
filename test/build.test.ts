@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { build } from "../scripts/build.mjs";
 import { SizeBudgetError } from "../scripts/size-gate.mjs";
 
+// esbuild keeps the "use strict" directive of strict TypeScript ahead of the IIFE.
+const IIFE = /^("use strict";)?\(\(\)=>\{[\s\S]*\}\)\(\);\s*$/;
+
 describe("build", () => {
   let dir: string;
 
@@ -23,7 +26,7 @@ describe("build", () => {
 
     const code = readFileSync(coreFile, "utf8");
     expect(coreFile).toBe(join(outdir, "a.js"));
-    expect(code.trimStart().startsWith("(()=>{")).toBe(true);
+    expect(code).toMatch(IIFE);
     expect(code).not.toMatch(/\bimport\s*[{(*"']|\bexport\s*[{*]|\brequire\(/);
     expect(coreGzipBytes).toBeLessThanOrEqual(15 * 1024);
   });
@@ -49,7 +52,7 @@ describe("build", () => {
 
     expect(adapterFiles).toEqual([join(outdir, "adapters", "example-cmp.js")]);
     const adapter = readFileSync(adapterFiles[0]!, "utf8");
-    expect(adapter.trimStart().startsWith("(()=>{")).toBe(true);
+    expect(adapter).toMatch(IIFE);
     expect(readFileSync(coreFile, "utf8")).not.toContain("example-cmp adapter");
   });
 
