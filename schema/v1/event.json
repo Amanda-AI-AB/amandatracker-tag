@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/event.json",
+  "title": "WireEvent",
+  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tag_version",
+    "site_id",
+    "event_id",
+    "type",
+    "client_ts",
+    "url",
+    "visitor_id",
+    "session_id",
+    "consent"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "The wire schema's major version: this file's.",
+      "const": 1
+    },
+    "tag_version": {
+      "description": "The semver of the tag build that sent the event.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+    },
+    "site_id": {
+      "$ref": "#/$defs/SiteId"
+    },
+    "event_id": {
+      "description": "Minted by the tag for each event; with site_id, the key that makes redelivery idempotent.",
+      "$ref": "#/$defs/Uuidv7"
+    },
+    "type": {
+      "$ref": "#/$defs/EventType"
+    },
+    "client_ts": {
+      "description": "When the event happened, by the browser's clock: Unix epoch milliseconds.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "url": {
+      "description": "The page's URL.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "referrer": {
+      "description": "The document's referrer, when it has one.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "page_title": {
+      "description": "The document's title, when it has one.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "language": {
+      "description": "The browser's language: a BCP 47 tag.",
+      "type": "string",
+      "maxLength": 35,
+      "pattern": "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$"
+    },
+    "visitor_id": {
+      "description": "The first-party visitor id.",
+      "$ref": "#/$defs/Uuidv7"
+    },
+    "session_id": {
+      "description": "The first-party session id.",
+      "$ref": "#/$defs/Uuidv7"
+    },
+    "consent": {
+      "$ref": "#/$defs/Consent"
+    },
+    "props": {
+      "description": "The event's own properties. Open for now; vetted shapes per event type come later.",
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "Uuidv7": {
+      "description": "A UUID, version 7, in lower-case hex.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "SiteId": {
+      "description": "The site's public id, as in the tag snippet and /cfg/<SITE_PUBLIC_ID>.json.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "EventType": {
+      "description": "The event's name, such as pageview.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "ConsentState": {
+      "description": "One category's consent: granted, denied, unknown (not yet decided) or no_cmp (the site has no consent manager).",
+      "enum": ["granted", "denied", "unknown", "no_cmp"]
+    },
+    "Consent": {
+      "description": "The consent snapshot when the event was sent.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["analytics", "ads"],
+      "properties": {
+        "analytics": {
+          "$ref": "#/$defs/ConsentState"
+        },
+        "ads": {
+          "$ref": "#/$defs/ConsentState"
+        }
+      }
+    }
+  }
+}

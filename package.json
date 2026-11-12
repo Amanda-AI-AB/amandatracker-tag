@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "gen:wire": "node scripts/gen-wire.mjs",
     "size": "node scripts/size-gate.mjs dist/a.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
@@ -18,6 +19,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "ajv": "^8.20.0",
     "esbuild": "^0.25.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

@@ -16,8 +16,32 @@ Needs Node.js 20 or later and pnpm 9.
 pnpm install
 pnpm typecheck   # TypeScript, strict
 pnpm test        # Vitest
-pnpm build       # dist/a.js, dist/adapters/*.js, then the size gate
+pnpm build       # dist/a.js, dist/adapters/*.js, the size gate, then dist/schema/
+pnpm gen:wire    # src/wire/generated.ts from the wire schema
 ```
+
+## The wire schema
+
+`schema/v<N>/` holds the wire contract as JSON Schema (draft 2020-12). It is the single source of
+truth for what the tag sends and what the collector accepts:
+
+- `event.json`: the event envelope. It carries the schema and tag versions, `site_id`, a UUIDv7
+  `event_id`, `client_ts` in epoch milliseconds, the page fields, the visitor and session ids, and
+  the consent snapshot.
+- `ping.json`: the anonymous ping that declined mode `pings` sends. It has no ids, no `seq` and
+  nothing linkable across events. Its field list is frozen after counsel sign-off, so adding a
+  field is a framework amendment, never a routine release.
+- `pubsub-message.json`: what the collector publishes to Pub/Sub. It holds the client's event or
+  ping and the fields the collector derives (received time, region, country, device class). It
+  never includes the IP address.
+
+`pnpm gen:wire` generates `src/wire/generated.ts` from the newest version: types, field lists and
+length caps. The payload builder in `src/wire/payload.ts` shapes every payload by them. A test
+fails when the committed file differs from what the schema generates.
+
+A breaking change adds a new `schema/v<N+1>/` and leaves `v<N>` as it is. `pnpm build` copies
+versions N and N−1 to `dist/schema/`, with a `SHA256SUMS` file for consumers that pin a tagged
+release.
 
 ## Build
 

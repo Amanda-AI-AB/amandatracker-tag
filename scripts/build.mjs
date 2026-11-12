@@ -1,10 +1,12 @@
 // Builds the tag: the core to one IIFE (dist/a.js), and each consent-manager adapter in
 // src/adapters/ to its own IIFE (dist/adapters/<name>.js), which the core loads only when a
-// site's config names it. ES2018, minified, no runtime dependencies. Then the size gate.
+// site's config names it. ES2018, minified, no runtime dependencies. Then the size gate, and the
+// wire JSON Schema's release layout in dist/schema/.
 import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
+import { distSchema } from "./schema-dist.mjs";
 import { checkBudget, CORE_BUDGET_BYTES, SizeBudgetError } from "./size-gate.mjs";
 
 const root = resolve(fileURLToPath(import.meta.url), "../..");
@@ -63,6 +65,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const { coreFile, coreGzipBytes, adapterFiles } = await build();
     console.log(`${coreFile}: ${coreGzipBytes} / ${CORE_BUDGET_BYTES} bytes gzipped`);
     for (const file of adapterFiles) console.log(file);
+    const { versions } = distSchema();
+    console.log(`dist/schema: v${versions.join(", v")}`);
   } catch (error) {
     if (!(error instanceof SizeBudgetError)) throw error;
     console.error(`size gate failed: ${error.message}`);

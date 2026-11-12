@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/ping.json",
+  "title": "WirePing",
+  "description": "The anonymous ping a site in declined mode `pings` sends instead of an event. Cookieless: no visitor or session id, no seq, nothing linkable across events. Its field list is frozen after counsel sign-off (08 G2): adding a field is a framework amendment, never a routine release. The collector adds the server-derived fields (country, device class, server timestamp) in the Pub/Sub message.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "site_id", "type", "path"],
+  "properties": {
+    "schema_version": {
+      "description": "The wire schema's major version: this file's.",
+      "const": 1
+    },
+    "event_id": {
+      "description": "Random per ping, for idempotent storage only; it links nothing across events.",
+      "$ref": "event.json#/$defs/Uuidv7"
+    },
+    "site_id": {
+      "$ref": "event.json#/$defs/SiteId"
+    },
+    "type": {
+      "$ref": "event.json#/$defs/EventType"
+    },
+    "path": {
+      "description": "The page's URL path, PII-scrubbed: no query string, no fragment.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^/[^?#]*$"
+    },
+    "referrer_host": {
+      "description": "The referrer's hostname alone, when there is a referrer.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[A-Za-z0-9.-]+$"
+    },
+    "utm": {
+      "$ref": "#/$defs/Utm"
+    }
+  },
+  "$defs": {
+    "Utm": {
+      "description": "The landing URL's UTM parameters, those present.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "medium": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "campaign": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "term": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    }
+  }
+}

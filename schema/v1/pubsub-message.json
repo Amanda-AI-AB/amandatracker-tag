@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/pubsub-message.json",
+  "title": "PubSubMessage",
+  "description": "What the collector publishes to Pub/Sub for each accepted event or ping, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "received_at", "region", "device_class", "event"],
+  "properties": {
+    "schema_version": {
+      "description": "The wire schema's major version: this file's.",
+      "const": 1
+    },
+    "received_at": {
+      "description": "When the collector received the payload, by the server's clock: Unix epoch milliseconds.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "region": {
+      "description": "The data region that collected it, such as europe-west1.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "country": {
+      "description": "The ISO 3166-1 alpha-2 country derived from the client's IP address, when one could be; the address itself is dropped.",
+      "type": "string",
+      "pattern": "^[A-Z]{2}$"
+    },
+    "device_class": {
+      "$ref": "#/$defs/DeviceClass"
+    },
+    "event": {
+      "description": "The client's payload: an event, or an anonymous ping.",
+      "oneOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }]
+    }
+  },
+  "$defs": {
+    "DeviceClass": {
+      "description": "The coarse device class the collector derives from the user agent.",
+      "enum": ["desktop", "mobile", "tablet", "other"]
+    }
+  }
+}
