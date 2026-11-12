@@ -50,6 +50,20 @@ release.
 - Each consent-manager adapter `src/adapters/<name>.ts` builds to its own IIFE,
   `dist/adapters/<name>.js`, which the core loads only for the sites whose config names it.
 
+## The endpoint
+
+The tag fetches `cfg/<SITE_PUBLIC_ID>.json`, posts to `v1/e` and loads `adapters/<name>.js` from one
+base, `https://eu.serversider.com` by default. The script tag's `data-endpoint` attribute sets
+another (`src/core/endpoint.ts`):
+
+- a path, such as `data-endpoint="/amnda"`, is on the page's own origin: a
+  [first-party reverse proxy](docs/first-party-proxy.md);
+- a full URL must be `https:`, or the page's own origin;
+- credentials, a query or a fragment are refused.
+
+Batches go out with `credentials: "same-origin"` and `keepalive`, so that behind a proxy the
+browser stores the cookies the collector re-issues with `Set-Cookie`.
+
 ## The size budget
 
 `dist/a.js` must stay within **15 KB gzipped** (15 × 1024 bytes, gzip level 9). `pnpm build` checks
