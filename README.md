@@ -3,6 +3,11 @@
 The Amanda Tracker website tag, `a.js`: one script, first-party cookies only, consent-native.
 Licensed under Apache-2.0.
 
+## Guides
+
+- [First-party reverse proxy](docs/first-party-proxy.md): serve the tag and its collection endpoint from
+  your own site, so Safari keeps the tracker's cookies for their full lifetime.
+
 ## Development
 
 Needs Node.js 20 or later and pnpm 9.
