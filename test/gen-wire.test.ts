@@ -52,6 +52,47 @@ describe("gen-wire", () => {
     expect(out).toContain("export const SCHEMA_VERSION = 3;");
   });
 
+  it("generates field lists, caps and shapes for nested objects, each shape after those it nests", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 }, part: { $ref: "b.json#/$defs/Part" }, open: { type: "object" } },
+    });
+    schema("b.json", {
+      title: "Other",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 } },
+      $defs: {
+        Part: {
+          type: "object",
+          additionalProperties: false,
+          properties: { label: { type: "string", maxLength: 8 }, flag: { type: "boolean" } },
+        },
+      },
+    });
+
+    const out = generate(dir);
+    expect(out).toContain('export const PART_FIELDS = ["label", "flag"] as const;');
+    expect(out).toContain("export const PART_MAX_LENGTH = { label: 8 } as const;");
+    expect(out).toContain("export const PART_SHAPE = { fields: PART_FIELDS, maxLength: PART_MAX_LENGTH, nested: {} } as const;");
+    expect(out).toContain(
+      "export const THING_SHAPE = { fields: THING_FIELDS, maxLength: {}, nested: { part: PART_SHAPE } } as const;",
+    );
+    expect(out.indexOf("PART_SHAPE = ")).toBeLessThan(out.indexOf("THING_SHAPE = "));
+  });
+
+  it("refuses an object that nests itself", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 }, self: { $ref: "a.json" } },
+    });
+    expect(() => generate(dir)).toThrow("Thing nests itself");
+  });
+
   it("refuses a keyword it can't type, rather than loosen the type", () => {
     schema("a.json", {
       title: "Thing",

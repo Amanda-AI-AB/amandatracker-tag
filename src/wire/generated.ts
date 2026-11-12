@@ -21,6 +21,8 @@ export interface Consent {
   ads: ConsentState;
 }
 
+export const CONSENT_FIELDS = ["analytics", "ads"] as const;
+
 /** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. */
 export interface WireEvent {
   /** The wire schema's major version: this file's. */
@@ -65,6 +67,10 @@ export interface Utm {
   content?: string;
 }
 
+export const UTM_FIELDS = ["source", "medium", "campaign", "term", "content"] as const;
+
+export const UTM_MAX_LENGTH = { source: 256, medium: 256, campaign: 256, term: 256, content: 256 } as const;
+
 /** The anonymous ping a site in declined mode `pings` sends instead of an event. Cookieless: no visitor or session id, no seq, nothing linkable across events. Its field list is frozen after counsel sign-off (08 G2): adding a field is a framework amendment, never a routine release. The collector adds the server-derived fields (country, device class, server timestamp) in the Pub/Sub message. */
 export interface WirePing {
   /** The wire schema's major version: this file's. */
@@ -107,5 +113,17 @@ export interface PubSubMessage {
 export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "device_class", "event"] as const;
 
 export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64 } as const;
+
+// Each object's shape: its field list, its strings' caps and its nested objects' shapes.
+
+export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, maxLength: {}, nested: {} } as const;
+
+export const WIRE_EVENT_SHAPE = { fields: WIRE_EVENT_FIELDS, maxLength: WIRE_EVENT_MAX_LENGTH, nested: { consent: CONSENT_SHAPE } } as const;
+
+export const UTM_SHAPE = { fields: UTM_FIELDS, maxLength: UTM_MAX_LENGTH, nested: {} } as const;
+
+export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, maxLength: WIRE_PING_MAX_LENGTH, nested: { utm: UTM_SHAPE } } as const;
+
+export const PUB_SUB_MESSAGE_SHAPE = { fields: PUB_SUB_MESSAGE_FIELDS, maxLength: PUB_SUB_MESSAGE_MAX_LENGTH, nested: {} } as const;
 
 export const SCHEMA_VERSION = 1;

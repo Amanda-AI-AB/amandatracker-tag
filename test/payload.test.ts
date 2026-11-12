@@ -86,6 +86,39 @@ describe("buildPing", () => {
     expect(Object.keys(ping).sort()).toEqual(
       ["event_id", "path", "referrer_host", "schema_version", "site_id", "type", "utm"],
     );
+    expect(Object.keys(ping.utm!).sort()).toEqual(["campaign", "medium", "source"]);
     expect(validate(ping), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("keeps utm to its field list and caps, so no click id leaves and a long value can't void the ping", () => {
+    const input = pingInput();
+    const utm = { ...input.utm, campaign: "c".repeat(300), gclid: "abc", fbclid: "def" };
+    const ping = buildPing({ ...input, utm } as PingInput);
+    expect(ping.utm).not.toHaveProperty("gclid");
+    expect(ping.utm).not.toHaveProperty("fbclid");
+    expect(ping.utm!.campaign).toHaveLength(256);
+    expect(validate(ping), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("does not hand back the caller's utm object", () => {
+    const input = pingInput();
+    expect(buildPing(input).utm).not.toBe(input.utm);
+  });
+
+  it("leaves out utm when nothing in it is on the field list", () => {
+    const ping = buildPing({ ...pingInput(), utm: { source: "", gclid: "abc" } } as PingInput);
+    expect(ping).not.toHaveProperty("utm");
+    expect(validate(ping), JSON.stringify(validate.errors)).toBe(true);
+  });
+});
+
+describe("buildEvent nested consent", () => {
+  const validate = validator("event.json");
+
+  it("keeps consent to its field list", () => {
+    const input = eventInput();
+    const event = buildEvent({ ...input, consent: { ...input.consent, functional: "granted" } } as EventInput);
+    expect(Object.keys(event.consent).sort()).toEqual(["ads", "analytics"]);
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
   });
 });

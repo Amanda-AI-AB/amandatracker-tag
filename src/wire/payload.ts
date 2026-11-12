@@ -2,10 +2,8 @@
 // length caps (src/wire/generated.ts), so a payload carries exactly the fields the schema allows.
 import {
   SCHEMA_VERSION,
-  WIRE_EVENT_FIELDS,
-  WIRE_EVENT_MAX_LENGTH,
-  WIRE_PING_FIELDS,
-  WIRE_PING_MAX_LENGTH,
+  WIRE_EVENT_SHAPE,
+  WIRE_PING_SHAPE,
   type WireEvent,
   type WirePing,
 } from "./generated";
@@ -39,21 +37,31 @@ function randomBytes(length: number): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(length));
 }
 
+/** An object's shape, as generated: its field list, its strings' caps and its nested objects' shapes. */
+interface Shape {
+  readonly fields: readonly string[];
+  readonly maxLength: Readonly<Record<string, number>>;
+  readonly nested: Readonly<Record<string, Shape>>;
+}
+
 /**
- * Copies the listed fields that are set, drops empty strings and cuts strings to their caps.
- * Anything not in the list is left out.
+ * Copies the listed fields that are set, drops empty strings and cuts strings to their caps, and
+ * shapes nested objects the same way, leaving out one that ends up empty. Anything not in a list is
+ * left out.
  */
-function shape(
-  input: object,
-  fields: readonly string[],
-  caps: Readonly<Record<string, number>>,
-): Record<string, unknown> {
+function shape(input: object, spec: Shape): Record<string, unknown> {
   const source = input as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  for (const field of fields) {
+  for (const field of spec.fields) {
     const value = source[field];
     if (value === undefined || value === "") continue;
-    const cap = caps[field];
+    const nested = spec.nested[field];
+    if (nested !== undefined && typeof value === "object" && value !== null) {
+      const inner = shape(value, nested);
+      if (Object.keys(inner).length > 0) out[field] = inner;
+      continue;
+    }
+    const cap = spec.maxLength[field];
     out[field] = typeof value === "string" && cap !== undefined ? value.slice(0, cap) : value;
   }
   return out;
@@ -61,7 +69,7 @@ function shape(
 
 export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireEvent {
   return {
-    ...shape(input, WIRE_EVENT_FIELDS, WIRE_EVENT_MAX_LENGTH),
+    ...shape(input, WIRE_EVENT_SHAPE),
     schema_version: SCHEMA_VERSION,
     event_id: eventId,
   } as WireEvent;
@@ -70,7 +78,7 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
 /** Keeps a ping to the schema's frozen field list; scrubbing the URL to its path is the caller's. */
 export function buildPing(input: PingInput, eventId: string = uuidv7()): WirePing {
   return {
-    ...shape(input, WIRE_PING_FIELDS, WIRE_PING_MAX_LENGTH),
+    ...shape(input, WIRE_PING_SHAPE),
     schema_version: SCHEMA_VERSION,
     event_id: eventId,
   } as WirePing;
