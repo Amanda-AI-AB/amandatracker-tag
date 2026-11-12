@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { adapterUrl } from "../src/core/adapter-loader";
 import {
   BatchSizeError,
   DEFAULT_ENDPOINT,
   EndpointError,
   KEEPALIVE_BODY_LIMIT,
+  adapterUrl,
   batchRequestInit,
   bodyBytes,
   configUrl,
@@ -92,10 +92,22 @@ describe("the endpoint's URLs", () => {
   it("serves them from the collection host by default", () => {
     expect(configUrl(DEFAULT_ENDPOINT, "SITE_1")).toBe("https://eu.serversider.com/cfg/SITE_1.json");
     expect(eventsUrl(DEFAULT_ENDPOINT)).toBe("https://eu.serversider.com/v1/e");
+    expect(adapterUrl(DEFAULT_ENDPOINT, "example-cmp")).toBe("https://eu.serversider.com/adapters/example-cmp.js");
+  });
+
+  it("builds every URL from a trailing-slash data-endpoint without a double slash", () => {
+    const slashed = resolveEndpoint("/amnda/", PAGE);
+    expect(configUrl(slashed, "SITE_1")).toBe("https://shop.example.com/amnda/cfg/SITE_1.json");
+    expect(eventsUrl(slashed)).toBe("https://shop.example.com/amnda/v1/e");
+    expect(adapterUrl(slashed, "example-cmp")).toBe("https://shop.example.com/amnda/adapters/example-cmp.js");
   });
 
   it("escapes the site id in the config path", () => {
     expect(configUrl(endpoint, "a/../b")).toBe("https://shop.example.com/amnda/cfg/a%2F..%2Fb.json");
+  });
+
+  it("refuses an adapter name that could leave the adapters directory", () => {
+    expect(() => adapterUrl(DEFAULT_ENDPOINT, "../evil")).toThrow("invalid adapter name");
   });
 });
 

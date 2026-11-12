@@ -11,7 +11,8 @@ export class EndpointError extends Error {
 /**
  * Resolves a data-endpoint value against the page's origin. No value means the default collection
  * host. A relative value is a path on the page's own origin. Anything else must be https:, or the
- * page's own origin (an http: development site). The result has no trailing slash.
+ * page's own origin (an http: development site). The result has no trailing slash: configUrl,
+ * eventsUrl and adapterUrl take it as it is, and this is the one place that normalises it.
  */
 export function resolveEndpoint(value: string | null | undefined, pageOrigin: string): string {
   const raw = value == null ? "" : value.trim();
@@ -43,6 +44,16 @@ export function configUrl(endpoint: string, siteId: string): string {
 
 export function eventsUrl(endpoint: string): string {
   return `${endpoint}/v1/e`;
+}
+
+const ADAPTER_NAME = /^[a-z0-9-]+$/;
+
+/** A consent-manager adapter's own file (dist/adapters/<name>.js) beside the core. */
+export function adapterUrl(endpoint: string, name: string): string {
+  if (!ADAPTER_NAME.test(name)) {
+    throw new Error(`invalid adapter name: ${name}`);
+  }
+  return `${endpoint}/adapters/${name}.js`;
 }
 
 /**
