@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { buildEvent, buildPing, uuidv7, WirePayloadError, type EventInput, type PingInput } from "../src/wire/payload";
+import { WIRE_EVENT_SHAPE, WIRE_PING_SHAPE } from "../src/wire/generated";
+import {
+  buildEvent,
+  buildPing,
+  cutSubtags,
+  cutText,
+  OVERFLOW,
+  uuidv7,
+  WirePayloadError,
+  type EventInput,
+  type Shape,
+  type PingInput,
+} from "../src/wire/payload";
 import { EVENT, PING, validator } from "./wire-validator";
 
 const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -84,6 +96,76 @@ describe("buildEvent", () => {
     expect(event.page_title).toHaveLength(512);
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
   });
+
+  it("never cuts a surrogate pair in two, so no lone surrogate reaches the collector", () => {
+    const event = buildEvent({ ...eventInput(), page_title: `${"a".repeat(511)}😀` });
+    expect(event.page_title).toBe("a".repeat(511));
+    const whole = buildEvent({ ...eventInput(), page_title: `${"a".repeat(510)}😀b` });
+    expect(whole.page_title).toBe(`${"a".repeat(510)}😀`);
+  });
+
+  it("cuts an over-long language on its last whole subtag, so it still matches its pattern", () => {
+    const event = buildEvent({ ...eventInput(), language: "en-abcdefgh-abcdefgh-abcdefgh-abcd-ef" });
+    expect(event.language).toBe("en-abcdefgh-abcdefgh-abcdefgh-abcd");
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("leaves out a language whose first subtag alone is over the cap", () => {
+    const event = buildEvent({ ...eventInput(), language: "a".repeat(36) });
+    expect(event).not.toHaveProperty("language");
+  });
+
+  it.each(["site_id", "type", "tag_version"] as const)(
+    "throws when the identifier %s is over its cap, rather than send it as another one",
+    (field) => {
+      expect(() => buildEvent({ ...eventInput(), [field]: "x".repeat(65) })).toThrow(
+        new WirePayloadError(`event.${field}`, "is over its cap of 64 characters"),
+      );
+      expect(buildEvent({ ...eventInput(), [field]: field === "tag_version" ? `1.0.0-${"x".repeat(58)}` : "x".repeat(64) })[field]).toHaveLength(64);
+    },
+  );
+});
+
+describe("cutText", () => {
+  it("backs off one unit when the cut ends on a high surrogate", () => {
+    expect(cutText("ab😀", 3)).toBe("ab");
+    expect(cutText("ab😀", 4)).toBe("ab😀");
+    expect(cutText("😀", 0)).toBe("");
+  });
+});
+
+describe("cutSubtags", () => {
+  it.each([
+    ["en-US", 5, "en-US"],
+    ["en-US", 4, "en"],
+    ["en-abcd-ef", 9, "en-abcd"],
+    ["zh-Hant-x-abc", 11, "zh-Hant"],
+    ["abcdefgh", 7, undefined],
+  ] as const)("cuts %s to %i as %s", (tag, cap, cut) => {
+    expect(cutSubtags(tag, cap)).toBe(cut);
+  });
+});
+
+describe("OVERFLOW", () => {
+  const shapes: Record<string, Shape> = { event: WIRE_EVENT_SHAPE, ping: WIRE_PING_SHAPE };
+
+  function capped(prefix: string, spec: Shape): { at: string; required: boolean }[] {
+    return [
+      ...Object.keys(spec.maxLength).map((field) => ({ at: `${prefix}.${field}`, required: spec.required.includes(field) })),
+      ...Object.entries(spec.nested).flatMap(([field, inner]) => capped(`${prefix}.${field}`, inner)),
+    ];
+  }
+  const all = Object.entries(shapes).flatMap(([prefix, spec]) => capped(prefix, spec));
+
+  it("names only capped fields", () => {
+    for (const at of Object.keys(OVERFLOW)) expect(all.map((field) => field.at)).toContain(at);
+  });
+
+  it("can leave out only optional fields", () => {
+    for (const { at, required } of all) {
+      if (required) expect([undefined, "cut"]).toContain(OVERFLOW[at]);
+    }
+  });
 });
 
 describe("buildPing", () => {
@@ -135,6 +217,19 @@ describe("buildPing", () => {
     const ping = buildPing({ ...pingInput(), referrer_host: "" });
     expect(ping).not.toHaveProperty("referrer_host");
     expect(validate(ping), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("cuts an over-long path and leaves out an over-long referrer_host", () => {
+    const ping = buildPing({ ...pingInput(), path: `/${"p".repeat(2046)}😀`, referrer_host: `${"h".repeat(250)}.example` });
+    expect(ping.path).toBe(`/${"p".repeat(2046)}`);
+    expect(ping).not.toHaveProperty("referrer_host");
+    expect(validate(ping), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("throws when site_id is over its cap", () => {
+    expect(() => buildPing({ ...pingInput(), site_id: "s".repeat(65) })).toThrow(
+      "wire payload: ping.site_id is over its cap of 64 characters",
+    );
   });
 
   it("does not hand back the caller's utm object", () => {
