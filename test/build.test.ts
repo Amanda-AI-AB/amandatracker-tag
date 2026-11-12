@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -54,6 +54,22 @@ describe("build", () => {
     const adapter = readFileSync(adapterFiles[0]!, "utf8");
     expect(adapter).toMatch(IIFE);
     expect(readFileSync(coreFile, "utf8")).not.toContain("example-cmp adapter");
+  });
+
+  it("removes what an earlier build left in the outdir", async () => {
+    const adaptersDir = join(dir, "adapters");
+    mkdirSync(adaptersDir);
+    writeFileSync(join(adaptersDir, "bar.ts"), "console.log('bar adapter');\n");
+    const outdir = join(dir, "dist");
+    mkdirSync(join(outdir, "adapters"), { recursive: true });
+    writeFileSync(join(outdir, "adapters", "foo.js"), "console.log('stale foo adapter');\n");
+    writeFileSync(join(outdir, "stale.txt"), "stale\n");
+
+    await build({ adaptersDir, outdir });
+
+    expect(existsSync(join(outdir, "adapters", "foo.js"))).toBe(false);
+    expect(existsSync(join(outdir, "stale.txt"))).toBe(false);
+    expect(readdirSync(join(outdir, "adapters"))).toEqual(["bar.js"]);
   });
 
   it("fails on a deliberately oversized core bundle", async () => {

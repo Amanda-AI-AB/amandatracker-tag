@@ -2,7 +2,7 @@
 // src/adapters/ to its own IIFE (dist/adapters/<name>.js), which the core loads only when a
 // site's config names it. ES2018, minified, no runtime dependencies. Then the size gate, and the
 // wire JSON Schema's release layout in dist/schema/.
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -44,6 +44,9 @@ export async function build({
   outdir = join(root, "dist"),
   budgetBytes = CORE_BUDGET_BYTES,
 } = {}) {
+  // Start from an empty outdir, so that an adapter removed or renamed in src/adapters/ doesn't
+  // leave its old dist/adapters/<name>.js behind to be published.
+  rmSync(outdir, { recursive: true, force: true });
   const coreFile = join(outdir, "a.js");
   await esbuild.build({ ...common, entryPoints: [coreEntry], outfile: coreFile });
 
