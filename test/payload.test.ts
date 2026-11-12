@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEvent, buildPing, uuidv7, type EventInput, type PingInput } from "../src/wire/payload";
+import { buildEvent, buildPing, uuidv7, WirePayloadError, type EventInput, type PingInput } from "../src/wire/payload";
 import { EVENT, PING, validator } from "./wire-validator";
 
 const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -54,6 +54,30 @@ describe("buildEvent", () => {
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
   });
 
+  it.each(["url", "site_id", "type", "tag_version", "visitor_id", "session_id"] as const)(
+    "throws when the required %s is empty or missing, rather than build an event the collector drops",
+    (field) => {
+      expect(() => buildEvent({ ...eventInput(), [field]: "" })).toThrow(new WirePayloadError(`event.${field}`));
+      const missing: Partial<EventInput> = eventInput();
+      delete missing[field];
+      expect(() => buildEvent(missing as EventInput)).toThrow(WirePayloadError);
+    },
+  );
+
+  it("throws when consent is missing, or a required field in it is", () => {
+    const missing: Partial<EventInput> = eventInput();
+    delete missing.consent;
+    expect(() => buildEvent(missing as EventInput)).toThrow(new WirePayloadError("event.consent"));
+    const consent = { ads: "denied" } as EventInput["consent"];
+    expect(() => buildEvent({ ...eventInput(), consent })).toThrow(new WirePayloadError("event.consent.analytics"));
+  });
+
+  it("names the field in its error", () => {
+    expect(() => buildEvent({ ...eventInput(), site_id: "" })).toThrow(
+      "wire payload: event.site_id is required and is missing or empty",
+    );
+  });
+
   it("cuts strings to the schema's caps", () => {
     const event = buildEvent({ ...eventInput(), url: `https://a.example/${"x".repeat(5000)}`, page_title: "t".repeat(600) });
     expect(event.url).toHaveLength(2048);
@@ -97,6 +121,19 @@ describe("buildPing", () => {
     expect(ping.utm).not.toHaveProperty("gclid");
     expect(ping.utm).not.toHaveProperty("fbclid");
     expect(ping.utm!.campaign).toHaveLength(256);
+    expect(validate(ping), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it.each(["site_id", "type", "path"] as const)("throws when the required %s is empty or missing", (field) => {
+    expect(() => buildPing({ ...pingInput(), [field]: "" })).toThrow(new WirePayloadError(`ping.${field}`));
+    const missing: Partial<PingInput> = pingInput();
+    delete missing[field];
+    expect(() => buildPing(missing as PingInput)).toThrow(WirePayloadError);
+  });
+
+  it("leaves out empty optional strings", () => {
+    const ping = buildPing({ ...pingInput(), referrer_host: "" });
+    expect(ping).not.toHaveProperty("referrer_host");
     expect(validate(ping), JSON.stringify(validate.errors)).toBe(true);
   });
 

@@ -23,6 +23,8 @@ export interface Consent {
 
 export const CONSENT_FIELDS = ["analytics", "ads"] as const;
 
+export const CONSENT_REQUIRED = ["analytics", "ads"] as const;
+
 /** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. */
 export interface WireEvent {
   /** The wire schema's major version: this file's. */
@@ -54,6 +56,8 @@ export interface WireEvent {
 
 export const WIRE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "props"] as const;
 
+export const WIRE_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent"] as const;
+
 export const WIRE_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
 
 // ping.json
@@ -68,6 +72,8 @@ export interface Utm {
 }
 
 export const UTM_FIELDS = ["source", "medium", "campaign", "term", "content"] as const;
+
+export const UTM_REQUIRED = [] as const;
 
 export const UTM_MAX_LENGTH = { source: 256, medium: 256, campaign: 256, term: 256, content: 256 } as const;
 
@@ -87,6 +93,8 @@ export interface WirePing {
 }
 
 export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm"] as const;
+
+export const WIRE_PING_REQUIRED = ["schema_version", "event_id", "site_id", "type", "path"] as const;
 
 export const WIRE_PING_MAX_LENGTH = { site_id: 64, type: 64, path: 2048, referrer_host: 253 } as const;
 
@@ -112,18 +120,20 @@ export interface PubSubMessage {
 
 export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "device_class", "event"] as const;
 
+export const PUB_SUB_MESSAGE_REQUIRED = ["schema_version", "received_at", "region", "device_class", "event"] as const;
+
 export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64 } as const;
 
-// Each object's shape: its field list, its strings' caps and its nested objects' shapes.
+// Each object's shape: its field list, its required fields, its strings' caps and its nested objects' shapes.
 
-export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, maxLength: {}, nested: {} } as const;
+export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, maxLength: {}, nested: {} } as const;
 
-export const WIRE_EVENT_SHAPE = { fields: WIRE_EVENT_FIELDS, maxLength: WIRE_EVENT_MAX_LENGTH, nested: { consent: CONSENT_SHAPE } } as const;
+export const WIRE_EVENT_SHAPE = { fields: WIRE_EVENT_FIELDS, required: WIRE_EVENT_REQUIRED, maxLength: WIRE_EVENT_MAX_LENGTH, nested: { consent: CONSENT_SHAPE } } as const;
 
-export const UTM_SHAPE = { fields: UTM_FIELDS, maxLength: UTM_MAX_LENGTH, nested: {} } as const;
+export const UTM_SHAPE = { fields: UTM_FIELDS, required: UTM_REQUIRED, maxLength: UTM_MAX_LENGTH, nested: {} } as const;
 
-export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, maxLength: WIRE_PING_MAX_LENGTH, nested: { utm: UTM_SHAPE } } as const;
+export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, maxLength: WIRE_PING_MAX_LENGTH, nested: { utm: UTM_SHAPE } } as const;
 
-export const PUB_SUB_MESSAGE_SHAPE = { fields: PUB_SUB_MESSAGE_FIELDS, maxLength: PUB_SUB_MESSAGE_MAX_LENGTH, nested: {} } as const;
+export const PUB_SUB_MESSAGE_SHAPE = { fields: PUB_SUB_MESSAGE_FIELDS, required: PUB_SUB_MESSAGE_REQUIRED, maxLength: PUB_SUB_MESSAGE_MAX_LENGTH, nested: {} } as const;
 
 export const SCHEMA_VERSION = 1;

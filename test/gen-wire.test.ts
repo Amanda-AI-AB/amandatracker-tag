@@ -48,7 +48,11 @@ describe("gen-wire", () => {
     expect(out).toContain('export type Kind = "a" | "b";');
     expect(out).toContain("export interface Thing {\n  schema_version: 3;\n  name: string;\n  kind?: Kind;\n}");
     expect(out).toContain('export const THING_FIELDS = ["schema_version", "name", "kind"] as const;');
+    expect(out).toContain('export const THING_REQUIRED = ["schema_version", "name"] as const;');
     expect(out).toContain("export const THING_MAX_LENGTH = { name: 10 } as const;");
+    expect(out).toContain(
+      "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, maxLength: THING_MAX_LENGTH, nested: {} } as const;",
+    );
     expect(out).toContain("export const SCHEMA_VERSION = 3;");
   });
 
@@ -76,9 +80,12 @@ describe("gen-wire", () => {
     const out = generate(dir);
     expect(out).toContain('export const PART_FIELDS = ["label", "flag"] as const;');
     expect(out).toContain("export const PART_MAX_LENGTH = { label: 8 } as const;");
-    expect(out).toContain("export const PART_SHAPE = { fields: PART_FIELDS, maxLength: PART_MAX_LENGTH, nested: {} } as const;");
+    expect(out).toContain("export const PART_REQUIRED = [] as const;");
     expect(out).toContain(
-      "export const THING_SHAPE = { fields: THING_FIELDS, maxLength: {}, nested: { part: PART_SHAPE } } as const;",
+      "export const PART_SHAPE = { fields: PART_FIELDS, required: PART_REQUIRED, maxLength: PART_MAX_LENGTH, nested: {} } as const;",
+    );
+    expect(out).toContain(
+      "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, maxLength: {}, nested: { part: PART_SHAPE } } as const;",
     );
     expect(out.indexOf("PART_SHAPE = ")).toBeLessThan(out.indexOf("THING_SHAPE = "));
   });
@@ -101,6 +108,17 @@ describe("gen-wire", () => {
       properties: { schema_version: { const: 1 }, n: { anyOf: [{ type: "string" }] } },
     });
     expect(() => generate(dir)).toThrow("unsupported keyword anyOf");
+  });
+
+  it("refuses a required field the object doesn't list", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      required: ["schema_version", "missing"],
+      properties: { schema_version: { const: 1 } },
+    });
+    expect(() => generate(dir)).toThrow("Thing requires missing, which it doesn't list");
   });
 
   it("refuses an object that allows other properties", () => {

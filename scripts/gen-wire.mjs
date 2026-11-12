@@ -1,6 +1,6 @@
 // Generates src/wire/generated.ts from the newest wire JSON Schema in schema/v<N>/: a TypeScript
 // type for each schema and each of its $defs, and, for each object with properties (a schema's
-// top-level object or an object in $defs), its field list, its strings' length caps and a shape that
+// top-level object or an object in $defs), its field list, its required fields, its strings' length caps and a shape that
 // ties in its nested objects' shapes, which the payload builder uses. The schema is the source of
 // truth; a test fails when the committed file differs from what this generates.
 //
@@ -138,7 +138,17 @@ export function generate(versionDir) {
   function constants(file, name, node) {
     const prefix = screaming(name);
     const keys = Object.keys(node.properties);
-    const lines = ["", `export const ${prefix}_FIELDS = [${keys.map((key) => JSON.stringify(key)).join(", ")}] as const;`];
+    /** @type {string[]} */
+    const required = node.required ?? [];
+    for (const key of required) {
+      if (!keys.includes(key)) throw new Error(`${file}: ${name} requires ${key}, which it doesn't list`);
+    }
+    const lines = [
+      "",
+      `export const ${prefix}_FIELDS = [${keys.map((key) => JSON.stringify(key)).join(", ")}] as const;`,
+      "",
+      `export const ${prefix}_REQUIRED = [${required.map((key) => JSON.stringify(key)).join(", ")}] as const;`,
+    ];
     const caps = keys
       .map((key) => [key, deref(file, node.properties[key])])
       .filter(([, prop]) => prop.type === "string" && typeof prop.maxLength === "number")
@@ -176,7 +186,7 @@ export function generate(versionDir) {
   if (versions.size !== 1) throw new Error(`${versionDir}: the schemas disagree on schema_version`);
 
   // The shapes go last, each after the shapes it nests, since a schema may nest another file's object.
-  out.push("", "// Each object's shape: its field list, its strings' caps and its nested objects' shapes.");
+  out.push("", "// Each object's shape: its field list, its required fields, its strings' caps and its nested objects' shapes.");
   /** @type {Set<string>} */
   const emitted = new Set();
   /** @type {Set<string>} */
@@ -191,7 +201,7 @@ export function generate(versionDir) {
     const nested = shape.nested.map(([key, target]) => `${key}: ${screaming(target)}_SHAPE`).join(", ");
     out.push(
       "",
-      `export const ${shape.prefix}_SHAPE = { fields: ${shape.prefix}_FIELDS, maxLength: ${shape.capped ? `${shape.prefix}_MAX_LENGTH` : "{}"}, nested: {${nested ? ` ${nested} ` : ""}} } as const;`,
+      `export const ${shape.prefix}_SHAPE = { fields: ${shape.prefix}_FIELDS, required: ${shape.prefix}_REQUIRED, maxLength: ${shape.capped ? `${shape.prefix}_MAX_LENGTH` : "{}"}, nested: {${nested ? ` ${nested} ` : ""}} } as const;`,
     );
     visiting.delete(name);
     emitted.add(name);
