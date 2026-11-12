@@ -61,8 +61,9 @@ another (`src/core/endpoint.ts`):
 - a full URL must be `https:`, or the page's own origin;
 - credentials, a query or a fragment are refused.
 
-Batches go out with `credentials: "same-origin"` and `keepalive`, so that behind a proxy the
-browser stores the cookies the collector re-issues with `Set-Cookie`.
+Batches go out with `credentials: "same-origin"`, so that behind a proxy the browser stores the
+cookies the collector re-issues with `Set-Cookie`. Only the pagehide flush adds `keepalive`, and
+its bodies stay within 60 KiB together: browsers refuse keepalive bodies over 64 KiB in flight.
 
 ## The size budget
 

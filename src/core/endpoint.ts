@@ -46,13 +46,42 @@ export function eventsUrl(endpoint: string): string {
 }
 
 /**
+ * The most UTF-8 bytes of keepalive bodies in flight at once. Browsers cap the bodies of all
+ * in-flight keepalive requests of a page at 64 KiB together, and fetch rejects one over it with a
+ * TypeError before sending anything; 60 KiB leaves room for the requests' other bytes.
+ */
+export const KEEPALIVE_BODY_LIMIT = 60 * 1024;
+
+export class BatchSizeError extends Error {
+  override name = "BatchSizeError";
+}
+
+/** The size of a request body as sent: its UTF-8 bytes, not its UTF-16 length. */
+export function bodyBytes(body: string): number {
+  return new TextEncoder().encode(body).length;
+}
+
+/**
  * The fetch options for a batch to eventsUrl. credentials: "same-origin" lets the browser store
  * the Set-Cookie with which the collector, behind a first-party proxy, re-issues _amnda_id and
- * _amnda_ses (AAI-827); to the cross-origin default host no cookie is sent or stored. keepalive
- * lets a batch outlive the page. The transport (AAI-68) uses these for every fetch it sends, and
- * sends the pageview's immediate flush with fetch, never sendBeacon, so at least one batch per
- * page gets the server-set cookies whatever a browser does with a beacon's response.
+ * _amnda_ses (AAI-827); to the cross-origin default host no cookie is sent or stored. The
+ * transport (AAI-68) uses these for every fetch it sends, and sends the pageview's immediate flush
+ * with fetch, never sendBeacon, so at least one batch per page gets the server-set cookies
+ * whatever a browser does with a beacon's response.
+ *
+ * keepalive, which lets a batch outlive the page, is set only for the pagehide flush (`unload`).
+ * An ordinary batch goes without it, so that it never counts against the browser's 64 KiB
+ * keepalive quota and a large one is never refused for it. A pagehide body over
+ * KEEPALIVE_BODY_LIMIT throws BatchSizeError: the transport splits the unload flush by
+ * bodyBytes, and keeps the bodies it has in flight within KEEPALIVE_BODY_LIMIT together.
  */
-export function batchRequestInit(body: string): RequestInit {
-  return { method: "POST", body, credentials: "same-origin", keepalive: true };
+export function batchRequestInit(body: string, unload = false): RequestInit {
+  const init: RequestInit = { method: "POST", body, credentials: "same-origin" };
+  if (!unload) return init;
+  const bytes = bodyBytes(body);
+  if (bytes > KEEPALIVE_BODY_LIMIT) {
+    throw new BatchSizeError(`keepalive body is ${bytes} bytes, over ${KEEPALIVE_BODY_LIMIT}`);
+  }
+  init.keepalive = true;
+  return init;
 }

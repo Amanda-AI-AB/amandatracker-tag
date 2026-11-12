@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { adapterUrl } from "../src/core/adapter-loader";
 import {
+  BatchSizeError,
   DEFAULT_ENDPOINT,
   EndpointError,
+  KEEPALIVE_BODY_LIMIT,
   batchRequestInit,
+  bodyBytes,
   configUrl,
   endpointFromScript,
   eventsUrl,
@@ -97,12 +100,41 @@ describe("the endpoint's URLs", () => {
 });
 
 describe("batchRequestInit", () => {
-  it("posts with same-origin credentials and keepalive, so a proxied response's Set-Cookie is stored", () => {
+  it("posts with same-origin credentials, so a proxied response's Set-Cookie is stored", () => {
     expect(batchRequestInit('{"e":[]}')).toEqual({
+      method: "POST",
+      body: '{"e":[]}',
+      credentials: "same-origin",
+    });
+  });
+
+  it("leaves keepalive off an ordinary batch, so one over 64 KiB is still sent", () => {
+    const body = "x".repeat(100 * 1024);
+    const init = batchRequestInit(body);
+    expect(init.keepalive).toBeUndefined();
+    expect(init.body).toBe(body);
+  });
+
+  it("sets keepalive on the pagehide flush", () => {
+    expect(batchRequestInit('{"e":[]}', true)).toEqual({
       method: "POST",
       body: '{"e":[]}',
       credentials: "same-origin",
       keepalive: true,
     });
+  });
+
+  it("takes a pagehide body up to the limit, counted in UTF-8 bytes", () => {
+    expect(batchRequestInit("x".repeat(KEEPALIVE_BODY_LIMIT), true).keepalive).toBe(true);
+    expect(bodyBytes("é😀")).toBe(6);
+    // 3 bytes per character in UTF-8, though only one UTF-16 unit each
+    const wide = "€".repeat(Math.floor(KEEPALIVE_BODY_LIMIT / 3) + 1);
+    expect(wide.length).toBeLessThan(KEEPALIVE_BODY_LIMIT);
+    expect(() => batchRequestInit(wide, true)).toThrow(BatchSizeError);
+  });
+
+  it("refuses a pagehide body over the limit, which fetch would reject", () => {
+    expect(KEEPALIVE_BODY_LIMIT).toBeLessThan(64 * 1024);
+    expect(() => batchRequestInit("x".repeat(KEEPALIVE_BODY_LIMIT + 1), true)).toThrow(BatchSizeError);
   });
 });
