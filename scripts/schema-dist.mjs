@@ -1,0 +1,44 @@
+// Lays out the wire JSON Schema for a release: the newest version N and the one before it, N-1,
+// under dist/schema/v<N>/, with a SHA256SUMS file that consumers pinning a release (the
+// monorepo's shared/wire) check their vendored copy against.
+import { createHash } from "node:crypto";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { schemaVersions, SCHEMA_ROOT } from "./gen-wire.mjs";
+
+const root = resolve(fileURLToPath(import.meta.url), "../..");
+
+/**
+ * @param {{ schemaRoot?: string, outdir?: string }} [options]
+ * @returns {{ versions: number[], files: string[] }} the versions published and their files,
+ *   relative to outdir
+ */
+export function distSchema({ schemaRoot = SCHEMA_ROOT, outdir = join(root, "dist/schema") } = {}) {
+  const all = schemaVersions(schemaRoot);
+  if (all.length === 0) throw new Error(`no schema/v<N> directory in ${schemaRoot}`);
+  const versions = all.slice(-2);
+
+  rmSync(outdir, { recursive: true, force: true });
+  /** @type {string[]} */
+  const files = [];
+  for (const version of versions) {
+    const dir = `v${version}`;
+    mkdirSync(join(outdir, dir), { recursive: true });
+    for (const name of readdirSync(join(schemaRoot, dir)).filter((n) => n.endsWith(".json")).sort()) {
+      copyFileSync(join(schemaRoot, dir, name), join(outdir, dir, name));
+      files.push(`${dir}/${name}`);
+    }
+  }
+  const sums = files.map((file) => {
+    const digest = createHash("sha256").update(readFileSync(join(outdir, file))).digest("hex");
+    return `${digest}  ${file}\n`;
+  });
+  writeFileSync(join(outdir, "SHA256SUMS"), sums.join(""));
+  return { versions, files };
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const { versions, files } = distSchema();
+  console.log(`dist/schema: v${versions.join(", v")} (${files.length} files)`);
+}

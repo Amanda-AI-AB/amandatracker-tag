@@ -1,0 +1,27 @@
+{
+  "name": "amandatracker-tag",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Amanda Tracker website tag (a.js): one IIFE, first-party cookies only, consent-native.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "gen:wire": "node scripts/gen-wire.mjs",
+    "size": "node scripts/size-gate.mjs dist/a.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "ajv": "^8.20.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
