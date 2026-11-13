@@ -273,9 +273,13 @@ describe("wire schema v1: batch (the body of POST /v1/e)", () => {
   const validate = validator("batch.json");
   const second = { ...EVENT, event_id: "01934f6c-8d2a-7b3c-9d4e-5f6a7b8c9d0f" };
 
-  it("accepts a batch of events with seq, and without it", () => {
+  it("accepts a batch of events with seq", () => {
     expect(validate({ seq: 3, e: [EVENT, second] }), JSON.stringify(validate.errors)).toBe(true);
-    expect(validate({ e: [EVENT] }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a batch of events without seq, which the loss count would miss (AAI-950)", () => {
+    expect(validate({ e: [EVENT] })).toBe(false);
+    expect(validate({ e: [EVENT, PURCHASE] })).toBe(false);
   });
 
   it("accepts a batch of pings without seq", () => {
@@ -287,8 +291,8 @@ describe("wire schema v1: batch (the body of POST /v1/e)", () => {
   });
 
   it("rejects a batch that mixes events and pings", () => {
-    expect(validate({ e: [EVENT, PING] })).toBe(false);
     expect(validate({ seq: 2, e: [EVENT, PING] })).toBe(false);
+    expect(validate({ e: [PING, EVENT] })).toBe(false);
   });
 
   it("rejects an empty or missing e", () => {

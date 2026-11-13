@@ -23,6 +23,12 @@ describe("WireBatch", () => {
     expect(batch(linked)).toBe(false);
   });
 
+  it("refuses a batch of events without its seq, which the loss count would miss (AAI-950)", () => {
+    // @ts-expect-error an EventBatch always carries seq
+    const unsequenced: WireBatch = { e: [EVENT] };
+    expect(batch(unsequenced)).toBe(false);
+  });
+
   it("refuses an empty batch", () => {
     // @ts-expect-error a batch holds 1 to 10 items
     const empty: WireBatch = { e: [] };

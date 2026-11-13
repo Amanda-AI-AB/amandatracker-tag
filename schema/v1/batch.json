@@ -9,10 +9,10 @@
       "description": "A batch of events, sent while consent allows collection with identifiers.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["e"],
+      "required": ["seq", "e"],
       "properties": {
         "seq": {
-          "description": "The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106).",
+          "description": "The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). Every event batch carries it, so that a batch sent without it is refused rather than left out of the loss count (AAI-950).",
           "type": "integer",
           "minimum": 1
         },

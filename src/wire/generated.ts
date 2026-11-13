@@ -5,15 +5,15 @@
 
 /** A batch of events, sent while consent allows collection with identifiers. */
 export interface EventBatch {
-  /** The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). */
-  seq?: number;
+  /** The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). Every event batch carries it, so that a batch sent without it is refused rather than left out of the loss count (AAI-950). */
+  seq: number;
   /** The batch's events, 1 to 10. */
   e: [WireEvent, ...WireEvent[]];
 }
 
 export const EVENT_BATCH_FIELDS = ["seq", "e"] as const;
 
-export const EVENT_BATCH_REQUIRED = ["e"] as const;
+export const EVENT_BATCH_REQUIRED = ["seq", "e"] as const;
 
 export const EVENT_BATCH_TYPES = { seq: "integer", e: "array" } as const;
 
