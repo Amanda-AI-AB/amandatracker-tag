@@ -3,19 +3,17 @@
 // consumers (the monorepo's shared/wire) pin a release tag, take schema/v<N>/ from it, and check
 // their vendored copy against hashes they record themselves.
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { schemaVersions, SCHEMA_ROOT } from "./gen-wire.mjs";
-
-const root = resolve(fileURLToPath(import.meta.url), "../..");
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { ROOT, runMain } from "./cli.mjs";
+import { SCHEMA_ROOT, schemaFiles, schemaVersions } from "./schema-files.mjs";
 
 /**
  * @param {{ schemaRoot?: string, outdir?: string }} [options]
  * @returns {{ versions: number[], files: string[] }} the versions published and their files,
  *   relative to outdir
  */
-export function distSchema({ schemaRoot = SCHEMA_ROOT, outdir = join(root, "dist/schema") } = {}) {
+export function distSchema({ schemaRoot = SCHEMA_ROOT, outdir = join(ROOT, "dist/schema") } = {}) {
   const all = schemaVersions(schemaRoot);
   if (all.length === 0) throw new Error(`no schema/v<N> directory in ${schemaRoot}`);
   const versions = all.slice(-2);
@@ -26,7 +24,7 @@ export function distSchema({ schemaRoot = SCHEMA_ROOT, outdir = join(root, "dist
   for (const version of versions) {
     const dir = `v${version}`;
     mkdirSync(join(outdir, dir), { recursive: true });
-    for (const name of readdirSync(join(schemaRoot, dir)).filter((n) => n.endsWith(".json")).sort()) {
+    for (const name of schemaFiles(join(schemaRoot, dir))) {
       copyFileSync(join(schemaRoot, dir, name), join(outdir, dir, name));
       files.push(`${dir}/${name}`);
     }
@@ -39,7 +37,7 @@ export function distSchema({ schemaRoot = SCHEMA_ROOT, outdir = join(root, "dist
   return { versions, files };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+await runMain(import.meta.url, () => {
   const { versions, files } = distSchema();
   console.log(`dist/schema: v${versions.join(", v")} (${files.length} files)`);
-}
+});

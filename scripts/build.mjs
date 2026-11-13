@@ -8,15 +8,13 @@
 // uploads them.
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import * as esbuild from "esbuild";
 import { ADAPTER_NAME } from "../src/core/adapter-name.mjs";
+import { ROOT, runMain } from "./cli.mjs";
 import { isSemver } from "./release-version.mjs";
 import { distSchema } from "./schema-dist.mjs";
 import { checkBudget, CORE_BUDGET_BYTES, SizeBudgetError } from "./size-gate.mjs";
-
-const root = resolve(fileURLToPath(import.meta.url), "../..");
 
 export class BuildError extends Error {
   /** @param {string} message */
@@ -33,7 +31,7 @@ export class BuildError extends Error {
  * @param {string} [dir] the repo root
  * @returns {string}
  */
-export function buildVersion(dir = root) {
+export function buildVersion(dir = ROOT) {
   const releaseFile = join(dir, ".release-version");
   const version = existsSync(releaseFile)
     ? readFileSync(releaseFile, "utf8").trim()
@@ -90,9 +88,9 @@ export function adapterEntries(adaptersDir) {
  * @returns {Promise<{ coreFile: string, coreGzipBytes: number, adapterFiles: string[], version: string, adapterIntegrity: Record<string, string> }>}
  */
 export async function build({
-  coreEntry = join(root, "src/core/index.ts"),
-  adaptersDir = join(root, "src/adapters"),
-  outdir = join(root, "dist"),
+  coreEntry = join(ROOT, "src/core/index.ts"),
+  adaptersDir = join(ROOT, "src/adapters"),
+  outdir = join(ROOT, "dist"),
   budgetBytes = CORE_BUDGET_BYTES,
   version = buildVersion(),
 } = {}) {
@@ -128,20 +126,17 @@ export async function build({
   return { coreFile, coreGzipBytes, adapterFiles, version, adapterIntegrity };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  try {
+await runMain(
+  import.meta.url,
+  async () => {
     const { coreFile, coreGzipBytes, adapterFiles, version } = await build();
     console.log(`${coreFile} (${version}): ${coreGzipBytes} / ${CORE_BUDGET_BYTES} bytes gzipped`);
     for (const file of adapterFiles) console.log(file);
     const { versions } = distSchema();
     console.log(`dist/schema: v${versions.join(", v")}`);
-  } catch (error) {
-    if (error instanceof BuildError) {
-      console.error(`build failed: ${error.message}`);
-      process.exit(1);
-    }
-    if (!(error instanceof SizeBudgetError)) throw error;
-    console.error(`size gate failed: ${error.message}`);
-    process.exit(1);
-  }
-}
+  },
+  [
+    [BuildError, "build failed"],
+    [SizeBudgetError, "size gate failed"],
+  ],
+);

@@ -137,7 +137,9 @@ describe("cloudbuild/release.yaml", () => {
     git(workspace, "-c", "advice.detachedHead=false", "checkout", "--quiet", "v0.3.0");
     mkdirSync(join(workspace, "scripts"), { recursive: true });
     mkdirSync(join(workspace, "dist"), { recursive: true });
-    copyFileSync(join(root, "scripts/release-version.mjs"), join(workspace, "scripts/release-version.mjs"));
+    for (const script of ["release-version.mjs", "cli.mjs"]) {
+      copyFileSync(join(root, "scripts", script), join(workspace, "scripts", script));
+    }
     writeFileSync(join(workspace, "package.json"), JSON.stringify({ version: "0.3.0" }));
     writeFileSync(join(workspace, "dist/a.js"), BUILT);
   }

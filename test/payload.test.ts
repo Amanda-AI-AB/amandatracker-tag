@@ -24,7 +24,8 @@ import { EVENT, PING, PURCHASE, validator } from "./wire-validator";
 
 type Items = NonNullable<PurchaseEventInput["purchase"]["items"]>;
 
-const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+// The schema's UUIDv7 pattern, which every id field shares.
+const UUID7_PATTERN = new RegExp(TRACKED_EVENT_SHAPE.pattern.event_id);
 
 function eventInput(): TrackedEventInput {
   const { schema_version, event_id, ...input } = EVENT;
@@ -46,7 +47,7 @@ describe("uuidv7", () => {
   it("is a version-7 UUID with the time in its first 48 bits", () => {
     const now = 1_731_400_000_000;
     const id = uuidv7(now);
-    expect(id).toMatch(UUID7);
+    expect(id).toMatch(UUID7_PATTERN);
     expect(parseInt(id.slice(0, 8) + id.slice(9, 13), 16)).toBe(now);
   });
 
@@ -72,7 +73,7 @@ describe("pingId", () => {
     expect(hour % PING_ID_PERIOD_MS).toBe(0);
     for (const now of [hour, hour + 1, hour + 1_234_567, hour + PING_ID_PERIOD_MS - 1]) {
       const id = pingId(now);
-      expect(id).toMatch(UUID7);
+      expect(id).toMatch(UUID7_PATTERN);
       expect(time(id)).toBe(hour);
     }
     expect(time(pingId(hour + PING_ID_PERIOD_MS))).toBe(hour + PING_ID_PERIOD_MS);
@@ -105,7 +106,7 @@ describe("buildEvent", () => {
     const event = buildEvent(eventInput());
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
     expect(event.schema_version).toBe(1);
-    expect(event.event_id).toMatch(UUID7);
+    expect(event.event_id).toMatch(UUID7_PATTERN);
   });
 
   it("leaves out fields the schema doesn't list, and empty optional strings", () => {
@@ -261,7 +262,7 @@ describe("buildPing", () => {
   it("builds a valid ping", () => {
     const ping = buildPing(pingInput());
     expect(validate(ping), JSON.stringify(validate.errors)).toBe(true);
-    expect(ping.event_id).toMatch(UUID7);
+    expect(ping.event_id).toMatch(UUID7_PATTERN);
   });
 
   it("mints an event_id whose time is the start of the hour, not the browser's millisecond (AAI-929)", () => {

@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { generate, GENERATED_FILE, schemaVersions, SCHEMA_ROOT } from "../scripts/gen-wire.mjs";
+import { generate, GENERATED_FILE } from "../scripts/gen-wire.mjs";
+import { SCHEMA_ROOT, schemaVersions } from "../scripts/schema-files.mjs";
 
 describe("gen-wire", () => {
   let root: string;

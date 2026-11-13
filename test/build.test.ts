@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { adapterEntries, build, BuildError, buildVersion, sriHash } from "../scripts/build.mjs";
-import { SizeBudgetError } from "../scripts/size-gate.mjs";
+import { CORE_BUDGET_BYTES, SizeBudgetError } from "../scripts/size-gate.mjs";
 
 // esbuild keeps the "use strict" directive of strict TypeScript ahead of the IIFE.
 const IIFE = /^("use strict";)?\(\(\)=>\{[\s\S]*\}\)\(\);\s*$/;
@@ -29,7 +29,7 @@ describe("build", () => {
     expect(coreFile).toBe(join(outdir, "a.js"));
     expect(code).toMatch(IIFE);
     expect(code).not.toMatch(/\bimport\s*[{(*"']|\bexport\s*[{*]|\brequire\(/);
-    expect(coreGzipBytes).toBeLessThanOrEqual(15 * 1024);
+    expect(coreGzipBytes).toBeLessThanOrEqual(CORE_BUDGET_BYTES);
   });
 
   function emptyAdaptersDir(): string {

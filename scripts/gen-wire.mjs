@@ -16,13 +16,12 @@
 // check (a oneOf of objects, an array of scalars, an inline object) gets no shape at all, rather
 // than a partial one. Every schema's $id must be its own path in schema/v<N>/, and every
 // schema_version const N.
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { ROOT, runMain } from "./cli.mjs";
+import { loadSchemas, SCHEMA_ROOT, schemaVersions } from "./schema-files.mjs";
 
-const root = resolve(fileURLToPath(import.meta.url), "../..");
-export const SCHEMA_ROOT = join(root, "schema");
-export const GENERATED_FILE = join(root, "src/wire/generated.ts");
+export const GENERATED_FILE = join(ROOT, "src/wire/generated.ts");
 
 // Keywords that only document or constrain values, and change no TypeScript type.
 const ANNOTATIONS = new Set([
@@ -50,18 +49,6 @@ const SCALARS = new Set(["string", "number", "integer", "boolean"]);
 // The JSON types an object's property may have.
 const JSON_TYPES = new Set([...SCALARS, "object", "array"]);
 
-/**
- * @param {string} schemaRoot
- * @returns {number[]} the schema versions there, ascending
- */
-export function schemaVersions(schemaRoot = SCHEMA_ROOT) {
-  return readdirSync(schemaRoot)
-    .map((name) => /^v([1-9][0-9]*)$/.exec(name))
-    .filter((match) => match !== null)
-    .map((match) => Number(match[1]))
-    .sort((a, b) => a - b);
-}
-
 /** @param {string} name */
 function screaming(name) {
   return name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase();
@@ -76,9 +63,7 @@ export function generate(versionDir) {
   const versionMatch = /^v([1-9][0-9]*)$/.exec(dirName);
   if (!versionMatch) throw new Error(`${versionDir}: a schema directory is named v<N>`);
   const version = Number(versionMatch[1]);
-  const files = readdirSync(versionDir).filter((name) => name.endsWith(".json")).sort();
-  /** @type {Map<string, any>} */
-  const schemas = new Map(files.map((name) => [name, JSON.parse(readFileSync(join(versionDir, name), "utf8"))]));
+  const schemas = loadSchemas(versionDir);
   for (const [file, schema] of schemas) {
     // A $id left from the version a schema was copied from would have validators resolve its
     // relative $refs against that version.
@@ -507,11 +492,11 @@ export function generate(versionDir) {
   return out.join("\n");
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+await runMain(import.meta.url, () => {
   const versions = schemaVersions();
   const latest = versions[versions.length - 1];
   if (latest === undefined) throw new Error(`no schema/v<N> directory in ${SCHEMA_ROOT}`);
   mkdirSync(dirname(GENERATED_FILE), { recursive: true });
   writeFileSync(GENERATED_FILE, generate(join(SCHEMA_ROOT, `v${latest}`)));
   console.log(`${GENERATED_FILE} from schema/v${latest}`);
-}
+});

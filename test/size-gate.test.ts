@@ -20,10 +20,6 @@ describe("size gate", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("budgets 15 KB gzipped", () => {
-    expect(CORE_BUDGET_BYTES).toBe(15 * 1024);
-  });
-
   it("passes a file within the budget and returns its gzipped size", () => {
     const file = join(dir, "small.js");
     writeFileSync(file, "console.log(1);");

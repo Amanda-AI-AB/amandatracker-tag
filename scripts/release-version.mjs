@@ -6,10 +6,8 @@
 //   numeric prerelease identifier, which semver forbids with a leading zero.
 // - A prod build needs a release tag.
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const root = resolve(fileURLToPath(import.meta.url), "../..");
+import { join } from "node:path";
+import { ROOT, runMain } from "./cli.mjs";
 
 // semver.org's 2.0.0 grammar, without build metadata: a `+` has no place in an object name.
 const SEMVER =
@@ -64,9 +62,10 @@ export function releaseVersion({ env, packageVersion, tagName = "", shortSha = "
   return version;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const { version: packageVersion } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-  try {
+await runMain(
+  import.meta.url,
+  () => {
+    const { version: packageVersion } = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
     console.log(
       releaseVersion({
         env: process.env.RELEASE_ENV ?? "",
@@ -75,9 +74,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         shortSha: process.env.SHORT_SHA ?? "",
       }),
     );
-  } catch (error) {
-    if (!(error instanceof ReleaseVersionError)) throw error;
-    console.error(`release version: ${error.message}`);
-    process.exit(1);
-  }
-}
+  },
+  [[ReleaseVersionError, "release version"]],
+);
