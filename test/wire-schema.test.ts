@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EVENT, loadSchemas, PING, UUID7, validator } from "./wire-validator";
+import { EVENT, loadSchemas, PING, PURCHASE, UUID7, validator } from "./wire-validator";
 
 describe("wire schema v1: event", () => {
   const validate = validator("event.json");
@@ -48,6 +48,145 @@ describe("wire schema v1: event", () => {
 
   it("caps the URL's length", () => {
     expect(validate({ ...EVENT, url: `https://a.example/${"x".repeat(2048)}` })).toBe(false);
+  });
+});
+
+describe("wire schema v1: props (01 §4)", () => {
+  const validate = validator("event.json");
+  const props = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, i) => [`k${i}`, i]));
+
+  it("accepts strings, numbers and booleans", () => {
+    const event = { ...EVENT, props: { plan: "pro", seats: 3, price: 9.5, trial: false, note: "" } };
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it.each([
+    ["an object", { nested: { a: 1 } }],
+    ["an array", { list: [1, 2] }],
+    ["null", { gone: null }],
+  ])("rejects %s as a value", (_, value) => {
+    expect(validate({ ...EVENT, props: value })).toBe(false);
+  });
+
+  it("takes 25 keys and rejects 26", () => {
+    expect(validate({ ...EVENT, props: props(25) })).toBe(true);
+    expect(validate({ ...EVENT, props: props(26) })).toBe(false);
+  });
+
+  it("takes a string of 200 characters and rejects 201", () => {
+    expect(validate({ ...EVENT, props: { s: "x".repeat(200) } })).toBe(true);
+    expect(validate({ ...EVENT, props: { s: "x".repeat(201) } })).toBe(false);
+  });
+
+  it.each(["am_", "am_source", "am_x_y"])("rejects the reserved key %s", (key) => {
+    expect(validate({ ...EVENT, props: { [key]: "x" } })).toBe(false);
+  });
+
+  it.each(["a", "am", "amx", "AM_x", "Am_x", "x_am_", "plan", "_am_", "ämne"])("accepts the key %s", (key) => {
+    expect(validate({ ...EVENT, props: { [key]: "x" } }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects an empty key", () => {
+    expect(validate({ ...EVENT, props: { "": "x" } })).toBe(false);
+  });
+
+  it("says in its description that the 8 KB total is the collector's to enforce", () => {
+    const defs = loadSchemas()["event.json"]!.$defs as Record<string, { description: string }>;
+    expect(defs.Props!.description).toContain("8 KB");
+    expect(defs.Props!.description).toContain("AAI-65");
+  });
+});
+
+describe("wire schema v1: purchase", () => {
+  const validate = validator("event.json");
+
+  it("accepts a full purchase, and one without items", () => {
+    expect(validate(PURCHASE), JSON.stringify(validate.errors)).toBe(true);
+    const { items, ...order } = PURCHASE.purchase;
+    expect(validate({ ...PURCHASE, purchase: order }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a purchase on another type of event", () => {
+    expect(validate({ ...PURCHASE, type: "pageview" })).toBe(false);
+  });
+
+  it("rejects an event of type purchase without a purchase, which no other event may be (AAI-921)", () => {
+    const { purchase, ...rest } = PURCHASE;
+    expect(validate(rest)).toBe(false);
+    expect(validate({ ...EVENT, type: "purchase" })).toBe(false);
+  });
+
+  it.each(["p", "pu", "purchas", "purchased", "purchase_intent", "Purchase", "PURCHASE", "xpurchase", "purchase\n"])(
+    "takes %j as the type of an ordinary event",
+    (type) => {
+      expect(validate({ ...EVENT, type }), JSON.stringify(validate.errors)).toBe(true);
+    },
+  );
+
+  it("still takes a ping of type purchase, whose type stays any EventType", () => {
+    const validatePing = validator("ping.json");
+    expect(validatePing({ ...PING, type: "purchase" }), JSON.stringify(validatePing.errors)).toBe(true);
+  });
+
+  it.each(["order_id", "revenue", "currency"])("requires %s", (field) => {
+    const order: Record<string, unknown> = { ...PURCHASE.purchase };
+    delete order[field];
+    expect(validate({ ...PURCHASE, purchase: order })).toBe(false);
+  });
+
+  it.each(["sku", "qty", "price"])("requires %s on an item", (field) => {
+    const item: Record<string, unknown> = { ...PURCHASE.purchase.items[0] };
+    delete item[field];
+    expect(validate({ ...PURCHASE, purchase: { ...PURCHASE.purchase, items: [item] } })).toBe(false);
+  });
+
+  it.each([
+    ["a lower-case currency", { currency: "sek" }],
+    ["a currency that isn't three letters", { currency: "SEKR" }],
+    ["a negative revenue", { revenue: -1 }],
+    ["an empty order_id", { order_id: "" }],
+    ["a string revenue", { revenue: "249.90" }],
+    ["an empty item list", { items: [] }],
+    ["51 items", { items: Array(51).fill(PURCHASE.purchase.items[1]) }],
+    ["an item quantity of 0", { items: [{ sku: "a", qty: 0, price: 1 }] }],
+    ["a fractional quantity", { items: [{ sku: "a", qty: 1.5, price: 1 }] }],
+    ["a negative price", { items: [{ sku: "a", qty: 1, price: -1 }] }],
+    ["a field on an item the schema doesn't list", { items: [{ sku: "a", qty: 1, price: 1, color: "red" }] }],
+    ["a field the schema doesn't list", { coupon: "NOV10" }],
+  ])("rejects %s", (_, change) => {
+    expect(validate({ ...PURCHASE, purchase: { ...PURCHASE.purchase, ...change } })).toBe(false);
+  });
+
+  it("takes 50 items", () => {
+    const items = Array(50).fill(PURCHASE.purchase.items[1]);
+    expect(validate({ ...PURCHASE, purchase: { ...PURCHASE.purchase, items } }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("gives a purchase the same envelope as every other event", () => {
+    const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, unknown>; required: string[] }>;
+    const tracked = defs.TrackedEvent!;
+    const purchase = defs.PurchaseEvent!;
+    const { type: trackedType, ...trackedRest } = tracked.properties;
+    const { type: purchaseType, purchase: order, ...purchaseRest } = purchase.properties;
+    expect(purchaseRest).toEqual(trackedRest);
+    expect(purchaseType).toMatchObject({ const: "purchase" });
+    expect(purchase.required).toEqual([...tracked.required, "purchase"]);
+  });
+
+  it("names each envelope field once in $defs, so that both events only refer to it", () => {
+    const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, object> }>;
+    for (const name of ["TrackedEvent", "PurchaseEvent"]) {
+      const { type, ...envelope } = defs[name]!.properties;
+      for (const [key, prop] of Object.entries(envelope)) {
+        expect(Object.keys(prop), `${name}.${key}`).toEqual(["$ref"]);
+      }
+    }
+  });
+
+  it("rides in a batch and a Pub/Sub message", () => {
+    expect(validator("batch.json")({ seq: 1, e: [EVENT, PURCHASE] })).toBe(true);
+    const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: PURCHASE };
+    expect(validator("pubsub-message.json")(message)).toBe(true);
   });
 });
 
@@ -134,9 +273,13 @@ describe("wire schema v1: batch (the body of POST /v1/e)", () => {
   const validate = validator("batch.json");
   const second = { ...EVENT, event_id: "01934f6c-8d2a-7b3c-9d4e-5f6a7b8c9d0f" };
 
-  it("accepts a batch of events with seq, and without it", () => {
+  it("accepts a batch of events with seq", () => {
     expect(validate({ seq: 3, e: [EVENT, second] }), JSON.stringify(validate.errors)).toBe(true);
-    expect(validate({ e: [EVENT] }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a batch of events without seq, which the loss count would miss (AAI-950)", () => {
+    expect(validate({ e: [EVENT] })).toBe(false);
+    expect(validate({ e: [EVENT, PURCHASE] })).toBe(false);
   });
 
   it("accepts a batch of pings without seq", () => {
@@ -148,8 +291,8 @@ describe("wire schema v1: batch (the body of POST /v1/e)", () => {
   });
 
   it("rejects a batch that mixes events and pings", () => {
-    expect(validate({ e: [EVENT, PING] })).toBe(false);
     expect(validate({ seq: 2, e: [EVENT, PING] })).toBe(false);
+    expect(validate({ e: [PING, EVENT] })).toBe(false);
   });
 
   it("rejects an empty or missing e", () => {

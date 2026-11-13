@@ -5,27 +5,38 @@
 
 /** A batch of events, sent while consent allows collection with identifiers. */
 export interface EventBatch {
-  /** The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). */
-  seq?: number;
+  /** The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). Every event batch carries it, so that a batch sent without it is refused rather than left out of the loss count (AAI-950). */
+  seq: number;
   /** The batch's events, 1 to 10. */
-  e: WireEvent[];
+  e: [WireEvent, ...WireEvent[]];
 }
 
 export const EVENT_BATCH_FIELDS = ["seq", "e"] as const;
 
-export const EVENT_BATCH_REQUIRED = ["e"] as const;
+export const EVENT_BATCH_REQUIRED = ["seq", "e"] as const;
+
+export const EVENT_BATCH_TYPES = { seq: "integer", e: "array" } as const;
+
+export const EVENT_BATCH_MINIMUM = { seq: 1 } as const;
+
+export const EVENT_BATCH_MIN_ITEMS = { e: 1 } as const;
 
 export const EVENT_BATCH_MAX_ITEMS = { e: 10 } as const;
 
 /** A batch of anonymous pings, sent by declined mode `pings`. It carries no seq: pings are never sequence-linkable. */
 export interface PingBatch {
   /** The batch's pings, 1 to 10. */
-  e: WirePing[];
+  e: [WirePing, ...WirePing[]];
+  seq?: never;
 }
 
 export const PING_BATCH_FIELDS = ["e"] as const;
 
 export const PING_BATCH_REQUIRED = ["e"] as const;
+
+export const PING_BATCH_TYPES = { e: "array" } as const;
+
+export const PING_BATCH_MIN_ITEMS = { e: 1 } as const;
 
 export const PING_BATCH_MAX_ITEMS = { e: 10 } as const;
 
@@ -33,6 +44,109 @@ export const PING_BATCH_MAX_ITEMS = { e: 10 } as const;
 export type WireBatch = EventBatch | PingBatch;
 
 // event.json
+
+/** An event that isn't a purchase, such as a pageview or a custom event. */
+export interface TrackedEvent {
+  schema_version: SchemaVersion;
+  tag_version: TagVersion;
+  site_id: SiteId;
+  event_id: EventId;
+  type: TrackedEventType;
+  client_ts: ClientTs;
+  url: Url;
+  referrer?: Referrer;
+  page_title?: PageTitle;
+  language?: Language;
+  visitor_id: VisitorId;
+  session_id: SessionId;
+  consent: Consent;
+  props?: Props;
+  purchase?: never;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
+}
+
+export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "props"] as const;
+
+export const TRACKED_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent"] as const;
+
+export const TRACKED_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", props: "object" } as const;
+
+export const TRACKED_EVENT_VALUES = { schema_version: [1] } as const;
+
+export const TRACKED_EVENT_MINIMUM = { client_ts: 0 } as const;
+
+export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", type: "^(?:[^p]|p(?:[^u]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S])", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+
+export const TRACKED_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
+
+/** A purchase: the envelope every event carries, type purchase, and the order in purchase (01 §4). */
+export interface PurchaseEvent {
+  schema_version: SchemaVersion;
+  tag_version: TagVersion;
+  site_id: SiteId;
+  event_id: EventId;
+  /** Always purchase. */
+  type: "purchase";
+  client_ts: ClientTs;
+  url: Url;
+  referrer?: Referrer;
+  page_title?: PageTitle;
+  language?: Language;
+  visitor_id: VisitorId;
+  session_id: SessionId;
+  consent: Consent;
+  props?: Props;
+  purchase: Purchase;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
+}
+
+export const PURCHASE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "props", "purchase"] as const;
+
+export const PURCHASE_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent", "purchase"] as const;
+
+export const PURCHASE_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", props: "object", purchase: "object" } as const;
+
+export const PURCHASE_EVENT_VALUES = { schema_version: [1], type: ["purchase"] } as const;
+
+export const PURCHASE_EVENT_MINIMUM = { client_ts: 0 } as const;
+
+export const PURCHASE_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+
+export const PURCHASE_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
+
+/** The wire schema's major version: this file's. */
+export type SchemaVersion = 1;
+
+/** Minted by the tag for each event; with site_id, the key that makes redelivery idempotent. */
+export type EventId = Uuidv7;
+
+/** When the event happened, by the browser's clock: Unix epoch milliseconds. */
+export type ClientTs = number;
+
+/** The page's URL. */
+export type Url = string;
+
+/** The document's referrer, when it has one. */
+export type Referrer = string;
+
+/** The document's title, when it has one. */
+export type PageTitle = string;
+
+/** The first-party visitor id. */
+export type VisitorId = Uuidv7;
+
+/** The first-party session id. */
+export type SessionId = Uuidv7;
+
+/** The semver of the tag build that sent the event. */
+export type TagVersion = string;
+
+/** The browser's language: a BCP 47 tag. */
+export type Language = string;
 
 /** A UUID, version 7, in lower-case hex. */
 export type Uuidv7 = string;
@@ -42,6 +156,9 @@ export type SiteId = string;
 
 /** The event's name, such as pageview. */
 export type EventType = string;
+
+/** A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order. The pattern refuses exactly purchase, and has no lookahead, so that every regex engine the schema is read with takes it alike. */
+export type TrackedEventType = string;
 
 /** One category's consent: granted, denied, unknown (not yet decided) or no_cmp (the site has no consent manager). */
 export type ConsentState = "granted" | "denied" | "unknown" | "no_cmp";
@@ -56,40 +173,70 @@ export const CONSENT_FIELDS = ["analytics", "ads"] as const;
 
 export const CONSENT_REQUIRED = ["analytics", "ads"] as const;
 
-/** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. */
-export interface WireEvent {
-  /** The wire schema's major version: this file's. */
-  schema_version: 1;
-  /** The semver of the tag build that sent the event. */
-  tag_version: string;
-  site_id: SiteId;
-  /** Minted by the tag for each event; with site_id, the key that makes redelivery idempotent. */
-  event_id: Uuidv7;
-  type: EventType;
-  /** When the event happened, by the browser's clock: Unix epoch milliseconds. */
-  client_ts: number;
-  /** The page's URL. */
-  url: string;
-  /** The document's referrer, when it has one. */
-  referrer?: string;
-  /** The document's title, when it has one. */
-  page_title?: string;
-  /** The browser's language: a BCP 47 tag. */
-  language?: string;
-  /** The first-party visitor id. */
-  visitor_id: Uuidv7;
-  /** The first-party session id. */
-  session_id: Uuidv7;
-  consent: Consent;
-  /** The event's own properties. Open for now; vetted shapes per event type come later. */
-  props?: Record<string, unknown>;
+export const CONSENT_TYPES = { analytics: "string", ads: "string" } as const;
+
+export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"] } as const;
+
+/** The event's own properties (01 §4): a flat object of at most 25 keys, each value a string of at most 200 characters (03 §5), a number or a boolean. Keys starting with am_ are reserved for the tag and refused. 01 §4 also caps props at 8 KB in total, which JSON Schema can't express: the collector's payload cap is its backstop (AAI-65). */
+export type Props = Record<string, PropValue>;
+
+export const PROPS_MAP = { maxProperties: 25, keyPattern: "^(?:[^a]|a(?:[^m]|$)|am(?:[^_]|$))", values: ["string", "number", "boolean"], maxLength: 200 } as const;
+
+/** One property's value: a string of at most 200 characters, a number or a boolean. */
+export type PropValue = string | number | boolean;
+
+/** The order a purchase records, as amanda('purchase', {order_id, revenue, currency, items}) gives it (01 §4). */
+export interface Purchase {
+  /** The shop's id of the order; with site_id, the key purchases are deduplicated by (AAI-104). */
+  order_id: string;
+  /** The order's total, in currency's major unit (12.5 is 12.50). */
+  revenue: number;
+  /** The ISO 4217 code of the order's currency, in upper case. */
+  currency: string;
+  /** The order's lines, 1 to 50. */
+  items?: [PurchaseItem, ...PurchaseItem[]];
 }
 
-export const WIRE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "props"] as const;
+export const PURCHASE_FIELDS = ["order_id", "revenue", "currency", "items"] as const;
 
-export const WIRE_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent"] as const;
+export const PURCHASE_REQUIRED = ["order_id", "revenue", "currency"] as const;
 
-export const WIRE_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
+export const PURCHASE_TYPES = { order_id: "string", revenue: "number", currency: "string", items: "array" } as const;
+
+export const PURCHASE_MINIMUM = { revenue: 0 } as const;
+
+export const PURCHASE_PATTERN = { currency: "^[A-Z]{3}$" } as const;
+
+export const PURCHASE_MAX_LENGTH = { order_id: 128, currency: 3 } as const;
+
+export const PURCHASE_MIN_ITEMS = { items: 1 } as const;
+
+export const PURCHASE_MAX_ITEMS = { items: 50 } as const;
+
+/** One line of an order. */
+export interface PurchaseItem {
+  /** The product's SKU, or the shop's id of it. */
+  sku: string;
+  /** The product's name, when the shop gives one. */
+  name?: string;
+  /** How many were bought. */
+  qty: number;
+  /** The price of one, in the order's currency's major unit. */
+  price: number;
+}
+
+export const PURCHASE_ITEM_FIELDS = ["sku", "name", "qty", "price"] as const;
+
+export const PURCHASE_ITEM_REQUIRED = ["sku", "qty", "price"] as const;
+
+export const PURCHASE_ITEM_TYPES = { sku: "string", name: "string", qty: "integer", price: "number" } as const;
+
+export const PURCHASE_ITEM_MINIMUM = { qty: 1, price: 0 } as const;
+
+export const PURCHASE_ITEM_MAX_LENGTH = { sku: 128, name: 200 } as const;
+
+/** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; every other event is a TrackedEvent, which never does, and whose type is never purchase. The two are told apart by purchase: one requires it and the other doesn't list it. */
+export type WireEvent = TrackedEvent | PurchaseEvent;
 
 // ping.json
 
@@ -106,13 +253,15 @@ export const UTM_FIELDS = ["source", "medium", "campaign", "term", "content"] as
 
 export const UTM_REQUIRED = [] as const;
 
+export const UTM_TYPES = { source: "string", medium: "string", campaign: "string", term: "string", content: "string" } as const;
+
 export const UTM_MAX_LENGTH = { source: 256, medium: 256, campaign: 256, term: 256, content: 256 } as const;
 
 /** The anonymous ping a site in declined mode `pings` sends instead of an event. Cookieless: no visitor or session id, no seq, nothing linkable across events. Its field list is frozen after counsel sign-off (08 G2): adding a field is a framework amendment, never a routine release. The collector adds the server-derived fields (country, device class, server timestamp) in the Pub/Sub message. */
 export interface WirePing {
   /** The wire schema's major version: this file's. */
   schema_version: 1;
-  /** Random per ping, for idempotent storage only; it links nothing across events. */
+  /** Random per ping, for idempotent storage only; it links nothing across events. Its embedded time is the start of the client's hour (Unix milliseconds rounded down to 3 600 000), never the millisecond: a precise client time would carry the device's clock skew, which client_ts is left out to hide. */
   event_id: Uuidv7;
   site_id: SiteId;
   type: EventType;
@@ -121,11 +270,28 @@ export interface WirePing {
   /** The referrer's hostname alone, when there is a referrer. */
   referrer_host?: string;
   utm?: Utm;
+  tag_version?: never;
+  client_ts?: never;
+  url?: never;
+  referrer?: never;
+  page_title?: never;
+  language?: never;
+  visitor_id?: never;
+  session_id?: never;
+  consent?: never;
+  props?: never;
+  purchase?: never;
 }
 
 export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm"] as const;
 
 export const WIRE_PING_REQUIRED = ["schema_version", "event_id", "site_id", "type", "path"] as const;
+
+export const WIRE_PING_TYPES = { schema_version: "integer", event_id: "string", site_id: "string", type: "string", path: "string", referrer_host: "string", utm: "object" } as const;
+
+export const WIRE_PING_VALUES = { schema_version: [1] } as const;
+
+export const WIRE_PING_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", site_id: "^[A-Za-z0-9_-]+$", path: "^/[^?#]*$", referrer_host: "^[A-Za-z0-9.-]+$" } as const;
 
 export const WIRE_PING_MAX_LENGTH = { site_id: 64, type: 64, path: 2048, referrer_host: 253 } as const;
 
@@ -153,22 +319,34 @@ export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region"
 
 export const PUB_SUB_MESSAGE_REQUIRED = ["schema_version", "received_at", "region", "device_class", "event"] as const;
 
+export const PUB_SUB_MESSAGE_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", device_class: "string", event: "object" } as const;
+
+export const PUB_SUB_MESSAGE_VALUES = { schema_version: [1], device_class: ["desktop", "mobile", "tablet", "other"] } as const;
+
+export const PUB_SUB_MESSAGE_MINIMUM = { received_at: 0 } as const;
+
+export const PUB_SUB_MESSAGE_PATTERN = { region: "^[a-z0-9-]+$", country: "^[A-Z]{2}$" } as const;
+
 export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64 } as const;
 
-// Each object's shape: its field list, its required fields, its strings' caps and its nested objects' shapes.
+// Each object's shape: its field list, its required fields, its fields' types, const or enum values, minimums
+// and patterns, its strings' and arrays' caps, its arrays' item minimums, its nested objects' shapes, its arrays' item shapes and its maps' rules.
+// An object with a field no shape can check (a oneOf of objects, an array of scalars) has none.
 
-export const EVENT_BATCH_SHAPE = { fields: EVENT_BATCH_FIELDS, required: EVENT_BATCH_REQUIRED, maxLength: {}, nested: {} } as const;
+export const UTM_SHAPE = { fields: UTM_FIELDS, required: UTM_REQUIRED, types: UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: UTM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const PING_BATCH_SHAPE = { fields: PING_BATCH_FIELDS, required: PING_BATCH_REQUIRED, maxLength: {}, nested: {} } as const;
+export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, types: WIRE_PING_TYPES, values: WIRE_PING_VALUES, minimum: {}, pattern: WIRE_PING_PATTERN, maxLength: WIRE_PING_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { utm: UTM_SHAPE }, items: {}, maps: {} } as const;
 
-export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, maxLength: {}, nested: {} } as const;
+export const PING_BATCH_SHAPE = { fields: PING_BATCH_FIELDS, required: PING_BATCH_REQUIRED, types: PING_BATCH_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: {}, minItems: PING_BATCH_MIN_ITEMS, maxItems: PING_BATCH_MAX_ITEMS, nested: {}, items: { e: WIRE_PING_SHAPE }, maps: {} } as const;
 
-export const WIRE_EVENT_SHAPE = { fields: WIRE_EVENT_FIELDS, required: WIRE_EVENT_REQUIRED, maxLength: WIRE_EVENT_MAX_LENGTH, nested: { consent: CONSENT_SHAPE } } as const;
+export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, types: CONSENT_TYPES, values: CONSENT_VALUES, minimum: {}, pattern: {}, maxLength: {}, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const UTM_SHAPE = { fields: UTM_FIELDS, required: UTM_REQUIRED, maxLength: UTM_MAX_LENGTH, nested: {} } as const;
+export const TRACKED_EVENT_SHAPE = { fields: TRACKED_EVENT_FIELDS, required: TRACKED_EVENT_REQUIRED, types: TRACKED_EVENT_TYPES, values: TRACKED_EVENT_VALUES, minimum: TRACKED_EVENT_MINIMUM, pattern: TRACKED_EVENT_PATTERN, maxLength: TRACKED_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
-export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, maxLength: WIRE_PING_MAX_LENGTH, nested: { utm: UTM_SHAPE } } as const;
+export const PURCHASE_ITEM_SHAPE = { fields: PURCHASE_ITEM_FIELDS, required: PURCHASE_ITEM_REQUIRED, types: PURCHASE_ITEM_TYPES, values: {}, minimum: PURCHASE_ITEM_MINIMUM, pattern: {}, maxLength: PURCHASE_ITEM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const PUB_SUB_MESSAGE_SHAPE = { fields: PUB_SUB_MESSAGE_FIELDS, required: PUB_SUB_MESSAGE_REQUIRED, maxLength: PUB_SUB_MESSAGE_MAX_LENGTH, nested: {} } as const;
+export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQUIRED, types: PURCHASE_TYPES, values: {}, minimum: PURCHASE_MINIMUM, pattern: PURCHASE_PATTERN, maxLength: PURCHASE_MAX_LENGTH, minItems: PURCHASE_MIN_ITEMS, maxItems: PURCHASE_MAX_ITEMS, nested: {}, items: { items: PURCHASE_ITEM_SHAPE }, maps: {} } as const;
+
+export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
 export const SCHEMA_VERSION = 1;

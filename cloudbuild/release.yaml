@@ -1,11 +1,11 @@
 # Tag release (AAI-787): build and test as pull requests do, then upload the core as the immutable
-# `a.<semver>.js` to the environment's static bucket, which the collection host serves through
-# Cloud CDN (AAI-70).
+# `a.<semver>.js`, and its consent-manager adapters as the immutable `adapters/<semver>/<name>.js`
+# (AAI-932), to the environment's static bucket, which the collection host serves through Cloud CDN
+# (AAI-70).
 # - dev: the `tag-dev` trigger (AAI-59) runs it on every push to main as `cloudbuild-deployer-dev`,
-#   with `_ENV=dev`. It also promotes the build to the evergreen `a.js`, with the consent-manager
-#   adapters, and purges both from the CDN.
+#   with `_ENV=dev`. It also promotes the build to the evergreen `a.js`, and purges it from the CDN.
 # - prod: the approval-gated trigger (AAI-146) runs it on a release tag `v<semver>` as
-#   `cloudbuild-deployer-prod`, with `_ENV=prod`. It uploads the versioned file only: promotion to
+#   `cloudbuild-deployer-prod`, with `_ENV=prod`. It uploads the versioned files only: promotion to
 #   prod's `a.js` follows the canary rollout (AAI-149).
 #
 # The names come from AAI-58: the data project `amandatrk-<env>-data`, its bucket
@@ -18,10 +18,17 @@ substitutions:
 
 steps:
   # The version: package.json's on a release tag `v<semver>` (the two must agree), or
-  # `<package version>-dev.g<short sha>` for a dev build from main. It runs first, so that a prod
-  # build without a tag fails before anything else; it writes outside dist/, which the build empties.
+  # `<next patch>-dev.<commit time>.g<short sha>` for a dev build from main (AAI-954). It runs first,
+  # so that a prod build without a tag fails before anything else; it writes outside dist/, which the
+  # build empties.
+  # A dev build takes the commit's UTC time from git, so a retried build of the same commit publishes
+  # the same version, and the upload finds its own bytes. Without .git in the checkout it fails rather
+  # than fall back to the build's own time. A shallow checkout still has HEAD's time.
+  # A prod build also fails unless the tagged commit is on main (AAI-939), so that any `v<semver>` tag
+  # pushed on another branch is refused before the approval gate is all that stands in its way. The
+  # build's checkout may be shallow, so it fetches main's whole history first.
   - id: version
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: bash
     env:
       - RELEASE_ENV=${_ENV}
@@ -31,31 +38,58 @@ steps:
       - -c
       - |
         set -euo pipefail
+        if [ "${_ENV}" = "dev" ]; then
+          if ! COMMIT_TIME="$$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)"; then
+            echo "dev release: the checkout has no git history to take the commit's time from" >&2
+            exit 1
+          fi
+          export COMMIT_TIME
+        fi
         node scripts/release-version.mjs > .release-version
+        if [ "${_ENV}" = "prod" ]; then
+          MAIN="+refs/heads/main:refs/remotes/origin/main"
+          if [ "$$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --quiet --no-tags --unshallow origin "$${MAIN}"
+          else
+            git fetch --quiet --no-tags origin "$${MAIN}"
+          fi
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "release $${TAG_NAME}: commit $$(git rev-parse HEAD) is not on main; a prod release builds only from main" >&2
+            exit 1
+          fi
+        fi
         echo "releasing a.$$(cat .release-version).js to ${_ENV}"
 
   - id: install
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
-    args: [pnpm, install, --frozen-lockfile]
+    args: [pnpm, install, --frozen-lockfile, --ignore-scripts]
 
   - id: typecheck
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
     args: [pnpm, typecheck]
 
   - id: test
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
     args: [pnpm, test]
 
+  # The build reads .release-version, and bakes it into the core as the version of its adapters.
   - id: build
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
     args: [pnpm, build]
 
-  # The versioned file is immutable: --no-clobber never replaces one that exists, so a retried build
-  # leaves the first upload in place, and the promotion below copies from the bucket.
+  # The versioned files are immutable: --no-clobber never replaces one that exists, and skips it
+  # silently. So each object's hash is then compared with this build's file: a retried build finds its
+  # own bytes and goes on, but another build of the same version (a release tag moved to a fix commit,
+  # say) fails here, before the promotion below or the canary (AAI-149) can serve the old bytes.
+  # CRC32C, because every object has one; a composite object has no MD5.
+  # The build bakes the version and each adapter's SRI hash into the core, which loads only
+  # adapters/<version>/ (AAI-932), so the adapters go up first, in both environments: a core is never
+  # served before its adapters, and an adapter removed from src/adapters/ is simply absent from the
+  # next version's directory.
   - id: upload
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -64,13 +98,34 @@ steps:
       - |
         set -euo pipefail
         VERSION="$$(cat .release-version)"
-        gcloud storage cp --no-clobber \
-          --cache-control="public, max-age=31536000, immutable" \
-          --content-type="text/javascript; charset=utf-8" \
-          dist/a.js "gs://amandatrk-${_ENV}-data-static/a.$${VERSION}.js"
+        BUCKET="gs://amandatrk-${_ENV}-data-static"
+        # Uploads the file $1 as the immutable object $2, and fails unless $2 then holds its bytes.
+        upload_immutable() {
+          local FILE="$${1}" OBJECT="$${2}" BUILT STORED
+          gcloud storage cp --no-clobber \
+            --cache-control="public, max-age=31536000, immutable" \
+            --content-type="text/javascript; charset=utf-8" \
+            "$${FILE}" "$${OBJECT}"
+          BUILT="$$(gcloud storage hash "$${FILE}" --skip-md5 --format='value(crc32c_hash)')"
+          STORED="$$(gcloud storage objects describe "$${OBJECT}" --format='value(crc32c_hash)')"
+          if [ -z "$${BUILT}" ] || [ -z "$${STORED}" ]; then
+            echo "no CRC32C hash for $${FILE} (\"$${BUILT}\") or $${OBJECT} (\"$${STORED}\")" >&2
+            exit 1
+          fi
+          if [ "$${BUILT}" != "$${STORED}" ]; then
+            echo "$${OBJECT#"$${BUCKET}/"} already exists with other contents: bump the version" >&2
+            exit 1
+          fi
+        }
+        shopt -s nullglob
+        for ADAPTER in dist/adapters/*.js; do
+          upload_immutable "$${ADAPTER}" "$${BUCKET}/adapters/$${VERSION}/$${ADAPTER##*/}"
+        done
+        upload_immutable dist/a.js "$${BUCKET}/a.$${VERSION}.js"
 
-  # dev only: the evergreen a.js becomes this build, the adapters it loads are replaced, and the CDN
-  # drops its copies. The CDN caches at most 300 s anyway (AAI-70), so a failed purge heals itself.
+  # dev only: the evergreen a.js becomes this build, and the CDN drops its copy. Its adapters are
+  # already in place under adapters/<version>/. The CDN caches at most 300 s anyway (AAI-70), so a
+  # failed purge heals itself.
   - id: promote
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -88,20 +143,8 @@ steps:
           --cache-control="public, max-age=300" \
           --content-type="text/javascript; charset=utf-8" \
           "$${BUCKET}/a.$${VERSION}.js" "$${BUCKET}/a.js"
-        PATHS=(/a.js)
-        shopt -s nullglob
-        ADAPTERS=(dist/adapters/*.js)
-        if [ "$${#ADAPTERS[@]}" -gt 0 ]; then
-          gcloud storage cp \
-            --cache-control="public, max-age=300" \
-            --content-type="text/javascript; charset=utf-8" \
-            "$${ADAPTERS[@]}" "$${BUCKET}/adapters/"
-          PATHS+=("/adapters/*")
-        fi
-        for P in "$${PATHS[@]}"; do
-          gcloud compute url-maps invalidate-cdn-cache trk-collect-map --global \
-            --path="$${P}" --project="amandatrk-${_ENV}-data"
-        done
+        gcloud compute url-maps invalidate-cdn-cache trk-collect-map --global \
+          --path=/a.js --project="amandatrk-${_ENV}-data"
 
 timeout: 1200s
 options:

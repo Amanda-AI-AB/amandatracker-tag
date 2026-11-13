@@ -2,7 +2,7 @@
 // `pnpm build` runs it after every build, so any CI that builds fails on an oversized bundle.
 import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
-import { fileURLToPath } from "node:url";
+import { runMain } from "./cli.mjs";
 
 /** 15 KB, counted in KiB: 15 × 1024 bytes after gzip at level 9. */
 export const CORE_BUDGET_BYTES = 15 * 1024;
@@ -44,18 +44,16 @@ export function checkBudget(file, budgetBytes = CORE_BUDGET_BYTES) {
   return size;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const file = process.argv[2];
-  if (!file) {
-    console.error("usage: node scripts/size-gate.mjs <file>");
-    process.exit(2);
-  }
-  try {
+await runMain(
+  import.meta.url,
+  () => {
+    const file = process.argv[2];
+    if (!file) {
+      console.error("usage: node scripts/size-gate.mjs <file>");
+      process.exit(2);
+    }
     const size = checkBudget(file);
     console.log(`${file}: ${size} / ${CORE_BUDGET_BYTES} bytes gzipped`);
-  } catch (error) {
-    if (!(error instanceof SizeBudgetError)) throw error;
-    console.error(`size gate failed: ${error.message}`);
-    process.exit(1);
-  }
-}
+  },
+  [[SizeBudgetError, "size gate failed"]],
+);

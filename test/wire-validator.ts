@@ -1,17 +1,17 @@
-// Loads one version of the wire JSON Schema into Ajv, for the tests to validate payloads with.
-import { readdirSync, readFileSync } from "node:fs";
+// Loads one version of the wire JSON Schema into Ajv, for the tests to validate payloads with. The
+// default version is the one src/wire/generated.ts was generated from, which the payload builder
+// writes, and the fixtures below are payloads of it.
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import Ajv2020, { type ValidateFunction } from "ajv/dist/2020";
+import * as schemaFiles from "../scripts/schema-files.mjs";
+import { SCHEMA_VERSION } from "../src/wire/generated";
 
-export const SCHEMA_ROOT = fileURLToPath(new URL("../schema", import.meta.url));
-const BASE = "https://github.com/Amanda-AI-AB/amandatracker-tag/schema";
+/** A UUIDv7, the fixtures' event_id. */
+export const UUID7 ="01934f6c-8d2a-7b3c-9d4e-5f6a7b8c9d0e";
 
-export const UUID7 = "01934f6c-8d2a-7b3c-9d4e-5f6a7b8c9d0e";
-
-/** A valid v1 event with every field. */
+/** A valid event with every field. */
 export const EVENT = {
-  schema_version: 1,
+  schema_version: SCHEMA_VERSION,
   tag_version: "0.1.0",
   site_id: "site_123",
   event_id: UUID7,
@@ -27,9 +27,25 @@ export const EVENT = {
   props: { plan: "pro" },
 } as const;
 
-/** A valid v1 ping with every field. */
+/** A valid purchase with every field. */
+export const PURCHASE = {
+  ...EVENT,
+  type: "purchase",
+  props: { coupon: "NOV10" },
+  purchase: {
+    order_id: "1001",
+    revenue: 249.9,
+    currency: "SEK",
+    items: [
+      { sku: "TSH-RED-M", name: "T-shirt, red, M", qty: 2, price: 99.95 },
+      { sku: "CAP-01", qty: 1, price: 50 },
+    ],
+  },
+} as const;
+
+/** A valid ping with every field. */
 export const PING = {
-  schema_version: 1,
+  schema_version: SCHEMA_VERSION,
   event_id: UUID7,
   site_id: "site_123",
   type: "pageview",
@@ -40,19 +56,14 @@ export const PING = {
 
 export type SchemaFile = "batch.json" | "event.json" | "ping.json" | "pubsub-message.json";
 
-export function loadSchemas(version = 1): Record<string, Record<string, unknown>> {
-  const dir = join(SCHEMA_ROOT, `v${version}`);
-  return Object.fromEntries(
-    readdirSync(dir)
-      .filter((name) => name.endsWith(".json"))
-      .map((name) => [name, JSON.parse(readFileSync(join(dir, name), "utf8")) as Record<string, unknown>]),
-  );
+export function loadSchemas(version: number = SCHEMA_VERSION): Record<string, Record<string, unknown>> {
+  return Object.fromEntries(schemaFiles.loadSchemas(join(schemaFiles.SCHEMA_ROOT, `v${version}`)));
 }
 
-export function validator(file: SchemaFile, version = 1): ValidateFunction {
+export function validator(file: SchemaFile, version: number = SCHEMA_VERSION): ValidateFunction {
   const ajv = new Ajv2020({ strict: true, allErrors: true });
   for (const schema of Object.values(loadSchemas(version))) ajv.addSchema(schema);
-  const validate = ajv.getSchema(`${BASE}/v${version}/${file}`);
+  const validate = ajv.getSchema(`${schemaFiles.SCHEMA_BASE}/v${version}/${file}`);
   if (!validate) throw new Error(`no schema ${file} in v${version}`);
   return validate;
 }

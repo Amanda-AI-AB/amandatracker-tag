@@ -7,15 +7,20 @@ full lifetime instead of expiring after 7 days.
 This is a pattern you run on your own infrastructure. Amanda does not host it for you (see
 [Why not a hosted tracking domain?](#why-not-a-hosted-tracking-domain)).
 
-> **Availability.** The proxy works today for loading the tag, its config and sending events. The Safari
-> cookie-lifetime benefit needs two changes that are still being built: the collector setting the cookies
-> through your proxy (AAI-827), and the tag's `data-endpoint` attribute (AAI-828). This note goes away when
-> both are live.
+> **Availability: planned, not yet working.** This guide describes how the tag is designed to work behind
+> a proxy. The tag itself is still being built: its boot and config fetch (AAI-67), its transport (AAI-68)
+> and its cookies (AAI-98). The tag can already read a `data-endpoint` attribute and build its URLs from it
+> (AAI-828), but its boot doesn't use it yet (AAI-831). The collector setting the cookies through your
+> proxy is AAI-827. Until these land, a proxy set up as described here serves `a.js`, which does nothing on
+> the page yet. This note goes away when they are live.
 
 ## What it does, and why
 
-The tag stores two first-party cookies on your domain, and only when the visitor has granted analytics
-consent:
+This section, like the rest of the guide, describes the design that the tickets in the availability note
+build.
+
+The tag is to store two first-party cookies on your domain (AAI-98), and only when the visitor has granted
+analytics consent:
 
 | Cookie       | Holds                       | Lifetime            |
 | ------------ | --------------------------- | ------------------- |
@@ -31,20 +36,20 @@ site's own. Since Safari 16.4 that means a server whose IP address shares the fi
 website's IP address (the same IPv4 /16 or IPv6 /64). It does not mean a subdomain that is merely a DNS
 alias for someone else's server.
 
-With the proxy in place:
+With the proxy in place, once those tickets land:
 
 1. The page loads `a.js` from `https://www.example.com/amnda/a.js`, a path on your own site.
-2. The tag sends events to `https://www.example.com/amnda/v1/e`.
+2. The tag sends events to `https://www.example.com/amnda/v1/e` (AAI-68, AAI-831).
 3. Your CDN or web server forwards those requests to Amanda's collector.
 4. When the visitor has granted analytics consent, the collector's response re-issues `_amnda_id` and
-   `_amnda_ses` with `Set-Cookie`.
+   `_amnda_ses` with `Set-Cookie` (AAI-827).
 5. The browser receives that response from your own site's servers, so Safari keeps the cookie for its
    full lifetime.
 
 **Consent is unchanged.**
-- No cookie is set, by the tag or through the proxy, unless analytics consent is granted.
-- When consent is withdrawn, the tag deletes both cookies straight away. The collector never marks them
-  `HttpOnly`, so the tag can always remove them.
+- No cookie is to be set, by the tag or through the proxy, unless analytics consent is granted.
+- When consent is withdrawn, the tag is to delete both cookies straight away (AAI-98). The collector never
+  marks them `HttpOnly`, so the tag can always remove them.
 - The proxy changes where requests go, not what is collected or when.
 
 ## What you need
@@ -70,19 +75,37 @@ Forward every request under the prefix to the collection host, with the prefix r
 The simplest way is to forward the whole prefix, as the examples below do. The proxy must also:
 
 - **Connect over HTTPS, with SNI and `Host: eu.serversider.com`.** The collector refuses any other host.
-- **Remove the `Cookie` header.** Your site's own cookies, such as logins and carts, must never leave your
-  infrastructure. The tag sends the IDs the collector needs in the request body.
-- **Append the visitor's IP to `X-Forwarded-For`.** Append to it rather than replacing it. Amanda uses
-  the IP in memory only, to derive country and region and to filter bots, and never stores it.
+- **Forward only these request headers:** `Accept`, `Accept-Language`, `Content-Type`, `If-Modified-Since`,
+  `If-None-Match`, `Origin` and `User-Agent`, plus the `X-Forwarded-*` headers below. Drop every other
+  one. Requests to `/amnda/` are same-origin, so the browser attaches whatever it holds for your site to
+  them. Above all:
+  - **`Cookie`.** Your site's own cookies, such as logins and carts, must never leave your
+    infrastructure. The tag sends the IDs the collector needs in the request body.
+  - **`Authorization`.** On a site behind HTTP authentication (a staging site with Basic auth, say), the
+    browser sends its credentials with every request to your site, these included.
+  - **`Referer`.** The tag asks for the page's origin alone, but a page's URL can carry personal data in
+    its query (`/reset?email=…`), and the collector never needs it: it reads your host from
+    `X-Forwarded-Host`.
+
+  An allowlist also keeps out headers you add later or that another layer of your stack adds.
+- **Append the visitor's IP to `X-Forwarded-For`.** Append to it rather than replacing it, as both
+  examples below do. The collector reads the visitor's IP from the right-most entry it trusts: the one
+  your proxy appended, just before those of Amanda's own load balancer. Entries further left came with
+  the visitor's request, and anyone can forge them. Amanda uses the IP in memory only, to derive country
+  and region and to filter bots, and never stores it.
 - **Set `X-Forwarded-Host` to your site's host** (e.g. `www.example.com`) and `X-Forwarded-Proto: https`.
   The collector sets cookies only for a host on your site's allowed-domain list in the Amanda portal, so
   add every host you proxy on to that list.
-- **Pass the response back unchanged, `Set-Cookie` included.** Some CDNs drop `Set-Cookie` or rewrite its
-  `Domain`; turn that off for this path.
+- **Pass back only the `_amnda_id` and `_amnda_ses` cookies.** Drop any other `Set-Cookie` in the
+  collector's response, and pass the rest of the response back unchanged. The response comes from your
+  own site, so a `Set-Cookie` in it could set or overwrite any cookie on your domain, your `HttpOnly`
+  login cookies included, which the tag itself can never touch. Keep the two tracker cookies as they are:
+  some CDNs drop `Set-Cookie` or rewrite its `Domain`; turn that off for this path.
 - **Never cache `/amnda/v1/*`.**
-- **Cache `a.js`, `cfg/*` and `adapters/*` for at most 5 minutes**, or simply follow the upstream
+- **Cache `a.js` and `cfg/*` for at most 5 minutes**, or simply follow the upstream
   `Cache-Control`. Site settings and the emergency kill switch reach visitors within 5 minutes, and a
-  longer cache breaks that promise.
+  longer cache breaks that promise. The versioned `a.<ver>.js` and `adapters/<ver>/*` never change,
+  and may be cached as long as upstream says.
 - **Allow `POST`** on `/amnda/v1/*`, and pass the body through unchanged.
 
 ## Install the tag from your proxy
@@ -90,11 +113,14 @@ The simplest way is to forward the whole prefix, as the examples below do. The p
 Point both the script and its endpoint at your prefix:
 
 ```html
-<script async src="/amnda/a.js" data-site="SITE_PUBLIC_ID" data-endpoint="/amnda"></script>
+<script async src="/amnda/a.js" referrerpolicy="strict-origin" data-site="SITE_PUBLIC_ID" data-endpoint="/amnda"></script>
 ```
 
-`data-endpoint` tells the tag to fetch its config and send its events through `/amnda` instead of the
-collection host. If you install through Google Tag Manager, set the template's **Endpoint** field to
+`referrerpolicy="strict-origin"` keeps the page's path and query out of the request for `a.js`, as the
+tag itself does for every request it makes.
+
+`data-endpoint` is to tell the tag to fetch its config and send its events through `/amnda` instead of
+the collection host, once its boot reads the attribute (AAI-831). If you install through Google Tag Manager, set the template's **Endpoint** field to
 `/amnda`.
 
 ## Examples
@@ -102,19 +128,87 @@ collection host. If you install through Google Tag Manager, set the template's *
 ### nginx
 
 ```nginx
+# In the http block: the njs module and the filter below that keeps only the tracker's cookies.
+js_import amnda from /etc/nginx/njs/amnda.js;
+
 location /amnda/ {
     proxy_pass https://eu.serversider.com/;          # the trailing slash strips /amnda
     proxy_ssl_server_name on;
+    proxy_ssl_verify on;                             # nginx's default is off: accept no other certificate
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    proxy_ssl_verify_depth 3;
+
+    # Forward no request header but these: never Cookie, Authorization or Referer.
+    proxy_pass_request_headers off;
     proxy_set_header Host eu.serversider.com;
-    proxy_set_header Cookie "";                      # never forward your site's cookies
+    proxy_set_header Accept $http_accept;
+    proxy_set_header Accept-Language $http_accept_language;
+    proxy_set_header Content-Type $content_type;
+    proxy_set_header If-Modified-Since $http_if_modified_since;
+    proxy_set_header If-None-Match $http_if_none_match;
+    proxy_set_header Origin $http_origin;
+    proxy_set_header User-Agent $http_user_agent;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Host $host;
     proxy_set_header X-Forwarded-Proto https;
+
+    js_header_filter amnda.keepTrackerCookies;       # pass back no Set-Cookie but _amnda_id and _amnda_ses
 }
 ```
 
-nginx passes `Set-Cookie` through by default. Don't add `proxy_cookie_domain` or `proxy_hide_header
-Set-Cookie` here. If this server has a `proxy_cache`, exclude `/amnda/v1/` from it.
+With `proxy_pass_request_headers off`, nginx sends only the headers set here (an empty one is left out),
+and still sends the request body with its own `Content-Length`.
+
+nginx cannot drop some `Set-Cookie` headers and keep others by itself, so the filter is a few lines of
+[njs](https://nginx.org/en/docs/njs/), nginx's JavaScript module (`ngx_http_js_module`; load it with
+`load_module modules/ngx_http_js_module.so;` where your distribution packages it separately). Save it as
+`/etc/nginx/njs/amnda.js`:
+
+```js
+// Pass back only the tracker's own cookies: never let the collector set another cookie on this site.
+function keepTrackerCookies(r) {
+  const cookies = r.headersOut["Set-Cookie"];
+  if (cookies === undefined) return;
+  const kept = cookies.filter((cookie) => /^(_amnda_id|_amnda_ses)=/.test(cookie));
+  if (kept.length === 0) delete r.headersOut["Set-Cookie"];
+  else r.headersOut["Set-Cookie"] = kept;
+}
+
+export default { keepTrackerCookies };
+```
+
+If you cannot load njs, write `proxy_hide_header Set-Cookie;` in place of the `js_header_filter` line. Then
+no cookie comes through the proxy: your site stays safe, but Safari keeps capping the tracker's cookies at
+7 days.
+
+**Keep `proxy_ssl_verify on`.** nginx does not check an upstream's TLS certificate unless you tell it to.
+Without it, anyone on the path between your server and the collector can present any certificate, serve a
+modified `a.js` from your own site to all of your visitors, and read every event.
+`proxy_ssl_trusted_certificate` must point at your system's CA bundle, whose path differs per distribution:
+
+| Distribution                       | CA bundle                            |
+| ---------------------------------- | ------------------------------------ |
+| Debian, Ubuntu, Alpine             | `/etc/ssl/certs/ca-certificates.crt` |
+| RHEL, CentOS, Fedora, Amazon Linux | `/etc/pki/tls/certs/ca-bundle.crt`   |
+
+nginx resolves a host name written literally in `proxy_pass` once, when it starts, and keeps using those
+addresses until it reloads. If the collector's addresses change, requests fail until then. To have nginx
+look the name up again, give it a `resolver` and put the host in a variable. With a variable, nginx no
+longer strips the prefix for you, so a `rewrite` does it:
+
+```nginx
+location /amnda/ {
+    resolver 127.0.0.53 valid=300s;                  # your own DNS resolver
+    set $amnda_upstream eu.serversider.com;
+    rewrite ^/amnda/(.*)$ /$1 break;                 # strip /amnda
+    proxy_pass https://$amnda_upstream;
+    # ...then the same proxy_ssl_*, proxy_pass_request_headers, proxy_set_header and
+    # js_header_filter lines as above
+}
+```
+
+Don't add `proxy_cookie_domain` here: the tracker's cookies must keep the `Domain` the collector gives
+them. If this server has a `proxy_cache`, exclude `/amnda/v1/` from it.
 
 If nginx sits behind another load balancer, make sure `$remote_addr` is the visitor's address
 (`set_real_ip_from` / `real_ip_header`). Otherwise the load balancer's address is forwarded instead.
@@ -127,29 +221,80 @@ Use this only when your website itself is served through Cloudflare. Route the W
 ```js
 const UPSTREAM = "https://eu.serversider.com";
 const PREFIX = "/amnda";
+// The only request headers forwarded: never Cookie, Authorization or Referer.
+const FORWARDED_HEADERS = [
+  "accept",
+  "accept-language",
+  "content-type",
+  "if-modified-since",
+  "if-none-match",
+  "origin",
+  "user-agent",
+];
+// The only cookies the collector may set on this site.
+const TRACKER_COOKIE = /^(_amnda_id|_amnda_ses)=/;
 
 export default {
   async fetch(request) {
     const url = new URL(request.url);
-    const target = new URL(url.pathname.slice(PREFIX.length) + url.search, UPSTREAM);
+    if (!url.pathname.startsWith(PREFIX + "/")) return new Response(null, { status: 404 });
 
-    const headers = new Headers(request.headers);
-    headers.delete("cookie");
-    headers.set("x-forwarded-for", request.headers.get("cf-connecting-ip"));
+    // Set the path on the upstream URL; never resolve it against UPSTREAM. A path such as
+    // /amnda//evil.example/x would otherwise be read as protocol-relative, and reach another host.
+    const target = new URL(UPSTREAM);
+    target.pathname = url.pathname.slice(PREFIX.length);
+    target.search = url.search;
+    if (target.origin !== UPSTREAM) return new Response(null, { status: 400 });
+
+    const headers = new Headers();
+    for (const name of FORWARDED_HEADERS) {
+      const value = request.headers.get(name);
+      if (value !== null) headers.set(name, value);
+    }
+    // Append the visitor's address: the collector reads the right-most entry, never the forgeable ones before it.
+    const visitor = request.headers.get("cf-connecting-ip");
+    const forwarded = request.headers.get("x-forwarded-for");
+    headers.set("x-forwarded-for", forwarded === null ? visitor : `${forwarded}, ${visitor}`);
     headers.set("x-forwarded-host", url.host);
     headers.set("x-forwarded-proto", "https");
 
-    return fetch(target, {
+    const upstream = await fetch(target, {
       method: request.method,
       headers,
       body: request.body,
       redirect: "manual",
     });
+
+    const responseHeaders = new Headers(upstream.headers);
+    responseHeaders.delete("set-cookie");
+    for (const cookie of upstream.headers.getSetCookie()) {
+      if (TRACKER_COOKIE.test(cookie)) responseHeaders.append("set-cookie", cookie);
+    }
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: responseHeaders,
+    });
   },
 };
 ```
 
-The Worker returns the collector's response as it is, `Set-Cookie` and `Cache-Control` included.
+The Worker forwards only the request headers in `FORWARDED_HEADERS`, and returns the collector's
+response as it is, `Cache-Control` included, except that it keeps no `Set-Cookie` but `_amnda_id` and
+`_amnda_ses`. It only ever forwards to `eu.serversider.com`: a path outside the prefix gets a 404, and
+any request whose target would land on another origin gets a 400.
+
+If you deployed an earlier version of this Worker that copied every request header and deleted only
+`cookie` and `referer`, replace it with the one above. That version forwarded the browser's
+`Authorization` header, and let any `Set-Cookie` from upstream through to your domain.
+
+If you deployed an earlier version of this Worker that built its target with
+`new URL(url.pathname.slice(PREFIX.length) + url.search, UPSTREAM)`, replace it with the one above. That
+version followed paths such as `/amnda//other.example/x` to other hosts, and served their responses from
+your site.
+
+If you deployed an earlier version of this Worker that set `x-forwarded-for` to `cf-connecting-ip` alone,
+replace it with the one above, which appends to the header as the guide asks.
 
 ### Other CDNs
 
@@ -158,12 +303,15 @@ Azure Front Door all can. Configure it the same way:
 
 - an origin `eu.serversider.com` over HTTPS, with the host header set to it;
 - a path rule `/amnda/*` that strips the prefix;
-- the request-header rules above;
+- the request-header allowlist above;
+- a response rule that drops every `Set-Cookie` but `_amnda_id` and `_amnda_ses`;
 - caching off for `/amnda/v1/*`, at most 5 minutes elsewhere.
 
 The proxy must run on the same CDN distribution as your website.
 
 ## Check it works
+
+Steps 2 to 6 check the full design, and cannot pass before the tickets in the availability note land.
 
 1. **The tag loads through your site:**
 
@@ -190,7 +338,8 @@ The proxy must run on the same CDN distribution as your website.
 | --------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `a.js` returns 404 or your site's error page  | The prefix isn't stripped, or the route doesn't match `/amnda/*`.                    |
 | TLS errors, or a 4xx from the collection host | The `Host` header isn't `eu.serversider.com`, or SNI is off.                         |
-| `/v1/e` works but there's no `Set-Cookie`     | Consent isn't granted, `X-Forwarded-Host` is missing or not on the allowed-domain list, or the CDN strips `Set-Cookie`. |
+| nginx logs `upstream SSL certificate verify error` | `proxy_ssl_trusted_certificate` doesn't point at your system's CA bundle.       |
+| `/v1/e` works but there's no `Set-Cookie`     | Consent isn't granted, `X-Forwarded-Host` is missing or not on the allowed-domain list, or the CDN strips `Set-Cookie`. With nginx: the njs filter isn't loaded, or `proxy_hide_header Set-Cookie` is set. |
 | Safari still shows a 7-day expiry             | The proxy isn't on the same infrastructure as your pages (different IP space), or the cookie still comes from the script only. |
 | All visitors appear to come from one place    | `X-Forwarded-For` holds your proxy's address, not the visitor's.                     |
 | Settings changes take longer than 5 minutes   | The proxy caches `a.js` or `cfg/*` for longer than 5 minutes.                        |

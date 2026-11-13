@@ -12,7 +12,7 @@
       "const": 1
     },
     "event_id": {
-      "description": "Random per ping, for idempotent storage only; it links nothing across events.",
+      "description": "Random per ping, for idempotent storage only; it links nothing across events. Its embedded time is the start of the client's hour (Unix milliseconds rounded down to 3 600 000), never the millisecond: a precise client time would carry the device's clock skew, which client_ts is left out to hide.",
       "$ref": "event.json#/$defs/Uuidv7"
     },
     "site_id": {

@@ -2,25 +2,27 @@
 # as `cloudbuild-pr`, which can't deploy anywhere: it only installs, type-checks, tests and builds.
 # `pnpm build` ends with the size gate, so a core bundle over 15 KB gzipped fails the check.
 #
-# Every step runs pnpm through corepack, at the version package.json's packageManager pins.
+# Every step runs pnpm through corepack, at the version and hash package.json's packageManager pins,
+# in the Node image pinned by digest, so that the same commit always runs the same tools (AAI-939).
+# The install runs no dependency's lifecycle scripts: esbuild finds its binary without its postinstall.
 steps:
   - id: install
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
-    args: [pnpm, install, --frozen-lockfile]
+    args: [pnpm, install, --frozen-lockfile, --ignore-scripts]
 
   - id: typecheck
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
     args: [pnpm, typecheck]
 
   - id: test
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
     args: [pnpm, test]
 
   - id: build
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
     args: [pnpm, build]
 
