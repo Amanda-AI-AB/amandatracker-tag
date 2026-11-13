@@ -160,6 +160,21 @@ function capped(value: string, cap: number, at: string, rule: string = at): stri
   }
 }
 
+const PATTERNS = new Map<string, RegExp>();
+
+/**
+ * A schema pattern compiled once and kept, so building an event doesn't recompile its patterns on
+ * the visitor's main thread. The patterns are the generated shapes' own, a fixed few.
+ */
+export function compiledPattern(pattern: string): RegExp {
+  let compiled = PATTERNS.get(pattern);
+  if (compiled === undefined) {
+    compiled = new RegExp(pattern, "u");
+    PATTERNS.set(pattern, compiled);
+  }
+  return compiled;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -173,7 +188,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function shapeMap(input: unknown, rules: MapShape, path: string): Record<string, unknown> {
   if (!isRecord(input)) throw new WirePayloadError(path, "is not a flat object");
-  const keyPattern = rules.keyPattern === undefined ? undefined : new RegExp(rules.keyPattern, "u");
+  const keyPattern = rules.keyPattern === undefined ? undefined : compiledPattern(rules.keyPattern);
   const out: Record<string, unknown> = {};
   let count = 0;
   for (const key of Object.keys(input)) {
@@ -274,7 +289,7 @@ function shapeField(value: unknown, field: string, spec: Shape, at: string, requ
       kept = cut;
     }
     const pattern = spec.pattern[field];
-    if (pattern !== undefined && !new RegExp(pattern, "u").test(kept)) {
+    if (pattern !== undefined && !compiledPattern(pattern).test(kept)) {
       throw new WirePayloadError(at, `does not match ${pattern}`);
     }
   }

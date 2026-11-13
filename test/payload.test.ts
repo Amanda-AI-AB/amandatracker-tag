@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PURCHASE_EVENT_SHAPE, TRACKED_EVENT_SHAPE, WIRE_PING_SHAPE } from "../src/wire/generated";
 import {
   buildEvent,
   buildPing,
+  compiledPattern,
   cutSubtags,
   cutText,
   OVERFLOW,
@@ -494,6 +495,27 @@ describe("buildEvent envelope values (AAI-919)", () => {
   ])("throws on %s", (_, change, at, problem) => {
     expect(() => buildEvent({ ...eventInput(), ...change } as unknown as EventInput)).toThrow(WirePayloadError);
     expect(() => buildEvent({ ...eventInput(), ...change } as unknown as EventInput)).toThrow(`wire payload: ${at} ${problem}`);
+  });
+});
+
+describe("compiledPattern (AAI-922)", () => {
+  it("compiles a pattern once and gives back the same RegExp after", () => {
+    const first = compiledPattern("^[a-z]+$");
+    expect(first.flags).toBe("u");
+    expect(compiledPattern("^[a-z]+$")).toBe(first);
+  });
+
+  it("compiles no pattern again when the next event is built", () => {
+    buildEvent(purchaseInput());
+    const spy = vi.spyOn(globalThis, "RegExp");
+    try {
+      buildEvent(purchaseInput());
+      buildEvent(eventInput());
+      buildPing(pingInput());
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
