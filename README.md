@@ -71,3 +71,18 @@ its bodies stay within 60 KiB together: browsers refuse keepalive bodies over 64
 it after every build and exits non-zero when the bundle is over, so any CI that runs the build fails
 on an oversized bundle. `pnpm size` checks an existing `dist/a.js` alone. Adapters are outside the
 core budget.
+
+## CI and releases
+
+Cloud Build runs the pipelines in `cloudbuild/`:
+
+- `pr.yaml` checks every pull request: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test`
+  and `pnpm build`, so a core over its size budget fails the check. It uploads nothing.
+- `release.yaml` runs the same checks, then uploads the core as the immutable `a.<version>.js` to the
+  environment's static bucket. `scripts/release-version.mjs` picks the version: `package.json`'s on a
+  release tag `v<version>` (the two must agree), or `<version>-dev.g<short sha>` for a build from
+  `main`.
+  - **dev** (every merge to `main`) also promotes the build to the evergreen `a.js`, uploads the
+    adapters, and purges both from the CDN.
+  - **prod** (a release tag, after approval) uploads the versioned file only; promotion to `a.js`
+    follows the canary rollout.

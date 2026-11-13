@@ -1,0 +1,112 @@
+# Tag release (AAI-787): build and test as pull requests do, then upload the core as the immutable
+# `a.<semver>.js` to the environment's static bucket, which the collection host serves through
+# Cloud CDN (AAI-70).
+# - dev: the `tag-dev` trigger (AAI-59) runs it on every push to main as `cloudbuild-deployer-dev`,
+#   with `_ENV=dev`. It also promotes the build to the evergreen `a.js`, with the consent-manager
+#   adapters, and purges both from the CDN.
+# - prod: the approval-gated trigger (AAI-146) runs it on a release tag `v<semver>` as
+#   `cloudbuild-deployer-prod`, with `_ENV=prod`. It uploads the versioned file only: promotion to
+#   prod's `a.js` follows the canary rollout (AAI-149).
+#
+# The names come from AAI-58: the data project `amandatrk-<env>-data`, its bucket
+# `amandatrk-<env>-data-static` and the URL map `trk-collect-map`. Each deployer has rights in its
+# own environment only, so a build pointed at the other one fails on permissions.
+#
+# `$$` is a literal `$` for bash: Cloud Build substitutes `${_ENV}`, `$TAG_NAME` and `$SHORT_SHA`.
+substitutions:
+  _ENV: dev
+
+steps:
+  # The version: package.json's on a release tag `v<semver>` (the two must agree), or
+  # `<package version>-dev.g<short sha>` for a dev build from main. It runs first, so that a prod
+  # build without a tag fails before anything else; it writes outside dist/, which the build empties.
+  - id: version
+    name: node:22-bookworm
+    entrypoint: bash
+    env:
+      - RELEASE_ENV=${_ENV}
+      - TAG_NAME=$TAG_NAME
+      - SHORT_SHA=$SHORT_SHA
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        node scripts/release-version.mjs > .release-version
+        echo "releasing a.$$(cat .release-version).js to ${_ENV}"
+
+  - id: install
+    name: node:22-bookworm
+    entrypoint: corepack
+    args: [pnpm, install, --frozen-lockfile]
+
+  - id: typecheck
+    name: node:22-bookworm
+    entrypoint: corepack
+    args: [pnpm, typecheck]
+
+  - id: test
+    name: node:22-bookworm
+    entrypoint: corepack
+    args: [pnpm, test]
+
+  - id: build
+    name: node:22-bookworm
+    entrypoint: corepack
+    args: [pnpm, build]
+
+  # The versioned file is immutable: --no-clobber never replaces one that exists, so a retried build
+  # leaves the first upload in place, and the promotion below copies from the bucket.
+  - id: upload
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        VERSION="$$(cat .release-version)"
+        gcloud storage cp --no-clobber \
+          --cache-control="public, max-age=31536000, immutable" \
+          --content-type="text/javascript; charset=utf-8" \
+          dist/a.js "gs://amandatrk-${_ENV}-data-static/a.$${VERSION}.js"
+
+  # dev only: the evergreen a.js becomes this build, the adapters it loads are replaced, and the CDN
+  # drops its copies. The CDN caches at most 300 s anyway (AAI-70), so a failed purge heals itself.
+  - id: promote
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if [ "${_ENV}" != "dev" ]; then
+          echo "${_ENV}: a.js is not promoted here; prod promotion follows the canary rollout (AAI-149)"
+          exit 0
+        fi
+        VERSION="$$(cat .release-version)"
+        BUCKET="gs://amandatrk-${_ENV}-data-static"
+        gcloud storage cp \
+          --cache-control="public, max-age=300" \
+          --content-type="text/javascript; charset=utf-8" \
+          "$${BUCKET}/a.$${VERSION}.js" "$${BUCKET}/a.js"
+        PATHS=(/a.js)
+        shopt -s nullglob
+        ADAPTERS=(dist/adapters/*.js)
+        if [ "$${#ADAPTERS[@]}" -gt 0 ]; then
+          gcloud storage cp \
+            --cache-control="public, max-age=300" \
+            --content-type="text/javascript; charset=utf-8" \
+            "$${ADAPTERS[@]}" "$${BUCKET}/adapters/"
+          PATHS+=("/adapters/*")
+        fi
+        for P in "$${PATHS[@]}"; do
+          gcloud compute url-maps invalidate-cdn-cache trk-collect-map --global \
+            --path="$${P}" --project="amandatrk-${_ENV}-data"
+        done
+
+timeout: 1200s
+options:
+  # Builds that run as a chosen service account must log to Cloud Logging only.
+  logging: CLOUD_LOGGING_ONLY
+  env:
+    - CI=true
+    - COREPACK_ENABLE_DOWNLOAD_PROMPT=0
