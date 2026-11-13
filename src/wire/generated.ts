@@ -247,7 +247,7 @@ export const UTM_MAX_LENGTH = { source: 256, medium: 256, campaign: 256, term: 2
 export interface WirePing {
   /** The wire schema's major version: this file's. */
   schema_version: 1;
-  /** Random per ping, for idempotent storage only; it links nothing across events. */
+  /** Random per ping, for idempotent storage only; it links nothing across events. Its embedded time is the start of the client's hour (Unix milliseconds rounded down to 3 600 000), never the millisecond: a precise client time would carry the device's clock skew, which client_ts is left out to hide. */
   event_id: Uuidv7;
   site_id: SiteId;
   type: EventType;

@@ -7,6 +7,8 @@ import {
   cutSubtags,
   cutText,
   OVERFLOW,
+  PING_ID_PERIOD_MS,
+  pingId,
   STRIP_FROM,
   stripFrom,
   UPPER_CASE,
@@ -59,6 +61,40 @@ describe("uuidv7", () => {
 
   it("refuses too few random bytes", () => {
     expect(() => uuidv7(0, new Uint8Array(9))).toThrow("10 random bytes");
+  });
+});
+
+describe("pingId", () => {
+  const time = (id: string) => parseInt(id.slice(0, 8) + id.slice(9, 13), 16);
+
+  it("rounds the time down to the hour, so the ID holds no clock skew finer than that", () => {
+    const hour = 1_731_398_400_000;
+    expect(hour % PING_ID_PERIOD_MS).toBe(0);
+    for (const now of [hour, hour + 1, hour + 1_234_567, hour + PING_ID_PERIOD_MS - 1]) {
+      const id = pingId(now);
+      expect(id).toMatch(UUID7);
+      expect(time(id)).toBe(hour);
+    }
+    expect(time(pingId(hour + PING_ID_PERIOD_MS))).toBe(hour + PING_ID_PERIOD_MS);
+  });
+
+  it("stays inside the collector's window: never after now, under an hour before (AAI-835)", () => {
+    const now = 1_731_400_000_000;
+    const ms = time(pingId(now));
+    expect(ms).toBeLessThanOrEqual(now);
+    expect(now - ms).toBeLessThan(PING_ID_PERIOD_MS);
+  });
+
+  it("keeps the UTC month: a month's first millisecond stays in it", () => {
+    const december = Date.UTC(2026, 11, 1);
+    expect(time(pingId(december))).toBe(december);
+    expect(time(pingId(december - 1))).toBe(december - PING_ID_PERIOD_MS);
+  });
+
+  it("is random beyond its time", () => {
+    const now = 1_731_400_000_000;
+    expect(pingId(now)).not.toBe(pingId(now));
+    expect(pingId(now, new Uint8Array(10))).toBe(uuidv7(Math.floor(now / PING_ID_PERIOD_MS) * PING_ID_PERIOD_MS, new Uint8Array(10)));
   });
 });
 
@@ -197,6 +233,15 @@ describe("buildPing", () => {
     const ping = buildPing(pingInput());
     expect(validate(ping), JSON.stringify(validate.errors)).toBe(true);
     expect(ping.event_id).toMatch(UUID7);
+  });
+
+  it("mints an event_id whose time is the start of the hour, not the browser's millisecond (AAI-929)", () => {
+    const before = Date.now();
+    const ping = buildPing(pingInput());
+    const after = Date.now();
+    const ms = parseInt(ping.event_id.replace(/-/g, "").slice(0, 12), 16);
+    const hour = (t: number) => Math.floor(t / PING_ID_PERIOD_MS) * PING_ID_PERIOD_MS;
+    expect([hour(before), hour(after)]).toContain(ms);
   });
 
   it("carries exactly the frozen field list, whatever it is given", () => {

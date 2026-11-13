@@ -39,6 +39,19 @@ export function uuidv7(nowMs: number = Date.now(), random: Uint8Array = randomBy
   return out;
 }
 
+/** The span a ping's event_id rounds its time down to: one hour. */
+export const PING_ID_PERIOD_MS = 3_600_000;
+
+/**
+ * A ping's event_id: a UUIDv7 whose time is the start of the hour, not the millisecond, so the ID
+ * doesn't carry the browser's clock (and its skew, a stable device fingerprint) that the ping leaves
+ * client_ts out to hide. Rounding down keeps it a valid v7 in the right UTC month, and moves its
+ * time at most an hour earlier, inside the collector's 24 h window (AAI-835).
+ */
+export function pingId(nowMs: number = Date.now(), random?: Uint8Array): string {
+  return uuidv7(Math.floor(nowMs / PING_ID_PERIOD_MS) * PING_ID_PERIOD_MS, random);
+}
+
 function randomBytes(length: number): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(length));
 }
@@ -386,9 +399,10 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
  * loses its query string and fragment (STRIP_FROM), and a referrer_host that isn't a bare hostname,
  * such as a full referrer URL, is left out (OVERFLOW's drop). Throws WirePayloadError when a
  * required field is missing or empty (a path that was only a query), or a value breaks a rule the
- * tag can't keep for it (a path that doesn't start with "/", such as a whole URL).
+ * tag can't keep for it (a path that doesn't start with "/", such as a whole URL). Its event_id's
+ * time is only the hour (pingId).
  */
-export function buildPing(input: PingInput, eventId: string = uuidv7()): WirePing {
+export function buildPing(input: PingInput, eventId: string = pingId()): WirePing {
   const ping: WirePing = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
   return shape(ping, WIRE_PING_SHAPE, "ping");
 }
