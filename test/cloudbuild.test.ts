@@ -138,12 +138,13 @@ describe("cloudbuild/release.yaml", () => {
   function release(values: { _ENV: string; TAG_NAME: string; SHORT_SHA: string }): {
     ran: string[];
     failed?: string;
+    status?: number;
     stderr?: string;
     calls: string[][];
   } {
     const config = load("release.yaml");
     const ran: string[] = [];
-    let failure: { step: string; stderr: string } | undefined;
+    let failure: { step: string; status: number; stderr: string } | undefined;
     for (const step of config.steps.filter((s) => s.entrypoint === "bash")) {
       const [flag, script] = step.args ?? [];
       expect(flag).toBe("-c");
@@ -159,7 +160,10 @@ describe("cloudbuild/release.yaml", () => {
       try {
         execFileSync("bash", ["-c", substitute(script!, values)], { cwd: workspace, env, stdio: "pipe" });
       } catch (error) {
-        failure = { step: step.id, stderr: String((error as { stderr?: Buffer }).stderr) };
+        // Only a step that ran and exited non-zero is a failed step; bash not starting is the test's own error.
+        const { status, stderr } = error as { status?: number | null; stderr?: Buffer };
+        if (typeof status !== "number" || stderr === undefined) throw error;
+        failure = { step: step.id, status, stderr: stderr.toString("utf8") };
         break;
       }
       ran.push(step.id);
@@ -168,7 +172,9 @@ describe("cloudbuild/release.yaml", () => {
       .split("\x1e")
       .filter((call) => call !== "")
       .map((call) => call.split("\x1f").slice(0, -1));
-    return failure === undefined ? { ran, calls } : { ran, failed: failure.step, stderr: failure.stderr, calls };
+    return failure === undefined
+      ? { ran, calls }
+      : { ran, failed: failure.step, status: failure.status, stderr: failure.stderr, calls };
   }
 
   const JS = "--content-type=text/javascript; charset=utf-8";
@@ -308,17 +314,26 @@ describe("cloudbuild/release.yaml", () => {
   });
 
   it("prod without a release tag fails before anything is uploaded", () => {
-    const { ran, failed, calls } = release({ _ENV: "prod", TAG_NAME: "", SHORT_SHA: "abc1234" });
+    const { ran, failed, status, stderr, calls } = release({ _ENV: "prod", TAG_NAME: "", SHORT_SHA: "abc1234" });
 
     expect(ran).toEqual([]);
     expect(failed).toBe("version");
+    // The script's own refusal, and not a crash of it or a missing `node`, both of which also fail the step.
+    expect(status).toBe(1);
+    expect(stderr).toBe(
+      "release version: a prod release builds only from a release tag v<semver>, and this build has none\n",
+    );
     expect(calls).toEqual([]);
   });
 
   it("a tag that disagrees with package.json fails before anything is uploaded", () => {
-    const { failed, calls } = release({ _ENV: "prod", TAG_NAME: "v0.3.1", SHORT_SHA: "abc1234" });
+    const { failed, status, stderr, calls } = release({ _ENV: "prod", TAG_NAME: "v0.3.1", SHORT_SHA: "abc1234" });
 
     expect(failed).toBe("version");
+    expect(status).toBe(1);
+    expect(stderr).toBe(
+      'release version: release tag "v0.3.1" does not match package.json version 0.3.0: expected v0.3.0\n',
+    );
     expect(calls).toEqual([]);
   });
 });
