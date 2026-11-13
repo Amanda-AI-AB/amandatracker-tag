@@ -79,7 +79,11 @@ cookies the collector re-issues with `Set-Cookie`. Ping batches and the config f
 `credentials: "omit"`: they never carry the site's cookies. Every request the tag makes, adapter
 scripts included, sends the page's origin alone as `Referer` (`referrerPolicy: "strict-origin"`),
 never its path or query. Only the pagehide flush adds `keepalive`, and
-its bodies stay within 60 KiB together: browsers refuse keepalive bodies over 64 KiB in flight.
+its bodies stay within 60 KiB together. Browsers refuse a keepalive request once the bodies of all
+of a page's keepalive requests in flight would pass 64 KiB, and that quota is shared with
+`sendBeacon` and with every other script's beacons on the page (analytics and ad tags firing on the
+same pagehide). The 4 KiB left over is a margin, not a reservation: a pagehide request can still be
+refused when other tags use more of the quota.
 
 ## The size budget
 

@@ -94,9 +94,14 @@ export function adapterUrl(endpoint: string, version: string, name: string, page
 }
 
 /**
- * The most UTF-8 bytes of keepalive bodies in flight at once. Browsers cap the bodies of all
- * in-flight keepalive requests of a page at 64 KiB together, and fetch rejects one over it with a
- * TypeError before sending anything; 60 KiB leaves room for the requests' other bytes.
+ * The most UTF-8 bytes of the tag's own keepalive bodies in flight at once. The Fetch spec caps
+ * the bodies (not the headers) of all in-flight keepalive requests of a document at 64 KiB
+ * together, and fetch rejects one that would go over with a TypeError before sending anything.
+ * That quota is shared with every other script on the page: sendBeacon counts against it too,
+ * and so do GA4's, Meta's and any other tracker's beacons fired on the same pagehide. The tag
+ * can neither see nor reserve their share, so the 4 KiB under 64 KiB is a margin for small
+ * third-party beacons, not a guarantee: a pagehide fetch within this limit can still be rejected,
+ * and the transport (AAI-68, AAI-893) must catch that TypeError rather than lose the batch.
  */
 export const KEEPALIVE_BODY_LIMIT = 60 * 1024;
 
