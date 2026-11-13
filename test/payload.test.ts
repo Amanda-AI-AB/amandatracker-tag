@@ -367,6 +367,25 @@ describe("buildEvent props", () => {
     expect(buildEvent(input).props).not.toBe(input.props);
   });
 
+  it("is not changed when the caller mutates its props after building (AAI-944)", () => {
+    const props: Record<string, string | number | boolean> = { sku: "A-1", qty: 1 };
+    const event = buildEvent({ ...eventInput(), props });
+    props.qty = 99;
+    props.added = true;
+    delete props.sku;
+    expect(event.props).toEqual({ sku: "A-1", qty: 1 });
+  });
+
+  it("is not changed when the caller mutates its purchase or items after building (AAI-944)", () => {
+    const input = purchaseInput();
+    const event = buildEvent(input);
+    const before = structuredClone(event);
+    input.purchase.revenue = 1;
+    input.purchase.items![0]!.qty = 99;
+    input.purchase.items!.push({ ...input.purchase.items![0]! });
+    expect(event).toEqual(before);
+  });
+
   it("leaves out keys whose value is undefined, and props that end up empty", () => {
     expect(withProps({ plan: "pro", gone: undefined }).props).toEqual({ plan: "pro" });
     expect(withProps({ gone: undefined })).not.toHaveProperty("props");
