@@ -526,6 +526,52 @@ describe("buildEvent purchase", () => {
     );
   });
 
+  describe("an item list's minimum (AAI-952)", () => {
+    /**
+     * buildEvent with a Purchase whose items have minItems of least, and are required when required
+     * is: v1 has neither a required array nor a minItems over 1, which the builder must keep too.
+     */
+    async function builderWith(least: number, required: boolean): Promise<typeof buildEvent> {
+      vi.resetModules();
+      vi.doMock("../src/wire/generated", async (importOriginal) => {
+        const wire = await importOriginal<typeof import("../src/wire/generated")>();
+        const purchase = {
+          ...wire.PURCHASE_SHAPE,
+          required: required ? [...wire.PURCHASE_SHAPE.required, "items"] : wire.PURCHASE_SHAPE.required,
+          minItems: { items: least },
+        };
+        const event = wire.PURCHASE_EVENT_SHAPE;
+        return { ...wire, PURCHASE_EVENT_SHAPE: { ...event, nested: { ...event.nested, purchase } } };
+      });
+      try {
+        return (await import("../src/wire/payload")).buildEvent;
+      } finally {
+        vi.doUnmock("../src/wire/generated");
+        vi.resetModules();
+      }
+    }
+    const items = (count: number) => Array.from({ length: count }, () => ({ sku: "a", qty: 1, price: 1 })) as unknown as Items;
+
+    it("throws on an empty required item list, rather than send it", async () => {
+      const build = await builderWith(1, true);
+      const input = purchaseInput();
+      expect(() => build({ ...input, purchase: { ...input.purchase, items: items(0) } })).toThrow(
+        "wire payload: event.purchase.items has fewer than 1 items",
+      );
+      expect(build({ ...input, purchase: { ...input.purchase, items: items(1) } })).toHaveProperty("purchase.items.length", 1);
+    });
+
+    it("throws on an optional item list under its minimum, and still leaves out an empty one", async () => {
+      const build = await builderWith(2, false);
+      const input = purchaseInput();
+      expect(() => build({ ...input, purchase: { ...input.purchase, items: items(1) } })).toThrow(
+        "wire payload: event.purchase.items has fewer than 2 items",
+      );
+      expect(build({ ...input, purchase: { ...input.purchase, items: items(0) } })).not.toHaveProperty("purchase.items");
+      expect(build({ ...input, purchase: { ...input.purchase, items: items(2) } })).toHaveProperty("purchase.items.length", 2);
+    });
+  });
+
   it("throws on an item that isn't an object", () => {
     const input = purchaseInput();
     const items = ["a"] as unknown as Items;

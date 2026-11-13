@@ -19,6 +19,8 @@ export const EVENT_BATCH_TYPES = { seq: "integer", e: "array" } as const;
 
 export const EVENT_BATCH_MINIMUM = { seq: 1 } as const;
 
+export const EVENT_BATCH_MIN_ITEMS = { e: 1 } as const;
+
 export const EVENT_BATCH_MAX_ITEMS = { e: 10 } as const;
 
 /** A batch of anonymous pings, sent by declined mode `pings`. It carries no seq: pings are never sequence-linkable. */
@@ -33,6 +35,8 @@ export const PING_BATCH_FIELDS = ["e"] as const;
 export const PING_BATCH_REQUIRED = ["e"] as const;
 
 export const PING_BATCH_TYPES = { e: "array" } as const;
+
+export const PING_BATCH_MIN_ITEMS = { e: 1 } as const;
 
 export const PING_BATCH_MAX_ITEMS = { e: 10 } as const;
 
@@ -205,6 +209,8 @@ export const PURCHASE_PATTERN = { currency: "^[A-Z]{3}$" } as const;
 
 export const PURCHASE_MAX_LENGTH = { order_id: 128, currency: 3 } as const;
 
+export const PURCHASE_MIN_ITEMS = { items: 1 } as const;
+
 export const PURCHASE_MAX_ITEMS = { items: 50 } as const;
 
 /** One line of an order. */
@@ -324,23 +330,23 @@ export const PUB_SUB_MESSAGE_PATTERN = { region: "^[a-z0-9-]+$", country: "^[A-Z
 export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64 } as const;
 
 // Each object's shape: its field list, its required fields, its fields' types, const or enum values, minimums
-// and patterns, its strings' and arrays' caps, its nested objects' shapes, its arrays' item shapes and its maps' rules.
+// and patterns, its strings' and arrays' caps, its arrays' item minimums, its nested objects' shapes, its arrays' item shapes and its maps' rules.
 // An object with a field no shape can check (a oneOf of objects, an array of scalars) has none.
 
-export const UTM_SHAPE = { fields: UTM_FIELDS, required: UTM_REQUIRED, types: UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: UTM_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+export const UTM_SHAPE = { fields: UTM_FIELDS, required: UTM_REQUIRED, types: UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: UTM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, types: WIRE_PING_TYPES, values: WIRE_PING_VALUES, minimum: {}, pattern: WIRE_PING_PATTERN, maxLength: WIRE_PING_MAX_LENGTH, maxItems: {}, nested: { utm: UTM_SHAPE }, items: {}, maps: {} } as const;
+export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, types: WIRE_PING_TYPES, values: WIRE_PING_VALUES, minimum: {}, pattern: WIRE_PING_PATTERN, maxLength: WIRE_PING_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { utm: UTM_SHAPE }, items: {}, maps: {} } as const;
 
-export const PING_BATCH_SHAPE = { fields: PING_BATCH_FIELDS, required: PING_BATCH_REQUIRED, types: PING_BATCH_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: {}, maxItems: PING_BATCH_MAX_ITEMS, nested: {}, items: { e: WIRE_PING_SHAPE }, maps: {} } as const;
+export const PING_BATCH_SHAPE = { fields: PING_BATCH_FIELDS, required: PING_BATCH_REQUIRED, types: PING_BATCH_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: {}, minItems: PING_BATCH_MIN_ITEMS, maxItems: PING_BATCH_MAX_ITEMS, nested: {}, items: { e: WIRE_PING_SHAPE }, maps: {} } as const;
 
-export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, types: CONSENT_TYPES, values: CONSENT_VALUES, minimum: {}, pattern: {}, maxLength: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, types: CONSENT_TYPES, values: CONSENT_VALUES, minimum: {}, pattern: {}, maxLength: {}, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const TRACKED_EVENT_SHAPE = { fields: TRACKED_EVENT_FIELDS, required: TRACKED_EVENT_REQUIRED, types: TRACKED_EVENT_TYPES, values: TRACKED_EVENT_VALUES, minimum: TRACKED_EVENT_MINIMUM, pattern: TRACKED_EVENT_PATTERN, maxLength: TRACKED_EVENT_MAX_LENGTH, maxItems: {}, nested: { consent: CONSENT_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+export const TRACKED_EVENT_SHAPE = { fields: TRACKED_EVENT_FIELDS, required: TRACKED_EVENT_REQUIRED, types: TRACKED_EVENT_TYPES, values: TRACKED_EVENT_VALUES, minimum: TRACKED_EVENT_MINIMUM, pattern: TRACKED_EVENT_PATTERN, maxLength: TRACKED_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
-export const PURCHASE_ITEM_SHAPE = { fields: PURCHASE_ITEM_FIELDS, required: PURCHASE_ITEM_REQUIRED, types: PURCHASE_ITEM_TYPES, values: {}, minimum: PURCHASE_ITEM_MINIMUM, pattern: {}, maxLength: PURCHASE_ITEM_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+export const PURCHASE_ITEM_SHAPE = { fields: PURCHASE_ITEM_FIELDS, required: PURCHASE_ITEM_REQUIRED, types: PURCHASE_ITEM_TYPES, values: {}, minimum: PURCHASE_ITEM_MINIMUM, pattern: {}, maxLength: PURCHASE_ITEM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQUIRED, types: PURCHASE_TYPES, values: {}, minimum: PURCHASE_MINIMUM, pattern: PURCHASE_PATTERN, maxLength: PURCHASE_MAX_LENGTH, maxItems: PURCHASE_MAX_ITEMS, nested: {}, items: { items: PURCHASE_ITEM_SHAPE }, maps: {} } as const;
+export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQUIRED, types: PURCHASE_TYPES, values: {}, minimum: PURCHASE_MINIMUM, pattern: PURCHASE_PATTERN, maxLength: PURCHASE_MAX_LENGTH, minItems: PURCHASE_MIN_ITEMS, maxItems: PURCHASE_MAX_ITEMS, nested: {}, items: { items: PURCHASE_ITEM_SHAPE }, maps: {} } as const;
 
-export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, maxItems: {}, nested: { consent: CONSENT_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
 export const SCHEMA_VERSION = 1;

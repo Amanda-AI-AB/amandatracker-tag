@@ -1,7 +1,7 @@
 // Generates src/wire/generated.ts from the newest wire JSON Schema in schema/v<N>/: a TypeScript
 // type for each schema and each of its $defs, and, for each object with properties (a schema's
 // top-level object or an object in $defs), its field list, its required fields, its fields' JSON
-// types, const or enum values, minimums and patterns, its strings' length caps, its arrays' item caps and a shape that
+// types, const or enum values, minimums and patterns, its strings' length caps, its arrays' item minimums and caps and a shape that
 // ties in its nested objects' shapes, its arrays' item shapes and its maps' rules, which the payload
 // builder uses. A map is an object in $defs with no properties, whose additionalProperties name the
 // schema of its values. A branch of a oneOf of objects types the properties its siblings have and
@@ -12,7 +12,7 @@
 // It covers the subset of JSON Schema the wire uses (object, map, array, string, number, integer,
 // boolean, const, enum, oneOf, $ref) and throws on anything else, rather than generate a looser type
 // or looser rules: an object's or a map's keywords, a $ref's siblings and the rules inside a oneOf
-// of scalars go through allow-lists too. An object with a field whose shape the builder couldn't
+// of scalars go through allow-lists too, and a minLength other than 1 is refused. An object with a field whose shape the builder couldn't
 // check (a oneOf of objects, an array of scalars, an inline object) gets no shape at all, rather
 // than a partial one. Every schema's $id must be its own path in schema/v<N>/, and every
 // schema_version const N.
@@ -156,6 +156,10 @@ export function generate(versionDir) {
     for (const key of Object.keys(node)) {
       if (!ANNOTATIONS.has(key) && !TYPED.has(key)) throw new Error(`${file}: unsupported keyword ${key}`);
     }
+    // The builder keeps a minLength of 1 by refusing or dropping an empty string, and no other.
+    if ("minLength" in node && node.minLength !== 1) {
+      throw new Error(`${file}: minLength ${JSON.stringify(node.minLength)}, which the builder doesn't keep: only 1`);
+    }
     if (node.$ref) {
       follow(file, node);
       return resolveRef(file, node.$ref).name;
@@ -275,7 +279,7 @@ export function generate(versionDir) {
 
   /**
    * An object's shape, for the payload builder: its prefix, which of its optional rule constants
-   * it has (VALUES, MINIMUM, PATTERN, MAX_LENGTH, MAX_ITEMS), and the properties that are nested
+   * it has (VALUES, MINIMUM, PATTERN, MAX_LENGTH, MIN_ITEMS, MAX_ITEMS), and the properties that are nested
    * objects, arrays of objects and maps, each with the name of the object or map they hold; or, in
    * unshaped, a field the builder could check by no shape, which leaves the object without one.
    * @typedef {{ prefix: string, has: Set<string>, nested: [string, string][], items: [string, string][], maps: [string, string][], unshaped: string | undefined }} ShapeInfo
@@ -285,7 +289,7 @@ export function generate(versionDir) {
 
   /**
    * The field list, the fields' JSON types, their const or enum values, their numbers' minimums,
-   * their strings' patterns and length caps and their arrays' item caps of an object with
+   * their strings' patterns and length caps and their arrays' item minimums and caps of an object with
    * properties, and its shape.
    * @param {string} file
    * @param {string} name
@@ -344,6 +348,7 @@ export function generate(versionDir) {
     ruleConstant("MINIMUM", (prop) => (typeof prop.minimum === "number" ? prop.minimum : undefined));
     ruleConstant("PATTERN", (prop) => (typeof prop.pattern === "string" ? prop.pattern : undefined));
     ruleConstant("MAX_LENGTH", (prop) => (typeof prop.maxLength === "number" ? prop.maxLength : undefined));
+    ruleConstant("MIN_ITEMS", (prop) => (typeof prop.minItems === "number" ? prop.minItems : undefined));
     ruleConstant("MAX_ITEMS", (prop) => (typeof prop.maxItems === "number" ? prop.maxItems : undefined));
     /** @type {[string, string][]} */
     const nested = [];
@@ -445,7 +450,7 @@ export function generate(versionDir) {
   out.push(
     "",
     "// Each object's shape: its field list, its required fields, its fields' types, const or enum values, minimums",
-    "// and patterns, its strings' and arrays' caps, its nested objects' shapes, its arrays' item shapes and its maps' rules.",
+    "// and patterns, its strings' and arrays' caps, its arrays' item minimums, its nested objects' shapes, its arrays' item shapes and its maps' rules.",
     "// An object with a field no shape can check (a oneOf of objects, an array of scalars) has none.",
   );
   /** @type {Map<string, boolean>} whether each object visited has a shape */
@@ -479,7 +484,7 @@ export function generate(versionDir) {
       const rule = (suffix) => (has.has(suffix) ? `${prefix}_${suffix}` : "{}");
       out.push(
         "",
-        `export const ${prefix}_SHAPE = { fields: ${prefix}_FIELDS, required: ${prefix}_REQUIRED, types: ${prefix}_TYPES, values: ${rule("VALUES")}, minimum: ${rule("MINIMUM")}, pattern: ${rule("PATTERN")}, maxLength: ${rule("MAX_LENGTH")}, maxItems: ${rule("MAX_ITEMS")}, nested: ${record(shape.nested, "_SHAPE")}, items: ${record(shape.items, "_SHAPE")}, maps: ${record(shape.maps, "_MAP")} } as const;`,
+        `export const ${prefix}_SHAPE = { fields: ${prefix}_FIELDS, required: ${prefix}_REQUIRED, types: ${prefix}_TYPES, values: ${rule("VALUES")}, minimum: ${rule("MINIMUM")}, pattern: ${rule("PATTERN")}, maxLength: ${rule("MAX_LENGTH")}, minItems: ${rule("MIN_ITEMS")}, maxItems: ${rule("MAX_ITEMS")}, nested: ${record(shape.nested, "_SHAPE")}, items: ${record(shape.items, "_SHAPE")}, maps: ${record(shape.maps, "_MAP")} } as const;`,
       );
     }
     visiting.delete(name);

@@ -73,7 +73,7 @@ export type JsonType = "string" | "number" | "integer" | "boolean" | "object" | 
 /**
  * An object's shape, as generated: its field list, its required fields, its fields' JSON types,
  * const or enum values, numbers' minimums and strings' patterns, its strings' and arrays' caps, its
- * nested objects' shapes, its arrays' item shapes and its maps' rules.
+ * arrays' item minimums, its nested objects' shapes, its arrays' item shapes and its maps' rules.
  */
 export interface Shape {
   readonly fields: readonly string[];
@@ -83,6 +83,7 @@ export interface Shape {
   readonly minimum: Readonly<Record<string, number>>;
   readonly pattern: Readonly<Record<string, string>>;
   readonly maxLength: Readonly<Record<string, number>>;
+  readonly minItems: Readonly<Record<string, number>>;
   readonly maxItems: Readonly<Record<string, number>>;
   readonly nested: Readonly<Record<string, Shape>>;
   readonly items: Readonly<Record<string, Shape>>;
@@ -300,7 +301,8 @@ function isType(value: unknown, type: JsonType): boolean {
  * theirs. Undefined to leave the field out: an optional string OVERFLOW drops (over its cap or off
  * its pattern) or STRIP_FROM empties, or an optional object, array or map that ends up empty. Throws WirePayloadError on a value of another type (a revenue given as
  * "249.90", NaN, items given as an object), one that breaks a rule, an array over its item cap
- * (cutting an order's lines would change the order), or an object or array the shape has no rules
+ * (cutting an order's lines would change the order) or a required or non-empty one under its item
+ * minimum, or an object or array the shape has no rules
  * for, since sending any of them would have the collector refuse the event.
  */
 function shapeField(value: unknown, field: string, spec: Shape, at: string, required: boolean): unknown {
@@ -320,6 +322,9 @@ function shapeField(value: unknown, field: string, spec: Shape, at: string, requ
     const list = value as unknown[];
     const items = spec.items[field];
     if (items === undefined) throw new WirePayloadError(at, "has no item shape the tag can check");
+    if (list.length === 0 && !required) return undefined;
+    const least = spec.minItems[field];
+    if (least !== undefined && list.length < least) throw new WirePayloadError(at, `has fewer than ${least} items`);
     const cap = spec.maxItems[field];
     if (cap !== undefined && list.length > cap) throw new WirePayloadError(at, `has more than ${cap} items`);
     const inner = list.map((item, index) => {
@@ -327,7 +332,7 @@ function shapeField(value: unknown, field: string, spec: Shape, at: string, requ
       if (!isRecord(item)) throw new WirePayloadError(itemAt, "is not an object");
       return shape(item, items, itemAt);
     });
-    return required || inner.length > 0 ? inner : undefined;
+    return inner;
   }
   let kept = value as string | number | boolean;
   if (typeof kept === "string") {
