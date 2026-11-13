@@ -53,24 +53,37 @@ describe("loadAdapter", () => {
     );
   });
 
-  it("refuses an adapter this core wasn't built with, before injecting anything", () => {
+  it("rejects an adapter this core wasn't built with, before injecting anything", async () => {
     const { doc, appended } = fakeDocument();
-    expect(() => loadAdapter(doc, DEFAULT_ENDPOINT, "other-cmp", PAGE)).toThrow("no adapter other-cmp in tag 0.0.0-test");
-    expect(() => loadAdapter(doc, DEFAULT_ENDPOINT, "constructor", PAGE)).toThrow("no adapter constructor");
-    expect(appended).toHaveLength(0);
-  });
-
-  it("refuses a name that could leave the adapters directory, before injecting anything", () => {
-    const { doc, appended } = fakeDocument();
-    expect(() => loadAdapter(doc, DEFAULT_ENDPOINT, "../evil", PAGE)).toThrow("invalid adapter name");
-    expect(appended).toHaveLength(0);
-  });
-
-  it("refuses an endpoint on another origin, before injecting anything", () => {
-    const { doc, appended } = fakeDocument();
-    expect(() => loadAdapter(doc, resolveEndpoint("https://evil.example", PAGE), "example-cmp", PAGE)).toThrow(
-      EndpointError,
+    await expect(loadAdapter(doc, DEFAULT_ENDPOINT, "other-cmp", PAGE)).rejects.toThrow(
+      "no adapter other-cmp in tag 0.0.0-test",
     );
+    await expect(loadAdapter(doc, DEFAULT_ENDPOINT, "constructor", PAGE)).rejects.toThrow("no adapter constructor");
     expect(appended).toHaveLength(0);
+  });
+
+  it("rejects a name that could leave the adapters directory, before injecting anything", async () => {
+    const { doc, appended } = fakeDocument();
+    await expect(loadAdapter(doc, DEFAULT_ENDPOINT, "../evil", PAGE)).rejects.toThrow("invalid adapter name");
+    expect(appended).toHaveLength(0);
+  });
+
+  it("rejects an endpoint on another origin, before injecting anything", async () => {
+    const { doc, appended } = fakeDocument();
+    await expect(
+      loadAdapter(doc, resolveEndpoint("https://evil.example", PAGE), "example-cmp", PAGE),
+    ).rejects.toThrow(EndpointError);
+    expect(appended).toHaveLength(0);
+  });
+
+  it("never throws synchronously, so a caller's .catch sees every failure", async () => {
+    const { doc } = fakeDocument();
+    let loaded: Promise<void> | undefined;
+    expect(() => {
+      loaded = loadAdapter(doc, DEFAULT_ENDPOINT, "OneTrust", PAGE);
+    }).not.toThrow();
+    const caught = await loaded!.catch((err: unknown) => err);
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch("invalid adapter name");
   });
 });
