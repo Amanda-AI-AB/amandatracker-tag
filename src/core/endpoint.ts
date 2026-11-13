@@ -73,7 +73,8 @@ export function bodyBytes(body: string): number {
 }
 
 /**
- * The fetch options for a batch to eventsUrl. credentials: "same-origin" lets the browser store
+ * The fetch options for a batch to eventsUrl; `body` is a WireBatch (schema/v1/batch.json) as
+ * JSON. credentials: "same-origin" lets the browser store
  * the Set-Cookie with which the collector, behind a first-party proxy, re-issues _amnda_id and
  * _amnda_ses (AAI-827); to the cross-origin default host no cookie is sent or stored. The
  * transport (AAI-68) uses these for every fetch it sends, and sends the pageview's immediate flush
