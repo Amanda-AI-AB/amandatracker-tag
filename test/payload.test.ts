@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WIRE_EVENT_SHAPE, WIRE_PING_SHAPE } from "../src/wire/generated";
+import { PURCHASE_EVENT_SHAPE, TRACKED_EVENT_SHAPE, WIRE_PING_SHAPE } from "../src/wire/generated";
 import {
   buildEvent,
   buildPing,
@@ -9,16 +9,26 @@ import {
   uuidv7,
   WirePayloadError,
   type EventInput,
+  type PurchaseEventInput,
   type Shape,
   type PingInput,
+  type TrackedEventInput,
 } from "../src/wire/payload";
-import { EVENT, PING, validator } from "./wire-validator";
+import { EVENT, PING, PURCHASE, validator } from "./wire-validator";
+
+type Items = NonNullable<PurchaseEventInput["purchase"]["items"]>;
 
 const UUID7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-function eventInput(): EventInput {
+function eventInput(): TrackedEventInput {
   const { schema_version, event_id, ...input } = EVENT;
   return { ...input, consent: { ...input.consent }, props: { ...input.props } };
+}
+
+function purchaseInput(): PurchaseEventInput {
+  const { schema_version, event_id, ...input } = PURCHASE;
+  const items = input.purchase.items.map((item) => ({ ...item }));
+  return { ...input, consent: { ...input.consent }, props: { ...input.props }, purchase: { ...input.purchase, items } };
 }
 
 function pingInput(): PingInput {
@@ -59,7 +69,7 @@ describe("buildEvent", () => {
   });
 
   it("leaves out fields the schema doesn't list, and empty optional strings", () => {
-    const input = { ...eventInput(), referrer: "", ip: "203.0.113.7" } as EventInput;
+    const input = { ...eventInput(), referrer: "", ip: "203.0.113.7" } as TrackedEventInput;
     const event = buildEvent(input, EVENT.event_id);
     expect(event).not.toHaveProperty("ip");
     expect(event).not.toHaveProperty("referrer");
@@ -147,15 +157,19 @@ describe("cutSubtags", () => {
 });
 
 describe("OVERFLOW", () => {
-  const shapes: Record<string, Shape> = { event: WIRE_EVENT_SHAPE, ping: WIRE_PING_SHAPE };
+  const shapes: [string, Shape][] = [["event", TRACKED_EVENT_SHAPE], ["event", PURCHASE_EVENT_SHAPE], ["ping", WIRE_PING_SHAPE]];
 
   function capped(prefix: string, spec: Shape): { at: string; required: boolean }[] {
     return [
       ...Object.keys(spec.maxLength).map((field) => ({ at: `${prefix}.${field}`, required: spec.required.includes(field) })),
       ...Object.entries(spec.nested).flatMap(([field, inner]) => capped(`${prefix}.${field}`, inner)),
+      ...Object.entries(spec.items).flatMap(([field, inner]) => capped(`${prefix}.${field}[]`, inner)),
+      ...Object.entries(spec.maps)
+        .filter(([, map]) => map.maxLength !== undefined)
+        .map(([field]) => ({ at: `${prefix}.${field}.*`, required: false })),
     ];
   }
-  const all = Object.entries(shapes).flatMap(([prefix, spec]) => capped(prefix, spec));
+  const all = shapes.flatMap(([prefix, spec]) => capped(prefix, spec));
 
   it("names only capped fields", () => {
     for (const at of Object.keys(OVERFLOW)) expect(all.map((field) => field.at)).toContain(at);
@@ -249,8 +263,163 @@ describe("buildEvent nested consent", () => {
 
   it("keeps consent to its field list", () => {
     const input = eventInput();
-    const event = buildEvent({ ...input, consent: { ...input.consent, functional: "granted" } } as EventInput);
+    const consent = { ...input.consent, functional: "granted" } as EventInput["consent"];
+    const event = buildEvent({ ...input, consent });
     expect(Object.keys(event.consent).sort()).toEqual(["ads", "analytics"]);
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+});
+
+describe("buildEvent props", () => {
+  const validate = validator("event.json");
+  const withProps = (props: unknown) => buildEvent({ ...eventInput(), props } as TrackedEventInput);
+
+  it("keeps strings, numbers and booleans", () => {
+    const event = withProps({ plan: "pro", seats: 3, price: 9.5, trial: false, note: "" });
+    expect(event.props).toEqual({ plan: "pro", seats: 3, price: 9.5, trial: false, note: "" });
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("does not hand back the caller's props object", () => {
+    const input = eventInput();
+    expect(buildEvent(input).props).not.toBe(input.props);
+  });
+
+  it("leaves out keys whose value is undefined, and props that end up empty", () => {
+    expect(withProps({ plan: "pro", gone: undefined }).props).toEqual({ plan: "pro" });
+    expect(withProps({ gone: undefined })).not.toHaveProperty("props");
+    expect(withProps({})).not.toHaveProperty("props");
+  });
+
+  it("cuts a string over 200 characters on a whole character", () => {
+    const event = withProps({ s: `${"x".repeat(199)}😀` });
+    expect(event.props!.s).toBe("x".repeat(199));
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it.each([
+    ["an object", { nested: { a: 1 } }, "event.props.nested"],
+    ["an array", { list: [1] }, "event.props.list"],
+    ["null", { gone: null }, "event.props.gone"],
+    ["NaN", { n: Number.NaN }, "event.props.n"],
+    ["Infinity", { n: Number.POSITIVE_INFINITY }, "event.props.n"],
+  ])("throws on %s as a value, rather than drop what the site sent", (_, props, at) => {
+    expect(() => withProps(props)).toThrow(new WirePayloadError(at, "is not one of string, number, boolean"));
+  });
+
+  it.each(["am_", "am_source"])("throws on the reserved key %s", (key) => {
+    expect(() => withProps({ [key]: "x" })).toThrow(new WirePayloadError(`event.props.${key}`, "is a reserved or empty key"));
+  });
+
+  it("throws on an empty key", () => {
+    expect(() => withProps({ "": "x" })).toThrow(new WirePayloadError("event.props.", "is a reserved or empty key"));
+  });
+
+  it("takes 25 keys and throws on 26", () => {
+    const props = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, i) => [`k${i}`, i]));
+    expect(Object.keys(withProps(props(25)).props!)).toHaveLength(25);
+    expect(() => withProps(props(26))).toThrow(new WirePayloadError("event.props", "has more than 25 keys"));
+  });
+
+  it("throws when props isn't an object", () => {
+    expect(() => withProps(["a"])).toThrow(new WirePayloadError("event.props", "is not a flat object"));
+    expect(() => withProps("a")).toThrow(new WirePayloadError("event.props", "is not a flat object"));
+  });
+});
+
+describe("buildEvent purchase", () => {
+  const validate = validator("event.json");
+
+  it("builds a valid purchase with its order and items", () => {
+    const event = buildEvent(purchaseInput());
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    expect(event).toMatchObject({ type: "purchase", purchase: PURCHASE.purchase });
+  });
+
+  it("keeps the order and its items to their field lists, and hands back none of the caller's objects", () => {
+    const input = purchaseInput();
+    const extra = {
+      ...input,
+      purchase: { ...input.purchase, coupon: "NOV10", items: [{ ...PURCHASE.purchase.items[0], color: "red" }] },
+    } as unknown as PurchaseEventInput;
+    const event = buildEvent(extra);
+    expect(event).toMatchObject({ purchase: { items: [PURCHASE.purchase.items[0]] } });
+    expect(event).not.toHaveProperty("purchase.coupon");
+    expect(event).not.toHaveProperty("purchase.items.0.color");
+    expect("purchase" in event && event.purchase).not.toBe(input.purchase);
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("leaves out an empty item list and an empty item name", () => {
+    const input = purchaseInput();
+    const event = buildEvent({ ...input, purchase: { ...input.purchase, items: [] } });
+    expect(event).not.toHaveProperty("purchase.items");
+    const named = buildEvent({ ...input, purchase: { ...input.purchase, items: [{ sku: "a", name: "", qty: 1, price: 1 }] } });
+    expect(named).not.toHaveProperty("purchase.items.0.name");
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate(named), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("throws when the purchase is on another type of event", () => {
+    const input = { ...purchaseInput(), type: "pageview" } as unknown as EventInput;
+    expect(() => buildEvent(input)).toThrow(new WirePayloadError("event.type", 'is not "purchase" on an event with a purchase'));
+  });
+
+  it("builds an ordinary event when the input carries no purchase", () => {
+    const { purchase, ...rest } = purchaseInput();
+    const event = buildEvent(rest);
+    expect(event).not.toHaveProperty("purchase");
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it.each(["order_id", "currency"] as const)("throws when the required %s is empty or missing", (field) => {
+    const input = purchaseInput();
+    expect(() => buildEvent({ ...input, purchase: { ...input.purchase, [field]: "" } })).toThrow(
+      new WirePayloadError(`event.purchase.${field}`),
+    );
+  });
+
+  it("throws on an item without a sku, naming the item", () => {
+    const input = purchaseInput();
+    const items = [{ ...PURCHASE.purchase.items[0] }, { qty: 1, price: 1 }] as Items;
+    expect(() => buildEvent({ ...input, purchase: { ...input.purchase, items } })).toThrow(
+      new WirePayloadError("event.purchase.items[1].sku"),
+    );
+  });
+
+  it("throws on an order_id or sku over its cap, rather than send it as another one", () => {
+    const input = purchaseInput();
+    expect(() => buildEvent({ ...input, purchase: { ...input.purchase, order_id: "o".repeat(129) } })).toThrow(
+      new WirePayloadError("event.purchase.order_id", "is over its cap of 128 characters"),
+    );
+    const items = [{ sku: "s".repeat(129), qty: 1, price: 1 }];
+    expect(() => buildEvent({ ...input, purchase: { ...input.purchase, items } })).toThrow(
+      new WirePayloadError("event.purchase.items[0].sku", "is over its cap of 128 characters"),
+    );
+  });
+
+  it("cuts an item name over 200 characters", () => {
+    const input = purchaseInput();
+    const items = [{ sku: "a", name: "n".repeat(250), qty: 1, price: 1 }];
+    const event = buildEvent({ ...input, purchase: { ...input.purchase, items } });
+    expect(event).toHaveProperty("purchase.items.0.name", "n".repeat(200));
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("takes 50 items and throws on 51, rather than cut the order", () => {
+    const input = purchaseInput();
+    const items = (count: number) => Array.from({ length: count }, () => ({ sku: "a", qty: 1, price: 1 }));
+    expect(validate(buildEvent({ ...input, purchase: { ...input.purchase, items: items(50) } }))).toBe(true);
+    expect(() => buildEvent({ ...input, purchase: { ...input.purchase, items: items(51) } })).toThrow(
+      new WirePayloadError("event.purchase.items", "has more than 50 items"),
+    );
+  });
+
+  it("throws on an item that isn't an object", () => {
+    const input = purchaseInput();
+    const items = ["a"] as unknown as Items;
+    expect(() => buildEvent({ ...input, purchase: { ...input.purchase, items } })).toThrow(
+      new WirePayloadError("event.purchase.items[0]", "is not an object"),
+    );
   });
 });

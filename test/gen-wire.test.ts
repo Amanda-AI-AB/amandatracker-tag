@@ -51,7 +51,7 @@ describe("gen-wire", () => {
     expect(out).toContain('export const THING_REQUIRED = ["schema_version", "name"] as const;');
     expect(out).toContain("export const THING_MAX_LENGTH = { name: 10 } as const;");
     expect(out).toContain(
-      "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, maxLength: THING_MAX_LENGTH, nested: {} } as const;",
+      "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, maxLength: THING_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;",
     );
     expect(out).toContain("export const SCHEMA_VERSION = 3;");
   });
@@ -82,12 +82,85 @@ describe("gen-wire", () => {
     expect(out).toContain("export const PART_MAX_LENGTH = { label: 8 } as const;");
     expect(out).toContain("export const PART_REQUIRED = [] as const;");
     expect(out).toContain(
-      "export const PART_SHAPE = { fields: PART_FIELDS, required: PART_REQUIRED, maxLength: PART_MAX_LENGTH, nested: {} } as const;",
+      "export const PART_SHAPE = { fields: PART_FIELDS, required: PART_REQUIRED, maxLength: PART_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;",
     );
     expect(out).toContain(
-      "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, maxLength: {}, nested: { part: PART_SHAPE } } as const;",
+      "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, maxLength: {}, maxItems: {}, nested: { part: PART_SHAPE }, items: {}, maps: {} } as const;",
     );
     expect(out.indexOf("PART_SHAPE = ")).toBeLessThan(out.indexOf("THING_SHAPE = "));
+  });
+
+  it("generates arrays of objects with their item shapes, each after the shape of its items", () => {
+    schema("a.json", {
+      title: "Order",
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        schema_version: { const: 1 },
+        lines: { type: "array", maxItems: 5, items: { $ref: "#/$defs/Line" } },
+        tags: { type: "array", items: { type: "string" } },
+      },
+      $defs: {
+        Line: { type: "object", additionalProperties: false, required: ["sku"], properties: { sku: { type: "string", maxLength: 9 } } },
+      },
+    });
+
+    const out = generate(dir);
+    expect(out).toContain("export interface Order {\n  schema_version?: 1;\n  lines?: Line[];\n  tags?: string[];\n}");
+    expect(out).toContain(
+      "export const ORDER_SHAPE = { fields: ORDER_FIELDS, required: ORDER_REQUIRED, maxLength: {}, maxItems: ORDER_MAX_ITEMS, nested: {}, items: { lines: LINE_SHAPE }, maps: {} } as const;",
+    );
+    expect(out.indexOf("LINE_SHAPE = ")).toBeLessThan(out.indexOf("ORDER_SHAPE = "));
+  });
+
+  it("generates a map's type and rules, and ties it into the shapes that hold it", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 }, bag: { $ref: "#/$defs/Bag" } },
+      $defs: {
+        Bag: {
+          type: "object",
+          maxProperties: 3,
+          propertyNames: { type: "string", pattern: "^[a-z]" },
+          additionalProperties: { $ref: "#/$defs/Value" },
+        },
+        Value: { oneOf: [{ type: "string", maxLength: 7 }, { type: "integer" }, { type: "boolean" }] },
+        Plain: { type: "object", additionalProperties: { type: "number" } },
+      },
+    });
+
+    const out = generate(dir);
+    expect(out).toContain("export type Bag = Record<string, Value>;");
+    expect(out).toContain("export type Value = string | number | boolean;");
+    expect(out).toContain(
+      'export const BAG_MAP = { maxProperties: 3, keyPattern: "^[a-z]", values: ["string", "integer", "boolean"], maxLength: 7 } as const;',
+    );
+    expect(out).toContain('export const PLAIN_MAP = { values: ["number"] } as const;');
+    expect(out).toContain("maps: { bag: BAG_MAP } } as const;");
+  });
+
+  it("refuses a map whose values the builder couldn't keep to the schema", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 } },
+      $defs: { Bag: { type: "object", additionalProperties: { type: "string", pattern: "^x" } } },
+    });
+    expect(() => generate(dir)).toThrow("Bag's values must be strings, numbers or booleans");
+  });
+
+  it("refuses propertyNames that aren't a string schema", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 } },
+      $defs: { Bag: { type: "object", propertyNames: { enum: [1] }, additionalProperties: { type: "string" } } },
+    });
+    expect(() => generate(dir)).toThrow("propertyNames must be a string schema");
   });
 
   it("generates arrays, their item caps, and an envelope that is a oneOf with no version of its own", () => {

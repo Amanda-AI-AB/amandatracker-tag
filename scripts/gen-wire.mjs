@@ -1,11 +1,13 @@
 // Generates src/wire/generated.ts from the newest wire JSON Schema in schema/v<N>/: a TypeScript
 // type for each schema and each of its $defs, and, for each object with properties (a schema's
 // top-level object or an object in $defs), its field list, its required fields, its strings' length caps, its arrays' item caps and a shape that
-// ties in its nested objects' shapes, which the payload builder uses. The schema is the source of
-// truth; a test fails when the committed file differs from what this generates.
+// ties in its nested objects' shapes, its arrays' item shapes and its maps' rules, which the payload
+// builder uses. A map is an object in $defs with no properties, whose additionalProperties name the
+// schema of its values. The schema is the source of truth; a test fails when the committed file
+// differs from what this generates.
 //
-// It covers the subset of JSON Schema the wire uses (object, array, string, integer, boolean,
-// const, enum, oneOf, $ref) and throws on anything else, rather than generate a looser type.
+// It covers the subset of JSON Schema the wire uses (object, map, array, string, number, integer,
+// boolean, const, enum, oneOf, $ref) and throws on anything else, rather than generate a looser type.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,12 +19,15 @@ export const GENERATED_FILE = join(root, "src/wire/generated.ts");
 // Keywords that only document or constrain values, and change no TypeScript type.
 const ANNOTATIONS = new Set([
   "$schema", "$id", "$defs", "title", "description", "minLength", "maxLength", "pattern", "minimum",
-  "minItems", "maxItems",
+  "minItems", "maxItems", "maxProperties",
 ]);
 // Keywords the generator turns into types.
 const TYPED = new Set([
   "type", "const", "enum", "oneOf", "$ref", "properties", "required", "additionalProperties", "items",
+  "propertyNames",
 ]);
+// The JSON types a map's values may have.
+const SCALARS = new Set(["string", "number", "integer", "boolean"]);
 
 /**
  * @param {string} schemaRoot
@@ -93,9 +98,16 @@ export function generate(versionDir) {
         const item = typeOf(file, node.items);
         return item.includes(" | ") ? `(${item})[]` : `${item}[]`;
       }
-      case "object":
+      case "object": {
         if (node.properties) throw new Error(`${file}: name a nested object in $defs`);
-        return "Record<string, unknown>";
+        if (node.propertyNames && typeOf(file, node.propertyNames) !== "string") {
+          throw new Error(`${file}: propertyNames must be a string schema`);
+        }
+        const values = node.additionalProperties;
+        if (values === undefined || values === true) return "Record<string, unknown>";
+        if (typeof values !== "object") throw new Error(`${file}: an object with no properties must allow some`);
+        return `Record<string, ${typeOf(file, values)}>`;
+      }
       default:
         throw new Error(`${file}: unsupported type ${JSON.stringify(node.type)}`);
     }
@@ -129,10 +141,50 @@ export function generate(versionDir) {
     return `${doc}export type ${name} = ${typeOf(file, node)};`;
   }
 
+  /** @param {any} node */
+  function isMap(node) {
+    return node.type === "object" && !node.properties && typeof node.additionalProperties === "object";
+  }
+
   /**
-   * An object's shape, for the payload builder: its prefix, whether it has length caps, and the
-   * properties that are nested objects, each with the name of the object they hold.
-   * @type {Map<string, { prefix: string, capped: boolean, nested: [string, string][] }>}
+   * A map's rules, for the payload builder: its key cap and pattern, its values' JSON types and
+   * their strings' length cap. Throws on a value constraint the builder couldn't keep.
+   * @param {string} file
+   * @param {string} name
+   * @param {any} node
+   * @returns {string[]}
+   */
+  function mapConstant(file, name, node) {
+    const values = deref(file, node.additionalProperties);
+    /** @type {any[]} */
+    const branches = (values.oneOf ?? [values]).map((/** @type {any} */ branch) => deref(file, branch));
+    /** @type {string[]} */
+    const types = [];
+    /** @type {number | undefined} */
+    let maxLength;
+    for (const branch of branches) {
+      const extra = Object.keys(branch).filter((key) => !["type", "maxLength", "description"].includes(key));
+      if (!SCALARS.has(branch.type) || extra.length > 0) {
+        throw new Error(`${file}: ${name}'s values must be strings, numbers or booleans with at most a maxLength`);
+      }
+      types.push(branch.type);
+      if (typeof branch.maxLength === "number") maxLength = branch.maxLength;
+    }
+    const rules = [
+      typeof node.maxProperties === "number" ? `maxProperties: ${node.maxProperties}` : undefined,
+      typeof node.propertyNames?.pattern === "string" ? `keyPattern: ${JSON.stringify(node.propertyNames.pattern)}` : undefined,
+      `values: [${types.map((type) => JSON.stringify(type)).join(", ")}]`,
+      maxLength === undefined ? undefined : `maxLength: ${maxLength}`,
+    ].filter((rule) => rule !== undefined);
+    return ["", `export const ${screaming(name)}_MAP = { ${rules.join(", ")} } as const;`];
+  }
+
+  /**
+   * An object's shape, for the payload builder: its prefix, whether it has length caps and item
+   * caps, and the properties that are nested objects, arrays of objects and maps, each with the
+   * name of the object or map they hold.
+   * @typedef {{ prefix: string, capped: boolean, itemCapped: boolean, nested: [string, string][], items: [string, string][], maps: [string, string][] }} ShapeInfo
+   * @type {Map<string, ShapeInfo>}
    */
   const shapes = new Map();
 
@@ -169,14 +221,26 @@ export function generate(versionDir) {
     if (itemCaps.length > 0) lines.push("", `export const ${prefix}_MAX_ITEMS = { ${itemCaps.join(", ")} } as const;`);
     /** @type {[string, string][]} */
     const nested = [];
+    /** @type {[string, string][]} */
+    const items = [];
+    /** @type {[string, string][]} */
+    const maps = [];
     for (const key of keys) {
-      const ref = node.properties[key].$ref;
+      const prop = node.properties[key];
+      const ref = prop.$ref ?? (prop.type === "array" ? prop.items?.$ref : undefined);
       if (!ref) continue;
       const target = resolveRef(file, ref);
-      if (target.schema.type === "object" && target.schema.properties) nested.push([key, target.name]);
+      const isObject = target.schema.type === "object" && target.schema.properties;
+      if (prop.type === "array") {
+        if (isObject) items.push([key, target.name]);
+      } else if (isObject) {
+        nested.push([key, target.name]);
+      } else if (isMap(target.schema)) {
+        maps.push([key, target.name]);
+      }
     }
     if (shapes.has(name)) throw new Error(`${file}: ${name} is named twice`);
-    shapes.set(name, { prefix, capped: caps.length > 0, nested });
+    shapes.set(name, { prefix, capped: caps.length > 0, itemCapped: itemCaps.length > 0, nested, items, maps });
     return lines;
   }
 
@@ -195,6 +259,7 @@ export function generate(versionDir) {
     for (const [name, def] of Object.entries(schema.$defs ?? {})) {
       out.push("", declaration(file, name, def));
       if (def.type === "object" && def.properties) out.push(...constants(file, name, def));
+      if (isMap(def)) out.push(...mapConstant(file, name, def));
     }
     out.push("", declaration(file, schema.title, schema));
     if (schema.type === "object" && schema.properties) out.push(...constants(file, schema.title, schema));
@@ -203,22 +268,34 @@ export function generate(versionDir) {
   if (versions.size !== 1) throw new Error(`${versionDir}: the schemas disagree on schema_version`);
 
   // The shapes go last, each after the shapes it nests, since a schema may nest another file's object.
-  out.push("", "// Each object's shape: its field list, its required fields, its strings' caps and its nested objects' shapes.");
+  out.push(
+    "",
+    "// Each object's shape: its field list, its required fields, its strings' and arrays' caps, its nested objects'",
+    "// shapes, its arrays' item shapes and its maps' rules.",
+  );
   /** @type {Set<string>} */
   const emitted = new Set();
   /** @type {Set<string>} */
   const visiting = new Set();
+  /**
+   * @param {[string, string][]} pairs
+   * @param {string} suffix
+   */
+  function record(pairs, suffix) {
+    const body = pairs.map(([key, target]) => `${key}: ${screaming(target)}${suffix}`).join(", ");
+    return `{${body ? ` ${body} ` : ""}}`;
+  }
   /** @param {string} name */
   function emitShape(name) {
     if (emitted.has(name)) return;
     if (visiting.has(name)) throw new Error(`${name} nests itself`);
     visiting.add(name);
-    const shape = /** @type {{ prefix: string, capped: boolean, nested: [string, string][] }} */ (shapes.get(name));
-    for (const [, target] of shape.nested) emitShape(target);
-    const nested = shape.nested.map(([key, target]) => `${key}: ${screaming(target)}_SHAPE`).join(", ");
+    const shape = /** @type {ShapeInfo} */ (shapes.get(name));
+    for (const [, target] of [...shape.nested, ...shape.items]) emitShape(target);
+    const { prefix } = shape;
     out.push(
       "",
-      `export const ${shape.prefix}_SHAPE = { fields: ${shape.prefix}_FIELDS, required: ${shape.prefix}_REQUIRED, maxLength: ${shape.capped ? `${shape.prefix}_MAX_LENGTH` : "{}"}, nested: {${nested ? ` ${nested} ` : ""}} } as const;`,
+      `export const ${prefix}_SHAPE = { fields: ${prefix}_FIELDS, required: ${prefix}_REQUIRED, maxLength: ${shape.capped ? `${prefix}_MAX_LENGTH` : "{}"}, maxItems: ${shape.itemCapped ? `${prefix}_MAX_ITEMS` : "{}"}, nested: ${record(shape.nested, "_SHAPE")}, items: ${record(shape.items, "_SHAPE")}, maps: ${record(shape.maps, "_MAP")} } as const;`,
     );
     visiting.delete(name);
     emitted.add(name);

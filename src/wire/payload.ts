@@ -1,14 +1,19 @@
 // The payload builder: it shapes what the tag sends by the wire schema's generated field lists and
 // length caps (src/wire/generated.ts), so a payload carries exactly the fields the schema allows.
 import {
+  PURCHASE_EVENT_SHAPE,
   SCHEMA_VERSION,
-  WIRE_EVENT_SHAPE,
+  TRACKED_EVENT_SHAPE,
   WIRE_PING_SHAPE,
+  type PurchaseEvent,
+  type TrackedEvent,
   type WireEvent,
   type WirePing,
 } from "./generated";
 
-export type EventInput = Omit<WireEvent, "schema_version" | "event_id">;
+export type TrackedEventInput = Omit<TrackedEvent, "schema_version" | "event_id">;
+export type PurchaseEventInput = Omit<PurchaseEvent, "schema_version" | "event_id">;
+export type EventInput = TrackedEventInput | PurchaseEventInput;
 export type PingInput = Omit<WirePing, "schema_version" | "event_id">;
 
 const HEX = "0123456789abcdef";
@@ -38,19 +43,33 @@ function randomBytes(length: number): Uint8Array {
 }
 
 /**
- * An object's shape, as generated: its field list, its required fields, its strings' caps and its
- * nested objects' shapes.
+ * A map's rules, as generated: its key cap and pattern, its values' JSON types and their strings'
+ * length cap.
+ */
+export interface MapShape {
+  readonly maxProperties?: number;
+  readonly keyPattern?: string;
+  readonly values: readonly ("string" | "number" | "integer" | "boolean")[];
+  readonly maxLength?: number;
+}
+
+/**
+ * An object's shape, as generated: its field list, its required fields, its strings' and arrays'
+ * caps, its nested objects' shapes, its arrays' item shapes and its maps' rules.
  */
 export interface Shape {
   readonly fields: readonly string[];
   readonly required: readonly string[];
   readonly maxLength: Readonly<Record<string, number>>;
+  readonly maxItems: Readonly<Record<string, number>>;
   readonly nested: Readonly<Record<string, Shape>>;
+  readonly items: Readonly<Record<string, Shape>>;
+  readonly maps: Readonly<Record<string, MapShape>>;
 }
 
 /**
- * A payload the tag can't build: a field the schema requires is missing or empty, or an identifier
- * is over its cap.
+ * A payload the tag can't build: a field the schema requires is missing or empty, an identifier is
+ * over its cap, or a value breaks a rule the tag can't keep for it without changing what it says.
  */
 export class WirePayloadError extends Error {
   constructor(
@@ -66,13 +85,16 @@ export class WirePayloadError extends Error {
  * What a string over its cap becomes, by its path. `cut`: free text, cut to the cap on a whole
  * character. `subtags`: a BCP 47 tag, cut to its whole subtags that fit (RFC 4647 lookup). `drop`:
  * an optional structured value a cut would turn into another one, left out. A capped field not
- * listed here is an identifier, which a cut would silently re-target: the payload is refused.
+ * listed here is an identifier, which a cut would silently re-target: the payload is refused. An
+ * array's items are listed as `[]`, and a map's string values as `.*`.
  */
 export const OVERFLOW: Readonly<Record<string, "cut" | "subtags" | "drop">> = {
   "event.url": "cut",
   "event.referrer": "cut",
   "event.page_title": "cut",
   "event.language": "subtags",
+  "event.props.*": "cut",
+  "event.purchase.items[].name": "cut",
   "ping.path": "cut",
   "ping.referrer_host": "drop",
   "ping.utm.source": "cut",
@@ -109,9 +131,9 @@ export function cutSubtags(tag: string, cap: number): string | undefined {
 }
 
 /** value within its cap, by OVERFLOW; undefined to leave the field out. */
-function capped(value: string, cap: number, at: string): string | undefined {
+function capped(value: string, cap: number, at: string, rule: string = at): string | undefined {
   if (value.length <= cap) return value;
-  switch (OVERFLOW[at]) {
+  switch (OVERFLOW[rule.replace(/\[\d+\]/g, "[]")]) {
     case "cut":
       return cutText(value, cap);
     case "subtags":
@@ -123,12 +145,56 @@ function capped(value: string, cap: number, at: string): string | undefined {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A map kept to its rules: values left undefined are left out, and a string over the cap is cut by
+ * OVERFLOW. Throws WirePayloadError on a key the pattern refuses (such as a reserved am_ one), more
+ * keys than the cap, or a value of another type (a nested object, an array, null, or a number that
+ * isn't finite, which JSON can't carry), since leaving any of them out would change what the site
+ * sent without telling it.
+ */
+function shapeMap(input: unknown, rules: MapShape, path: string): Record<string, unknown> {
+  if (!isRecord(input)) throw new WirePayloadError(path, "is not a flat object");
+  const keyPattern = rules.keyPattern === undefined ? undefined : new RegExp(rules.keyPattern, "u");
+  const out: Record<string, unknown> = {};
+  let count = 0;
+  for (const key of Object.keys(input)) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (keyPattern !== undefined && !keyPattern.test(key)) {
+      throw new WirePayloadError(`${path}.${key}`, "is a reserved or empty key");
+    }
+    if (rules.maxProperties !== undefined && ++count > rules.maxProperties) {
+      throw new WirePayloadError(path, `has more than ${rules.maxProperties} keys`);
+    }
+    if (typeof value === "string" && rules.values.includes("string")) {
+      const kept = rules.maxLength === undefined ? value : capped(value, rules.maxLength, `${path}.${key}`, `${path}.*`);
+      if (kept !== undefined) out[key] = kept;
+    } else if (
+      typeof value === "number" &&
+      (rules.values.includes("number") ? Number.isFinite(value) : rules.values.includes("integer") && Number.isInteger(value))
+    ) {
+      out[key] = value;
+    } else if (typeof value === "boolean" && rules.values.includes("boolean")) {
+      out[key] = value;
+    } else {
+      throw new WirePayloadError(`${path}.${key}`, `is not one of ${rules.values.join(", ")}`);
+    }
+  }
+  return out;
+}
+
 /**
  * Copies the listed fields that are set, drops empty optional strings, keeps strings to their caps
- * by OVERFLOW, and shapes nested objects the same way, leaving out an optional one that ends up
- * empty. Anything not in a list is left out. Throws WirePayloadError when a required field is
- * missing or an empty string, so the result has every field its type requires, or when an
- * identifier is over its cap.
+ * by OVERFLOW, shapes nested objects and arrays' items the same way and maps by their rules, and
+ * leaves out an optional object, array or map that ends up empty. Anything not in a list is left
+ * out. Throws WirePayloadError when a required field is missing or an empty string, so the result
+ * has every field its type requires, when an identifier is over its cap, when an array has more
+ * items than its cap (cutting an order's lines would change the order), or when a map breaks a
+ * rule (shapeMap).
  */
 function shape<T extends object>(input: T, spec: Shape, path: string): T {
   const source = input as Record<string, unknown>;
@@ -146,6 +212,26 @@ function shape<T extends object>(input: T, spec: Shape, path: string): T {
       if (required || Object.keys(inner).length > 0) out[field] = inner;
       continue;
     }
+    const items = spec.items[field];
+    if (items !== undefined && Array.isArray(value)) {
+      const cap = spec.maxItems[field];
+      if (cap !== undefined && value.length > cap) {
+        throw new WirePayloadError(`${path}.${field}`, `has more than ${cap} items`);
+      }
+      const inner = value.map((item: unknown, index) => {
+        const at = `${path}.${field}[${index}]`;
+        if (!isRecord(item)) throw new WirePayloadError(at, "is not an object");
+        return shape(item, items, at);
+      });
+      if (required || inner.length > 0) out[field] = inner;
+      continue;
+    }
+    const map = spec.maps[field];
+    if (map !== undefined) {
+      const inner = shapeMap(value, map, `${path}.${field}`);
+      if (required || Object.keys(inner).length > 0) out[field] = inner;
+      continue;
+    }
     const cap = spec.maxLength[field];
     if (typeof value !== "string" || cap === undefined) {
       out[field] = value;
@@ -160,10 +246,19 @@ function shape<T extends object>(input: T, spec: Shape, path: string): T {
   return out as T;
 }
 
-/** Builds an event; throws WirePayloadError when a required field is missing or empty. */
+/**
+ * Builds an event: a purchase when the input carries a purchase, which then needs type purchase,
+ * and any other event otherwise. Throws WirePayloadError when a required field is missing or empty,
+ * or a value breaks a rule the tag can't keep for it (shape).
+ */
 export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireEvent {
-  const event: WireEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
-  return shape(event, WIRE_EVENT_SHAPE, "event");
+  if ("purchase" in input && input.purchase !== undefined) {
+    if (input.type !== "purchase") throw new WirePayloadError("event.type", 'is not "purchase" on an event with a purchase');
+    const event: PurchaseEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
+    return shape(event, PURCHASE_EVENT_SHAPE, "event");
+  }
+  const event: TrackedEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
+  return shape(event, TRACKED_EVENT_SHAPE, "event");
 }
 
 /**

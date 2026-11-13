@@ -27,6 +27,22 @@ export const EVENT = {
   props: { plan: "pro" },
 } as const;
 
+/** A valid v1 purchase with every field. */
+export const PURCHASE = {
+  ...EVENT,
+  type: "purchase",
+  props: { coupon: "NOV10" },
+  purchase: {
+    order_id: "1001",
+    revenue: 249.9,
+    currency: "SEK",
+    items: [
+      { sku: "TSH-RED-M", name: "T-shirt, red, M", qty: 2, price: 99.95 },
+      { sku: "CAP-01", qty: 1, price: 50 },
+    ],
+  },
+} as const;
+
 /** A valid v1 ping with every field. */
 export const PING = {
   schema_version: 1,

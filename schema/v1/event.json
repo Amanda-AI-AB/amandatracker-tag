@@ -2,88 +2,178 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/event.json",
   "title": "WireEvent",
-  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties.",
-  "type": "object",
-  "additionalProperties": false,
-  "required": [
-    "schema_version",
-    "tag_version",
-    "site_id",
-    "event_id",
-    "type",
-    "client_ts",
-    "url",
-    "visitor_id",
-    "session_id",
-    "consent"
-  ],
-  "properties": {
-    "schema_version": {
-      "description": "The wire schema's major version: this file's.",
-      "const": 1
+  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; every other event is a TrackedEvent, which never does. The two are told apart by purchase alone: one requires it and the other doesn't list it.",
+  "oneOf": [{ "$ref": "#/$defs/TrackedEvent" }, { "$ref": "#/$defs/PurchaseEvent" }],
+  "$defs": {
+    "TrackedEvent": {
+      "description": "An event that isn't a purchase, such as a pageview or a custom event.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "tag_version",
+        "site_id",
+        "event_id",
+        "type",
+        "client_ts",
+        "url",
+        "visitor_id",
+        "session_id",
+        "consent"
+      ],
+      "properties": {
+        "schema_version": {
+          "description": "The wire schema's major version: this file's.",
+          "const": 1
+        },
+        "tag_version": {
+          "$ref": "#/$defs/TagVersion"
+        },
+        "site_id": {
+          "$ref": "#/$defs/SiteId"
+        },
+        "event_id": {
+          "description": "Minted by the tag for each event; with site_id, the key that makes redelivery idempotent.",
+          "$ref": "#/$defs/Uuidv7"
+        },
+        "type": {
+          "$ref": "#/$defs/EventType"
+        },
+        "client_ts": {
+          "description": "When the event happened, by the browser's clock: Unix epoch milliseconds.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "url": {
+          "description": "The page's URL.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "referrer": {
+          "description": "The document's referrer, when it has one.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "page_title": {
+          "description": "The document's title, when it has one.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "language": {
+          "$ref": "#/$defs/Language"
+        },
+        "visitor_id": {
+          "description": "The first-party visitor id.",
+          "$ref": "#/$defs/Uuidv7"
+        },
+        "session_id": {
+          "description": "The first-party session id.",
+          "$ref": "#/$defs/Uuidv7"
+        },
+        "consent": {
+          "$ref": "#/$defs/Consent"
+        },
+        "props": {
+          "$ref": "#/$defs/Props"
+        }
+      }
     },
-    "tag_version": {
+    "PurchaseEvent": {
+      "description": "A purchase: the envelope every event carries, type purchase, and the order in purchase (01 §4).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "tag_version",
+        "site_id",
+        "event_id",
+        "type",
+        "client_ts",
+        "url",
+        "visitor_id",
+        "session_id",
+        "consent",
+        "purchase"
+      ],
+      "properties": {
+        "schema_version": {
+          "description": "The wire schema's major version: this file's.",
+          "const": 1
+        },
+        "tag_version": {
+          "$ref": "#/$defs/TagVersion"
+        },
+        "site_id": {
+          "$ref": "#/$defs/SiteId"
+        },
+        "event_id": {
+          "description": "Minted by the tag for each event; with site_id, the key that makes redelivery idempotent.",
+          "$ref": "#/$defs/Uuidv7"
+        },
+        "type": {
+          "description": "Always purchase.",
+          "const": "purchase"
+        },
+        "client_ts": {
+          "description": "When the event happened, by the browser's clock: Unix epoch milliseconds.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "url": {
+          "description": "The page's URL.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "referrer": {
+          "description": "The document's referrer, when it has one.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "page_title": {
+          "description": "The document's title, when it has one.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "language": {
+          "$ref": "#/$defs/Language"
+        },
+        "visitor_id": {
+          "description": "The first-party visitor id.",
+          "$ref": "#/$defs/Uuidv7"
+        },
+        "session_id": {
+          "description": "The first-party session id.",
+          "$ref": "#/$defs/Uuidv7"
+        },
+        "consent": {
+          "$ref": "#/$defs/Consent"
+        },
+        "props": {
+          "$ref": "#/$defs/Props"
+        },
+        "purchase": {
+          "$ref": "#/$defs/Purchase"
+        }
+      }
+    },
+    "TagVersion": {
       "description": "The semver of the tag build that sent the event.",
       "type": "string",
       "maxLength": 64,
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
     },
-    "site_id": {
-      "$ref": "#/$defs/SiteId"
-    },
-    "event_id": {
-      "description": "Minted by the tag for each event; with site_id, the key that makes redelivery idempotent.",
-      "$ref": "#/$defs/Uuidv7"
-    },
-    "type": {
-      "$ref": "#/$defs/EventType"
-    },
-    "client_ts": {
-      "description": "When the event happened, by the browser's clock: Unix epoch milliseconds.",
-      "type": "integer",
-      "minimum": 0
-    },
-    "url": {
-      "description": "The page's URL.",
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 2048
-    },
-    "referrer": {
-      "description": "The document's referrer, when it has one.",
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 2048
-    },
-    "page_title": {
-      "description": "The document's title, when it has one.",
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 512
-    },
-    "language": {
+    "Language": {
       "description": "The browser's language: a BCP 47 tag.",
       "type": "string",
       "maxLength": 35,
       "pattern": "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$"
     },
-    "visitor_id": {
-      "description": "The first-party visitor id.",
-      "$ref": "#/$defs/Uuidv7"
-    },
-    "session_id": {
-      "description": "The first-party session id.",
-      "$ref": "#/$defs/Uuidv7"
-    },
-    "consent": {
-      "$ref": "#/$defs/Consent"
-    },
-    "props": {
-      "description": "The event's own properties. Open for now; vetted shapes per event type come later.",
-      "type": "object"
-    }
-  },
-  "$defs": {
     "Uuidv7": {
       "description": "A UUID, version 7, in lower-case hex.",
       "type": "string",
@@ -117,6 +207,89 @@
         },
         "ads": {
           "$ref": "#/$defs/ConsentState"
+        }
+      }
+    },
+    "Props": {
+      "description": "The event's own properties (01 §4): a flat object of at most 25 keys, each value a string of at most 200 characters (03 §5), a number or a boolean. Keys starting with am_ are reserved for the tag and refused. 01 §4 also caps props at 8 KB in total, which JSON Schema can't express: the collector's payload cap is its backstop (AAI-65).",
+      "type": "object",
+      "maxProperties": 25,
+      "propertyNames": {
+        "description": "Any non-empty key that doesn't start with am_.",
+        "type": "string",
+        "pattern": "^(?:[^a]|a(?:[^m]|$)|am(?:[^_]|$))"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/PropValue"
+      }
+    },
+    "PropValue": {
+      "description": "One property's value: a string of at most 200 characters, a number or a boolean.",
+      "oneOf": [
+        { "type": "string", "maxLength": 200 },
+        { "type": "number" },
+        { "type": "boolean" }
+      ]
+    },
+    "Purchase": {
+      "description": "The order a purchase records, as amanda('purchase', {order_id, revenue, currency, items}) gives it (01 §4).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["order_id", "revenue", "currency"],
+      "properties": {
+        "order_id": {
+          "description": "The shop's id of the order; with site_id, the key purchases are deduplicated by (AAI-104).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "revenue": {
+          "description": "The order's total, in currency's major unit (12.5 is 12.50).",
+          "type": "number",
+          "minimum": 0
+        },
+        "currency": {
+          "description": "The ISO 4217 code of the order's currency, in upper case.",
+          "type": "string",
+          "maxLength": 3,
+          "pattern": "^[A-Z]{3}$"
+        },
+        "items": {
+          "description": "The order's lines, 1 to 50.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/PurchaseItem" }
+        }
+      }
+    },
+    "PurchaseItem": {
+      "description": "One line of an order.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sku", "qty", "price"],
+      "properties": {
+        "sku": {
+          "description": "The product's SKU, or the shop's id of it.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "description": "The product's name, when the shop gives one.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "qty": {
+          "description": "How many were bought.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "price": {
+          "description": "The price of one, in the order's currency's major unit.",
+          "type": "number",
+          "minimum": 0
         }
       }
     }
