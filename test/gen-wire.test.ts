@@ -198,6 +198,22 @@ describe("gen-wire", () => {
     expect(() => generate(dir)).toThrow("Bag's values must be strings, numbers or booleans");
   });
 
+  it("refuses a map whose values have more than one string branch", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 } },
+      $defs: {
+        Bag: {
+          type: "object",
+          additionalProperties: { oneOf: [{ type: "string", maxLength: 200 }, { type: "string", maxLength: 64 }] },
+        },
+      },
+    });
+    expect(() => generate(dir)).toThrow("Bag's values have more than one string branch");
+  });
+
   it("refuses propertyNames that aren't a string schema", () => {
     schema("a.json", {
       title: "Thing",

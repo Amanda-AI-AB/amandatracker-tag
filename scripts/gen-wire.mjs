@@ -212,6 +212,9 @@ export function generate(versionDir) {
       if (!SCALARS.has(branch.type) || extra.length > 0) {
         throw new Error(`${file}: ${name}'s values must be strings, numbers or booleans with at most a maxLength`);
       }
+      if (branch.type === "string" && types.includes("string")) {
+        throw new Error(`${file}: ${name}'s values have more than one string branch, and the builder keeps one maxLength`);
+      }
       types.push(branch.type);
       if (typeof branch.maxLength === "number") maxLength = branch.maxLength;
     }
