@@ -8,7 +8,7 @@ export interface EventBatch {
   /** The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). */
   seq?: number;
   /** The batch's events, 1 to 10. */
-  e: WireEvent[];
+  e: [WireEvent, ...WireEvent[]];
 }
 
 export const EVENT_BATCH_FIELDS = ["seq", "e"] as const;
@@ -24,7 +24,8 @@ export const EVENT_BATCH_MAX_ITEMS = { e: 10 } as const;
 /** A batch of anonymous pings, sent by declined mode `pings`. It carries no seq: pings are never sequence-linkable. */
 export interface PingBatch {
   /** The batch's pings, 1 to 10. */
-  e: WirePing[];
+  e: [WirePing, ...WirePing[]];
+  seq?: never;
 }
 
 export const PING_BATCH_FIELDS = ["e"] as const;
@@ -56,6 +57,10 @@ export interface TrackedEvent {
   session_id: SessionId;
   consent: Consent;
   props?: Props;
+  purchase?: never;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
 }
 
 export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "props"] as const;
@@ -90,6 +95,9 @@ export interface PurchaseEvent {
   consent: Consent;
   props?: Props;
   purchase: Purchase;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
 }
 
 export const PURCHASE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "props", "purchase"] as const;
@@ -182,7 +190,7 @@ export interface Purchase {
   /** The ISO 4217 code of the order's currency, in upper case. */
   currency: string;
   /** The order's lines, 1 to 50. */
-  items?: PurchaseItem[];
+  items?: [PurchaseItem, ...PurchaseItem[]];
 }
 
 export const PURCHASE_FIELDS = ["order_id", "revenue", "currency", "items"] as const;
@@ -256,6 +264,17 @@ export interface WirePing {
   /** The referrer's hostname alone, when there is a referrer. */
   referrer_host?: string;
   utm?: Utm;
+  tag_version?: never;
+  client_ts?: never;
+  url?: never;
+  referrer?: never;
+  page_title?: never;
+  language?: never;
+  visitor_id?: never;
+  session_id?: never;
+  consent?: never;
+  props?: never;
+  purchase?: never;
 }
 
 export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm"] as const;

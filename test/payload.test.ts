@@ -33,7 +33,7 @@ function eventInput(): TrackedEventInput {
 
 function purchaseInput(): PurchaseEventInput {
   const { schema_version, event_id, ...input } = PURCHASE;
-  const items = input.purchase.items.map((item) => ({ ...item }));
+  const items = input.purchase.items.map((item) => ({ ...item })) as Items;
   return { ...input, consent: { ...input.consent }, props: { ...input.props }, purchase: { ...input.purchase, items } };
 }
 
@@ -254,7 +254,7 @@ describe("buildPing", () => {
       order_id: "1001",
       revenue: 99,
       language: "sv",
-    } as PingInput;
+    } as unknown as PingInput;
     const ping = buildPing(input);
     expect(Object.keys(ping).sort()).toEqual(
       ["event_id", "path", "referrer_host", "schema_version", "site_id", "type", "utm"],
@@ -405,7 +405,7 @@ describe("buildEvent purchase", () => {
 
   it("leaves out an empty item list and an empty item name", () => {
     const input = purchaseInput();
-    const event = buildEvent({ ...input, purchase: { ...input.purchase, items: [] } });
+    const event = buildEvent({ ...input, purchase: { ...input.purchase, items: [] as unknown as Items } });
     expect(event).not.toHaveProperty("purchase.items");
     const named = buildEvent({ ...input, purchase: { ...input.purchase, items: [{ sku: "a", name: "", qty: 1, price: 1 }] } });
     expect(named).not.toHaveProperty("purchase.items.0.name");
@@ -442,7 +442,7 @@ describe("buildEvent purchase", () => {
 
   it("throws on an item without a sku, naming the item", () => {
     const input = purchaseInput();
-    const items = [{ ...PURCHASE.purchase.items[0] }, { qty: 1, price: 1 }] as Items;
+    const items = [{ ...PURCHASE.purchase.items[0] }, { qty: 1, price: 1 }] as unknown as Items;
     expect(() => buildEvent({ ...input, purchase: { ...input.purchase, items } })).toThrow(
       new WirePayloadError("event.purchase.items[1].sku"),
     );
@@ -453,7 +453,7 @@ describe("buildEvent purchase", () => {
     expect(() => buildEvent({ ...input, purchase: { ...input.purchase, order_id: "o".repeat(129) } })).toThrow(
       new WirePayloadError("event.purchase.order_id", "is over its cap of 128 characters"),
     );
-    const items = [{ sku: "s".repeat(129), qty: 1, price: 1 }];
+    const items: Items = [{ sku: "s".repeat(129), qty: 1, price: 1 }];
     expect(() => buildEvent({ ...input, purchase: { ...input.purchase, items } })).toThrow(
       new WirePayloadError("event.purchase.items[0].sku", "is over its cap of 128 characters"),
     );
@@ -461,7 +461,7 @@ describe("buildEvent purchase", () => {
 
   it("cuts an item name over 200 characters", () => {
     const input = purchaseInput();
-    const items = [{ sku: "a", name: "n".repeat(250), qty: 1, price: 1 }];
+    const items: Items = [{ sku: "a", name: "n".repeat(250), qty: 1, price: 1 }];
     const event = buildEvent({ ...input, purchase: { ...input.purchase, items } });
     expect(event).toHaveProperty("purchase.items.0.name", "n".repeat(200));
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
@@ -469,7 +469,7 @@ describe("buildEvent purchase", () => {
 
   it("takes 50 items and throws on 51, rather than cut the order", () => {
     const input = purchaseInput();
-    const items = (count: number) => Array.from({ length: count }, () => ({ sku: "a", qty: 1, price: 1 }));
+    const items = (count: number) => Array.from({ length: count }, () => ({ sku: "a", qty: 1, price: 1 })) as Items;
     expect(validate(buildEvent({ ...input, purchase: { ...input.purchase, items: items(50) } }))).toBe(true);
     expect(() => buildEvent({ ...input, purchase: { ...input.purchase, items: items(51) } })).toThrow(
       new WirePayloadError("event.purchase.items", "has more than 50 items"),

@@ -251,13 +251,39 @@ describe("gen-wire", () => {
     });
 
     const out = generate(dir);
-    expect(out).toContain("export interface Many {\n  e: Item[];\n}");
+    expect(out).toContain("export interface Many {\n  e: [Item, ...Item[]];\n}");
     expect(out).toContain("export interface Mixed {\n  e?: (Item | string)[];\n}");
     expect(out).toContain("export const MANY_MAX_ITEMS = { e: 10 } as const;");
     expect(out).not.toContain("MIXED_MAX_ITEMS");
     expect(out).toContain("export type Envelope = Many | Mixed;");
     expect(out).not.toContain("ENVELOPE_FIELDS");
     expect(out).toContain("export const SCHEMA_VERSION = 2;");
+  });
+
+  it("types the properties a oneOf branch's siblings have and it lacks as never, through nested oneOfs", () => {
+    schema("a.json", {
+      title: "Envelope",
+      oneOf: [{ $ref: "#/$defs/Counted" }, { $ref: "#/$defs/Either" }],
+      $defs: {
+        Counted: {
+          type: "object",
+          additionalProperties: false,
+          properties: { n: { type: "number" }, seq: { type: "integer" }, e: { type: "string" } },
+        },
+        Either: { oneOf: [{ $ref: "#/$defs/Plain" }, { $ref: "#/$defs/Tagged" }] },
+        Plain: { type: "object", additionalProperties: false, properties: { e: { type: "string" } } },
+        Tagged: { type: "object", additionalProperties: false, properties: { e: { type: "string" }, tag: { type: "string" } } },
+        Loose: { oneOf: [{ $ref: "#/$defs/Plain" }, { type: "string" }] },
+      },
+    });
+    schema("b.json", { title: "Item", type: "object", additionalProperties: false, properties: { schema_version: { const: 1 } } });
+
+    const out = generate(dir);
+    expect(out).toContain("export interface Counted {\n  n?: number;\n  seq?: number;\n  e?: string;\n  tag?: never;\n}");
+    expect(out).toContain("export interface Plain {\n  e?: string;\n  n?: never;\n  seq?: never;\n  tag?: never;\n}");
+    expect(out).toContain("export interface Tagged {\n  e?: string;\n  tag?: string;\n  n?: never;\n  seq?: never;\n}");
+    expect(out).toContain("export interface Item {\n  schema_version?: 1;\n}");
+    expect(out).toContain('export const PLAIN_FIELDS = ["e"] as const;');
   });
 
   it("refuses an array without items", () => {
