@@ -1,0 +1,33 @@
+# Pull-request checks for the tag repo (AAI-787). The `pr-amandatracker-tag` trigger (AAI-59) runs it
+# as `cloudbuild-pr`, which can't deploy anywhere: it only installs, type-checks, tests and builds.
+# `pnpm build` ends with the size gate, so a core bundle over 15 KB gzipped fails the check.
+#
+# Every step runs pnpm through corepack, at the version package.json's packageManager pins.
+steps:
+  - id: install
+    name: node:22-bookworm
+    entrypoint: corepack
+    args: [pnpm, install, --frozen-lockfile]
+
+  - id: typecheck
+    name: node:22-bookworm
+    entrypoint: corepack
+    args: [pnpm, typecheck]
+
+  - id: test
+    name: node:22-bookworm
+    entrypoint: corepack
+    args: [pnpm, test]
+
+  - id: build
+    name: node:22-bookworm
+    entrypoint: corepack
+    args: [pnpm, build]
+
+timeout: 900s
+options:
+  # Builds that run as a chosen service account must log to Cloud Logging only.
+  logging: CLOUD_LOGGING_ONLY
+  env:
+    - CI=true
+    - COREPACK_ENABLE_DOWNLOAD_PROMPT=0
