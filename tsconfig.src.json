@@ -1,0 +1,13 @@
+{
+  // The tag's own code, which runs in browsers: ES2018 and the DOM, without Node's types, so that
+  // Buffer, process, require and post-ES2018 built-ins (Array.prototype.at, Object.hasOwn, ...)
+  // fail to compile in src/. esbuild lowers syntax to ES2018 but adds no polyfills, so this check is
+  // what keeps a.js to the APIs its browsers have. tsconfig.json checks the tests and scripts, with
+  // Node's types. test/browser-target.test.ts proves both checks.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2018", "DOM"],
+    "types": []
+  },
+  "include": ["src"]
+}

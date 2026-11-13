@@ -14,7 +14,7 @@
     "gen:wire": "node scripts/gen-wire.mjs",
     "size": "node scripts/size-gate.mjs dist/a.js",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.src.json",
     "check": "pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {

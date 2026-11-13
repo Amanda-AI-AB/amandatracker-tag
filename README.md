@@ -14,7 +14,7 @@ Needs Node.js 20 or later and pnpm 9.
 
 ```sh
 pnpm install
-pnpm typecheck   # TypeScript, strict
+pnpm typecheck   # TypeScript, strict; src/ alone also as browser code (tsconfig.src.json: ES2018 + DOM, no Node types)
 pnpm test        # Vitest
 pnpm build       # dist/a.js, dist/adapters/*.js, the size gate, then dist/schema/
 pnpm gen:wire    # src/wire/generated.ts from the wire schema
