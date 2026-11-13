@@ -93,9 +93,11 @@ export class WirePayloadError extends Error {
 /**
  * What a string over its cap becomes, by its path. `cut`: free text, cut to the cap on a whole
  * character. `subtags`: a BCP 47 tag, cut to its whole subtags that fit (RFC 4647 lookup). `drop`:
- * an optional structured value a cut would turn into another one, left out. A capped field not
- * listed here is an identifier, which a cut would silently re-target: the payload is refused. An
- * array's items are listed as `[]`, and a map's string values as `.*`.
+ * an optional structured value a cut would turn into another one, left out; it is left out too when
+ * it breaks its pattern (a full referrer URL given as the referrer's host), since sending what it
+ * holds instead could carry PII. A capped field not listed here is an identifier, which a cut would
+ * silently re-target: the payload is refused. An array's items are listed as `[]`, and a map's
+ * string values as `.*`.
  */
 export const OVERFLOW: Readonly<Record<string, "cut" | "subtags" | "drop">> = {
   "event.url": "cut",
@@ -118,6 +120,28 @@ export const OVERFLOW: Readonly<Record<string, "cut" | "subtags" | "drop">> = {
  * either case, and site JS often gives it in lower case ("sek").
  */
 export const UPPER_CASE: readonly string[] = ["event.purchase.currency"];
+
+/**
+ * URL parts cut off before a string is capped, by path: a string is cut at the first of these
+ * characters it holds. A ping's path loses its query and fragment, so neither an email address nor
+ * a reset token leaves a browser whose visitor declined; an event's URLs lose their fragment, which
+ * can hold an OAuth implicit flow's access token and never reaches a server otherwise.
+ */
+export const STRIP_FROM: Readonly<Record<string, string>> = {
+  "event.url": "#",
+  "event.referrer": "#",
+  "ping.path": "?#",
+};
+
+/** value up to the first of the characters in from it holds, or whole when it holds none. */
+export function stripFrom(value: string, from: string): string {
+  let end = value.length;
+  for (const char of from) {
+    const at = value.indexOf(char);
+    if (at !== -1 && at < end) end = at;
+  }
+  return value.slice(0, end);
+}
 
 /** The first `cap` UTF-16 units of value, one fewer when the cut would split a surrogate pair. */
 export function cutText(value: string, cap: number): string {
@@ -243,11 +267,11 @@ function isType(value: unknown, type: JsonType): boolean {
 }
 
 /**
- * One field's value kept to its rules: a string upper-cased by UPPER_CASE, kept to its cap by
- * OVERFLOW and checked against its pattern; a number checked against its minimum; a const or enum
- * checked against its values; a nested object, an array's items and a map shaped by theirs.
- * Undefined to leave the field out: an optional string OVERFLOW drops, or an optional object, array
- * or map that ends up empty. Throws WirePayloadError on a value of another type (a revenue given as
+ * One field's value kept to its rules: a string upper-cased by UPPER_CASE, cut by STRIP_FROM, kept
+ * to its cap by OVERFLOW and checked against its pattern; a number checked against its minimum; a
+ * const or enum checked against its values; a nested object, an array's items and a map shaped by
+ * theirs. Undefined to leave the field out: an optional string OVERFLOW drops (over its cap or off
+ * its pattern) or STRIP_FROM empties, or an optional object, array or map that ends up empty. Throws WirePayloadError on a value of another type (a revenue given as
  * "249.90", NaN, items given as an object), one that breaks a rule, an array over its item cap
  * (cutting an order's lines would change the order), or an object or array the shape has no rules
  * for, since sending any of them would have the collector refuse the event.
@@ -282,6 +306,14 @@ function shapeField(value: unknown, field: string, spec: Shape, at: string, requ
   if (typeof kept === "string") {
     const rule = at.replace(/\[\d+\]/g, "[]");
     if (UPPER_CASE.includes(rule)) kept = kept.toUpperCase();
+    const strip = STRIP_FROM[rule];
+    if (strip !== undefined) {
+      kept = stripFrom(kept, strip);
+      if (kept === "") {
+        if (required) throw new WirePayloadError(at);
+        return undefined;
+      }
+    }
     const cap = spec.maxLength[field];
     if (cap !== undefined) {
       const cut = capped(kept, cap, at, rule);
@@ -290,6 +322,7 @@ function shapeField(value: unknown, field: string, spec: Shape, at: string, requ
     }
     const pattern = spec.pattern[field];
     if (pattern !== undefined && !compiledPattern(pattern).test(kept)) {
+      if (OVERFLOW[rule] === "drop") return undefined;
       throw new WirePayloadError(at, `does not match ${pattern}`);
     }
   }
@@ -349,8 +382,11 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
 }
 
 /**
- * Keeps a ping to the schema's frozen field list; scrubbing the URL to its path is the caller's.
- * Throws WirePayloadError when a required field is missing or empty.
+ * Keeps a ping to the schema's frozen field list, and scrubs it whatever the caller passes: the path
+ * loses its query string and fragment (STRIP_FROM), and a referrer_host that isn't a bare hostname,
+ * such as a full referrer URL, is left out (OVERFLOW's drop). Throws WirePayloadError when a
+ * required field is missing or empty (a path that was only a query), or a value breaks a rule the
+ * tag can't keep for it (a path that doesn't start with "/", such as a whole URL).
  */
 export function buildPing(input: PingInput, eventId: string = uuidv7()): WirePing {
   const ping: WirePing = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };

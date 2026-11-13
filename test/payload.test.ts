@@ -7,6 +7,8 @@ import {
   cutSubtags,
   cutText,
   OVERFLOW,
+  STRIP_FROM,
+  stripFrom,
   UPPER_CASE,
   uuidv7,
   WirePayloadError,
@@ -520,10 +522,81 @@ describe("compiledPattern (AAI-922)", () => {
 });
 
 describe("buildPing values (AAI-919)", () => {
-  it("throws on a path that isn't a scrubbed path, and on utm that isn't an object", () => {
-    expect(() => buildPing({ ...pingInput(), path: "/a?q=1" })).toThrow(new WirePayloadError("ping.path", "does not match ^/[^?#]*$"));
+  it("throws on a path that isn't a path, and on utm that isn't an object", () => {
+    expect(() => buildPing({ ...pingInput(), path: "a/b" })).toThrow(new WirePayloadError("ping.path", "does not match ^/[^?#]*$"));
     expect(() => buildPing({ ...pingInput(), utm: "x" } as unknown as PingInput)).toThrow(
       new WirePayloadError("ping.utm", "is not an object"),
     );
+  });
+});
+
+describe("STRIP_FROM (AAI-927)", () => {
+  const pingValidate = validator("ping.json");
+  const eventValidate = validator("event.json");
+
+  it("names only string fields of the shapes", () => {
+    const strings = (prefix: string, spec: Shape) =>
+      Object.entries(spec.types).filter(([, type]) => type === "string").map(([field]) => `${prefix}.${field}`);
+    const all = [...strings("event", TRACKED_EVENT_SHAPE), ...strings("event", PURCHASE_EVENT_SHAPE), ...strings("ping", WIRE_PING_SHAPE)];
+    for (const at of Object.keys(STRIP_FROM)) expect(all).toContain(at);
+  });
+
+  it("cuts a string at the first of its characters", () => {
+    expect(stripFrom("/a#b?c", "?#")).toBe("/a");
+    expect(stripFrom("/a?b#c", "?#")).toBe("/a");
+    expect(stripFrom("/a", "?#")).toBe("/a");
+  });
+
+  it("scrubs a ping's path of its query and fragment, so neither an email nor a token leaves without consent", () => {
+    const ping = buildPing({ ...pingInput(), path: "/reset?email=victim@example.com&token=abc#frag" });
+    expect(ping.path).toBe("/reset");
+    expect(JSON.stringify(ping)).not.toContain("victim");
+    expect(JSON.stringify(ping)).not.toContain("token");
+    expect(pingValidate(ping), JSON.stringify(pingValidate.errors)).toBe(true);
+    expect(buildPing({ ...pingInput(), path: "/callback#token=abc" }).path).toBe("/callback");
+    expect(buildPing({ ...pingInput(), path: "/?q=1" }).path).toBe("/");
+  });
+
+  it("refuses a ping whose path is only a query, rather than send an empty path", () => {
+    expect(() => buildPing({ ...pingInput(), path: "?email=victim@example.com" })).toThrow(new WirePayloadError("ping.path"));
+  });
+
+  it("refuses a whole URL given as the path, query and all", () => {
+    expect(() => buildPing({ ...pingInput(), path: "https://a.example/reset?email=victim@example.com" })).toThrow(
+      new WirePayloadError("ping.path", "does not match ^/[^?#]*$"),
+    );
+  });
+
+  it.each(["https://mail.example/inbox?id=42", "mail.example/inbox", "victim@example.com", "mail.example:8080"])(
+    "leaves out a referrer_host that isn't a bare hostname: %s",
+    (referrer_host) => {
+      const ping = buildPing({ ...pingInput(), referrer_host });
+      expect(ping).not.toHaveProperty("referrer_host");
+      expect(pingValidate(ping), JSON.stringify(pingValidate.errors)).toBe(true);
+    },
+  );
+
+  it("keeps a bare referrer hostname", () => {
+    expect(buildPing({ ...pingInput(), referrer_host: "mail.example" }).referrer_host).toBe("mail.example");
+  });
+
+  it("drops the fragment of an event's url and referrer, so an OAuth access token never leaves", () => {
+    const event = buildEvent({
+      ...eventInput(),
+      url: "https://a.example/cb?utm_source=x#access_token=abc&state=1",
+      referrer: "https://idp.example/auth?x=1#access_token=def",
+    });
+    expect(event.url).toBe("https://a.example/cb?utm_source=x");
+    expect(event.referrer).toBe("https://idp.example/auth?x=1");
+    expect(eventValidate(event), JSON.stringify(eventValidate.errors)).toBe(true);
+  });
+
+  it("leaves out a referrer that was only a fragment, and refuses such a url", () => {
+    expect(buildEvent({ ...eventInput(), referrer: "#access_token=abc" })).not.toHaveProperty("referrer");
+    expect(() => buildEvent({ ...eventInput(), url: "#access_token=abc" })).toThrow(new WirePayloadError("event.url"));
+  });
+
+  it("drops the fragment of a purchase's url too", () => {
+    expect(buildEvent({ ...purchaseInput(), url: "https://a.example/thanks#access_token=abc" }).url).toBe("https://a.example/thanks");
   });
 });
