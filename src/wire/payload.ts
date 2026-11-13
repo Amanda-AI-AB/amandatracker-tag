@@ -156,14 +156,22 @@ export function stripFrom(value: string, from: string): string {
   return value.slice(0, end);
 }
 
-/** The first `cap` UTF-16 units of value, one fewer when the cut would split a surrogate pair. */
+/**
+ * The first `cap` characters of value, counted as JSON Schema's maxLength counts them: by code
+ * point, a surrogate pair one character and a lone surrogate one too. A pair is never cut in two.
+ */
 export function cutText(value: string, cap: number): string {
-  const end = cap > 0 && isHighSurrogate(value.charCodeAt(cap - 1)) ? cap - 1 : cap;
+  let end = 0;
+  for (let count = 0; count < cap && end < value.length; count++) {
+    end += isSurrogatePair(value, end) ? 2 : 1;
+  }
   return value.slice(0, end);
 }
 
-function isHighSurrogate(code: number): boolean {
-  return code >= 0xd800 && code <= 0xdbff;
+function isSurrogatePair(value: string, at: number): boolean {
+  const high = value.charCodeAt(at);
+  const low = value.charCodeAt(at + 1);
+  return high >= 0xd800 && high <= 0xdbff && low >= 0xdc00 && low <= 0xdfff;
 }
 
 /**
@@ -182,12 +190,18 @@ export function cutSubtags(tag: string, cap: number): string | undefined {
   return fit === 0 ? undefined : subtags.slice(0, fit).join("-");
 }
 
-/** value within its cap, by OVERFLOW; undefined to leave the field out. */
+/**
+ * value within its cap of characters, counted by code point (cutText), by OVERFLOW; undefined to
+ * leave the field out.
+ */
 function capped(value: string, cap: number, at: string, rule: string = at): string | undefined {
+  // A string's UTF-16 length is never under its code-point count: within it, it is within the cap.
   if (value.length <= cap) return value;
+  const cut = cutText(value, cap);
+  if (cut.length === value.length) return value;
   switch (OVERFLOW[rule.replace(/\[\d+\]/g, "[]")]) {
     case "cut":
-      return cutText(value, cap);
+      return cut;
     case "subtags":
       return cutSubtags(value, cap);
     case "drop":

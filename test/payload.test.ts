@@ -147,11 +147,31 @@ describe("buildEvent", () => {
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
   });
 
-  it("never cuts a surrogate pair in two, so no lone surrogate reaches the collector", () => {
-    const event = buildEvent({ ...eventInput(), page_title: `${"a".repeat(511)}😀` });
-    expect(event.page_title).toBe("a".repeat(511));
-    const whole = buildEvent({ ...eventInput(), page_title: `${"a".repeat(510)}😀b` });
-    expect(whole.page_title).toBe(`${"a".repeat(510)}😀`);
+  it("counts characters by code point, as the schema's maxLength does, and never cuts a pair in two", () => {
+    const within = `${"a".repeat(511)}😀`;
+    expect(buildEvent({ ...eventInput(), page_title: within }).page_title).toBe(within);
+    const event = buildEvent({ ...eventInput(), page_title: `${"a".repeat(511)}😀b` });
+    expect(event.page_title).toBe(within);
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("keeps emoji text within its cap whole, and cuts it over the cap to the cap's count of emoji", () => {
+    const title = "😀".repeat(300);
+    expect(buildEvent({ ...eventInput(), page_title: title }).page_title).toBe(title);
+    const cut = buildEvent({ ...eventInput(), page_title: "😀".repeat(600) });
+    expect(cut.page_title).toBe("😀".repeat(512));
+    expect(validate(cut), JSON.stringify(validate.errors)).toBe(true);
+    const props = buildEvent({ ...eventInput(), props: { note: "🛒".repeat(201) } }).props;
+    expect(props?.note).toBe("🛒".repeat(200));
+  });
+
+  it("takes an identifier of emoji within its cap in code points, and refuses one over it", () => {
+    const type = "🛒".repeat(40);
+    expect(buildEvent({ ...eventInput(), type }).type).toBe(type);
+    expect(buildEvent({ ...eventInput(), type: "🛒".repeat(64) }).type).toBe("🛒".repeat(64));
+    expect(() => buildEvent({ ...eventInput(), type: "🛒".repeat(65) })).toThrow(
+      new WirePayloadError("event.type", "is over its cap of 64 characters"),
+    );
   });
 
   it("cuts an over-long language on its last whole subtag, so it still matches its pattern", () => {
@@ -177,10 +197,19 @@ describe("buildEvent", () => {
 });
 
 describe("cutText", () => {
-  it("backs off one unit when the cut ends on a high surrogate", () => {
-    expect(cutText("ab😀", 3)).toBe("ab");
-    expect(cutText("ab😀", 4)).toBe("ab😀");
+  it("counts a surrogate pair as one character and never cuts it in two", () => {
+    expect(cutText("ab😀", 2)).toBe("ab");
+    expect(cutText("ab😀", 3)).toBe("ab😀");
+    expect(cutText("ab😀c", 3)).toBe("ab😀");
+    expect(cutText("😀😀", 1)).toBe("😀");
     expect(cutText("😀", 0)).toBe("");
+    expect(cutText("ab", 5)).toBe("ab");
+  });
+
+  it("counts a lone surrogate as one character, as the schema's validators do", () => {
+    expect(cutText("a\ud83db", 2)).toBe("a\ud83d");
+    expect(cutText("a\ude00b", 2)).toBe("a\ude00");
+    expect(cutText("\ude00\ud83d😀", 3)).toBe("\ude00\ud83d😀");
   });
 });
 
@@ -287,8 +316,8 @@ describe("buildPing", () => {
   });
 
   it("cuts an over-long path and leaves out an over-long referrer_host", () => {
-    const ping = buildPing({ ...pingInput(), path: `/${"p".repeat(2046)}😀`, referrer_host: `${"h".repeat(250)}.example` });
-    expect(ping.path).toBe(`/${"p".repeat(2046)}`);
+    const ping = buildPing({ ...pingInput(), path: `/${"p".repeat(2046)}😀😀`, referrer_host: `${"h".repeat(250)}.example` });
+    expect(ping.path).toBe(`/${"p".repeat(2046)}😀`);
     expect(ping).not.toHaveProperty("referrer_host");
     expect(validate(ping), JSON.stringify(validate.errors)).toBe(true);
   });
@@ -345,8 +374,9 @@ describe("buildEvent props", () => {
   });
 
   it("cuts a string over 200 characters on a whole character", () => {
-    const event = withProps({ s: `${"x".repeat(199)}😀` });
-    expect(event.props!.s).toBe("x".repeat(199));
+    expect(withProps({ s: `${"x".repeat(199)}😀` }).props!.s).toBe(`${"x".repeat(199)}😀`);
+    const event = withProps({ s: `${"x".repeat(199)}😀😀` });
+    expect(event.props!.s).toBe(`${"x".repeat(199)}😀`);
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
   });
 
