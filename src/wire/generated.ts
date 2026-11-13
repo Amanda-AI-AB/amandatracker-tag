@@ -15,6 +15,10 @@ export const EVENT_BATCH_FIELDS = ["seq", "e"] as const;
 
 export const EVENT_BATCH_REQUIRED = ["e"] as const;
 
+export const EVENT_BATCH_TYPES = { seq: "integer", e: "array" } as const;
+
+export const EVENT_BATCH_MINIMUM = { seq: 1 } as const;
+
 export const EVENT_BATCH_MAX_ITEMS = { e: 10 } as const;
 
 /** A batch of anonymous pings, sent by declined mode `pings`. It carries no seq: pings are never sequence-linkable. */
@@ -26,6 +30,8 @@ export interface PingBatch {
 export const PING_BATCH_FIELDS = ["e"] as const;
 
 export const PING_BATCH_REQUIRED = ["e"] as const;
+
+export const PING_BATCH_TYPES = { e: "array" } as const;
 
 export const PING_BATCH_MAX_ITEMS = { e: 10 } as const;
 
@@ -64,6 +70,14 @@ export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id",
 
 export const TRACKED_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent"] as const;
 
+export const TRACKED_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", props: "object" } as const;
+
+export const TRACKED_EVENT_VALUES = { schema_version: [1] } as const;
+
+export const TRACKED_EVENT_MINIMUM = { client_ts: 0 } as const;
+
+export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+
 export const TRACKED_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
 
 /** A purchase: the envelope every event carries, type purchase, and the order in purchase (01 §4). */
@@ -98,6 +112,14 @@ export const PURCHASE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id"
 
 export const PURCHASE_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent", "purchase"] as const;
 
+export const PURCHASE_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", props: "object", purchase: "object" } as const;
+
+export const PURCHASE_EVENT_VALUES = { schema_version: [1], type: ["purchase"] } as const;
+
+export const PURCHASE_EVENT_MINIMUM = { client_ts: 0 } as const;
+
+export const PURCHASE_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+
 export const PURCHASE_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
 
 /** The semver of the tag build that sent the event. */
@@ -128,6 +150,10 @@ export const CONSENT_FIELDS = ["analytics", "ads"] as const;
 
 export const CONSENT_REQUIRED = ["analytics", "ads"] as const;
 
+export const CONSENT_TYPES = { analytics: "string", ads: "string" } as const;
+
+export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"] } as const;
+
 /** The event's own properties (01 §4): a flat object of at most 25 keys, each value a string of at most 200 characters (03 §5), a number or a boolean. Keys starting with am_ are reserved for the tag and refused. 01 §4 also caps props at 8 KB in total, which JSON Schema can't express: the collector's payload cap is its backstop (AAI-65). */
 export type Props = Record<string, PropValue>;
 
@@ -152,6 +178,12 @@ export const PURCHASE_FIELDS = ["order_id", "revenue", "currency", "items"] as c
 
 export const PURCHASE_REQUIRED = ["order_id", "revenue", "currency"] as const;
 
+export const PURCHASE_TYPES = { order_id: "string", revenue: "number", currency: "string", items: "array" } as const;
+
+export const PURCHASE_MINIMUM = { revenue: 0 } as const;
+
+export const PURCHASE_PATTERN = { currency: "^[A-Z]{3}$" } as const;
+
 export const PURCHASE_MAX_LENGTH = { order_id: 128, currency: 3 } as const;
 
 export const PURCHASE_MAX_ITEMS = { items: 50 } as const;
@@ -171,6 +203,10 @@ export interface PurchaseItem {
 export const PURCHASE_ITEM_FIELDS = ["sku", "name", "qty", "price"] as const;
 
 export const PURCHASE_ITEM_REQUIRED = ["sku", "qty", "price"] as const;
+
+export const PURCHASE_ITEM_TYPES = { sku: "string", name: "string", qty: "integer", price: "number" } as const;
+
+export const PURCHASE_ITEM_MINIMUM = { qty: 1, price: 0 } as const;
 
 export const PURCHASE_ITEM_MAX_LENGTH = { sku: 128, name: 200 } as const;
 
@@ -192,6 +228,8 @@ export const UTM_FIELDS = ["source", "medium", "campaign", "term", "content"] as
 
 export const UTM_REQUIRED = [] as const;
 
+export const UTM_TYPES = { source: "string", medium: "string", campaign: "string", term: "string", content: "string" } as const;
+
 export const UTM_MAX_LENGTH = { source: 256, medium: 256, campaign: 256, term: 256, content: 256 } as const;
 
 /** The anonymous ping a site in declined mode `pings` sends instead of an event. Cookieless: no visitor or session id, no seq, nothing linkable across events. Its field list is frozen after counsel sign-off (08 G2): adding a field is a framework amendment, never a routine release. The collector adds the server-derived fields (country, device class, server timestamp) in the Pub/Sub message. */
@@ -212,6 +250,12 @@ export interface WirePing {
 export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm"] as const;
 
 export const WIRE_PING_REQUIRED = ["schema_version", "event_id", "site_id", "type", "path"] as const;
+
+export const WIRE_PING_TYPES = { schema_version: "integer", event_id: "string", site_id: "string", type: "string", path: "string", referrer_host: "string", utm: "object" } as const;
+
+export const WIRE_PING_VALUES = { schema_version: [1] } as const;
+
+export const WIRE_PING_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", site_id: "^[A-Za-z0-9_-]+$", path: "^/[^?#]*$", referrer_host: "^[A-Za-z0-9.-]+$" } as const;
 
 export const WIRE_PING_MAX_LENGTH = { site_id: 64, type: 64, path: 2048, referrer_host: 253 } as const;
 
@@ -239,29 +283,37 @@ export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region"
 
 export const PUB_SUB_MESSAGE_REQUIRED = ["schema_version", "received_at", "region", "device_class", "event"] as const;
 
+export const PUB_SUB_MESSAGE_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", device_class: "string", event: "object" } as const;
+
+export const PUB_SUB_MESSAGE_VALUES = { schema_version: [1], device_class: ["desktop", "mobile", "tablet", "other"] } as const;
+
+export const PUB_SUB_MESSAGE_MINIMUM = { received_at: 0 } as const;
+
+export const PUB_SUB_MESSAGE_PATTERN = { region: "^[a-z0-9-]+$", country: "^[A-Z]{2}$" } as const;
+
 export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64 } as const;
 
-// Each object's shape: its field list, its required fields, its strings' and arrays' caps, its nested objects'
-// shapes, its arrays' item shapes and its maps' rules.
+// Each object's shape: its field list, its required fields, its fields' types, const or enum values, minimums
+// and patterns, its strings' and arrays' caps, its nested objects' shapes, its arrays' item shapes and its maps' rules.
 
-export const EVENT_BATCH_SHAPE = { fields: EVENT_BATCH_FIELDS, required: EVENT_BATCH_REQUIRED, maxLength: {}, maxItems: EVENT_BATCH_MAX_ITEMS, nested: {}, items: {}, maps: {} } as const;
+export const EVENT_BATCH_SHAPE = { fields: EVENT_BATCH_FIELDS, required: EVENT_BATCH_REQUIRED, types: EVENT_BATCH_TYPES, values: {}, minimum: EVENT_BATCH_MINIMUM, pattern: {}, maxLength: {}, maxItems: EVENT_BATCH_MAX_ITEMS, nested: {}, items: {}, maps: {} } as const;
 
-export const UTM_SHAPE = { fields: UTM_FIELDS, required: UTM_REQUIRED, maxLength: UTM_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+export const UTM_SHAPE = { fields: UTM_FIELDS, required: UTM_REQUIRED, types: UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: UTM_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, maxLength: WIRE_PING_MAX_LENGTH, maxItems: {}, nested: { utm: UTM_SHAPE }, items: {}, maps: {} } as const;
+export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, types: WIRE_PING_TYPES, values: WIRE_PING_VALUES, minimum: {}, pattern: WIRE_PING_PATTERN, maxLength: WIRE_PING_MAX_LENGTH, maxItems: {}, nested: { utm: UTM_SHAPE }, items: {}, maps: {} } as const;
 
-export const PING_BATCH_SHAPE = { fields: PING_BATCH_FIELDS, required: PING_BATCH_REQUIRED, maxLength: {}, maxItems: PING_BATCH_MAX_ITEMS, nested: {}, items: { e: WIRE_PING_SHAPE }, maps: {} } as const;
+export const PING_BATCH_SHAPE = { fields: PING_BATCH_FIELDS, required: PING_BATCH_REQUIRED, types: PING_BATCH_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: {}, maxItems: PING_BATCH_MAX_ITEMS, nested: {}, items: { e: WIRE_PING_SHAPE }, maps: {} } as const;
 
-export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, maxLength: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, types: CONSENT_TYPES, values: CONSENT_VALUES, minimum: {}, pattern: {}, maxLength: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const TRACKED_EVENT_SHAPE = { fields: TRACKED_EVENT_FIELDS, required: TRACKED_EVENT_REQUIRED, maxLength: TRACKED_EVENT_MAX_LENGTH, maxItems: {}, nested: { consent: CONSENT_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+export const TRACKED_EVENT_SHAPE = { fields: TRACKED_EVENT_FIELDS, required: TRACKED_EVENT_REQUIRED, types: TRACKED_EVENT_TYPES, values: TRACKED_EVENT_VALUES, minimum: TRACKED_EVENT_MINIMUM, pattern: TRACKED_EVENT_PATTERN, maxLength: TRACKED_EVENT_MAX_LENGTH, maxItems: {}, nested: { consent: CONSENT_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
-export const PURCHASE_ITEM_SHAPE = { fields: PURCHASE_ITEM_FIELDS, required: PURCHASE_ITEM_REQUIRED, maxLength: PURCHASE_ITEM_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+export const PURCHASE_ITEM_SHAPE = { fields: PURCHASE_ITEM_FIELDS, required: PURCHASE_ITEM_REQUIRED, types: PURCHASE_ITEM_TYPES, values: {}, minimum: PURCHASE_ITEM_MINIMUM, pattern: {}, maxLength: PURCHASE_ITEM_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQUIRED, maxLength: PURCHASE_MAX_LENGTH, maxItems: PURCHASE_MAX_ITEMS, nested: {}, items: { items: PURCHASE_ITEM_SHAPE }, maps: {} } as const;
+export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQUIRED, types: PURCHASE_TYPES, values: {}, minimum: PURCHASE_MINIMUM, pattern: PURCHASE_PATTERN, maxLength: PURCHASE_MAX_LENGTH, maxItems: PURCHASE_MAX_ITEMS, nested: {}, items: { items: PURCHASE_ITEM_SHAPE }, maps: {} } as const;
 
-export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, maxLength: PURCHASE_EVENT_MAX_LENGTH, maxItems: {}, nested: { consent: CONSENT_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, maxItems: {}, nested: { consent: CONSENT_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
-export const PUB_SUB_MESSAGE_SHAPE = { fields: PUB_SUB_MESSAGE_FIELDS, required: PUB_SUB_MESSAGE_REQUIRED, maxLength: PUB_SUB_MESSAGE_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+export const PUB_SUB_MESSAGE_SHAPE = { fields: PUB_SUB_MESSAGE_FIELDS, required: PUB_SUB_MESSAGE_REQUIRED, types: PUB_SUB_MESSAGE_TYPES, values: PUB_SUB_MESSAGE_VALUES, minimum: PUB_SUB_MESSAGE_MINIMUM, pattern: PUB_SUB_MESSAGE_PATTERN, maxLength: PUB_SUB_MESSAGE_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const SCHEMA_VERSION = 1;

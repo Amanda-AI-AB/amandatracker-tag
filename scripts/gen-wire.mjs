@@ -1,6 +1,7 @@
 // Generates src/wire/generated.ts from the newest wire JSON Schema in schema/v<N>/: a TypeScript
 // type for each schema and each of its $defs, and, for each object with properties (a schema's
-// top-level object or an object in $defs), its field list, its required fields, its strings' length caps, its arrays' item caps and a shape that
+// top-level object or an object in $defs), its field list, its required fields, its fields' JSON
+// types, const or enum values, minimums and patterns, its strings' length caps, its arrays' item caps and a shape that
 // ties in its nested objects' shapes, its arrays' item shapes and its maps' rules, which the payload
 // builder uses. A map is an object in $defs with no properties, whose additionalProperties name the
 // schema of its values. The schema is the source of truth; a test fails when the committed file
@@ -28,6 +29,8 @@ const TYPED = new Set([
 ]);
 // The JSON types a map's values may have.
 const SCALARS = new Set(["string", "number", "integer", "boolean"]);
+// The JSON types an object's property may have.
+const JSON_TYPES = new Set([...SCALARS, "object", "array"]);
 
 /**
  * @param {string} schemaRoot
@@ -58,18 +61,60 @@ export function generate(versionDir) {
   /**
    * @param {string} file
    * @param {string} ref
-   * @returns {{ name: string, schema: any }}
+   * @returns {{ name: string, schema: any, file: string }}
    */
   function resolveRef(file, ref) {
     const [target, pointer = ""] = ref.split("#");
     const targetFile = target || file;
     const schema = schemas.get(targetFile);
     if (!schema) throw new Error(`${file}: $ref ${ref} names no schema in ${versionDir}`);
-    if (pointer === "") return { name: schema.title, schema };
+    if (pointer === "") return { name: schema.title, schema, file: targetFile };
     const name = /^\/\$defs\/([A-Za-z0-9]+)$/.exec(pointer)?.[1];
     const def = name === undefined ? undefined : schema.$defs?.[name];
     if (name === undefined || !def) throw new Error(`${file}: $ref ${ref} resolves to nothing`);
-    return { name, schema: def };
+    return { name, schema: def, file: targetFile };
+  }
+
+  /**
+   * A node with its $refs followed, and the file it is in, which its own $refs are relative to.
+   * @param {string} file
+   * @param {any} node
+   * @returns {{ file: string, schema: any }}
+   */
+  function follow(file, node) {
+    if (!node.$ref) return { file, schema: node };
+    const target = resolveRef(file, node.$ref);
+    return follow(target.file, target.schema);
+  }
+
+  /** @param {unknown} value */
+  function valueType(value) {
+    if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
+    if (typeof value === "string" || typeof value === "boolean") return typeof value;
+    throw new Error(`a const or enum value must be a string, number or boolean, not ${JSON.stringify(value)}`);
+  }
+
+  /**
+   * A property's JSON type, which the payload builder checks its value against: a const's or an
+   * enum's by its values, and a oneOf's when its branches agree. Throws when it has no single type,
+   * rather than leave the value unchecked.
+   * @param {string} file
+   * @param {string} name
+   * @param {any} node
+   * @returns {string}
+   */
+  function jsonType(file, name, node) {
+    const { file: at, schema } = follow(file, node);
+    const values = "const" in schema ? [schema.const] : schema.enum;
+    /** @type {string[]} */
+    const types = values
+      ? values.map(valueType)
+      : schema.oneOf
+        ? schema.oneOf.map((/** @type {any} */ branch) => jsonType(at, name, branch))
+        : [schema.type];
+    const [type, ...others] = new Set(types);
+    if (type === undefined || others.length > 0 || !JSON_TYPES.has(type)) throw new Error(`${file}: ${name} has no single JSON type`);
+    return type;
   }
 
   /**
@@ -180,16 +225,18 @@ export function generate(versionDir) {
   }
 
   /**
-   * An object's shape, for the payload builder: its prefix, whether it has length caps and item
-   * caps, and the properties that are nested objects, arrays of objects and maps, each with the
-   * name of the object or map they hold.
-   * @typedef {{ prefix: string, capped: boolean, itemCapped: boolean, nested: [string, string][], items: [string, string][], maps: [string, string][] }} ShapeInfo
+   * An object's shape, for the payload builder: its prefix, which of its optional rule constants
+   * it has (VALUES, MINIMUM, PATTERN, MAX_LENGTH, MAX_ITEMS), and the properties that are nested
+   * objects, arrays of objects and maps, each with the name of the object or map they hold.
+   * @typedef {{ prefix: string, has: Set<string>, nested: [string, string][], items: [string, string][], maps: [string, string][] }} ShapeInfo
    * @type {Map<string, ShapeInfo>}
    */
   const shapes = new Map();
 
   /**
-   * The field list and the strings' length caps of an object with properties, and its shape.
+   * The field list, the fields' JSON types, their const or enum values, their numbers' minimums,
+   * their strings' patterns and length caps and their arrays' item caps of an object with
+   * properties, and its shape.
    * @param {string} file
    * @param {string} name
    * @param {any} node
@@ -203,22 +250,49 @@ export function generate(versionDir) {
     for (const key of required) {
       if (!keys.includes(key)) throw new Error(`${file}: ${name} requires ${key}, which it doesn't list`);
     }
+    const types = keys.map((key) => `${key}: ${JSON.stringify(jsonType(file, `${name}.${key}`, node.properties[key]))}`);
     const lines = [
       "",
       `export const ${prefix}_FIELDS = [${keys.map((key) => JSON.stringify(key)).join(", ")}] as const;`,
       "",
       `export const ${prefix}_REQUIRED = [${required.map((key) => JSON.stringify(key)).join(", ")}] as const;`,
+      "",
+      `export const ${prefix}_TYPES = { ${types.join(", ")} } as const;`,
     ];
+    /** @type {Set<string>} */
+    const has = new Set();
+    /**
+     * @param {string} suffix
+     * @param {(prop: any) => unknown} rule a property's rule, or undefined when it has none
+     */
+    function ruleConstant(suffix, rule) {
+      const entries = keys
+        .map((key) => [key, rule(follow(file, node.properties[key]).schema)])
+        .filter(([, value]) => value !== undefined)
+        .map(([key, value]) => `${key}: ${Array.isArray(value) ? `[${value.map((item) => JSON.stringify(item)).join(", ")}]` : JSON.stringify(value)}`);
+      if (entries.length === 0) return;
+      has.add(suffix);
+      lines.push("", `export const ${prefix}_${suffix} = { ${entries.join(", ")} } as const;`);
+    }
+    ruleConstant("VALUES", (prop) => ("const" in prop ? [prop.const] : prop.enum));
+    ruleConstant("MINIMUM", (prop) => (typeof prop.minimum === "number" ? prop.minimum : undefined));
+    ruleConstant("PATTERN", (prop) => (typeof prop.pattern === "string" ? prop.pattern : undefined));
     const caps = keys
       .map((key) => [key, deref(file, node.properties[key])])
       .filter(([, prop]) => prop.type === "string" && typeof prop.maxLength === "number")
       .map(([key, prop]) => `${key}: ${prop.maxLength}`);
-    if (caps.length > 0) lines.push("", `export const ${prefix}_MAX_LENGTH = { ${caps.join(", ")} } as const;`);
+    if (caps.length > 0) {
+      has.add("MAX_LENGTH");
+      lines.push("", `export const ${prefix}_MAX_LENGTH = { ${caps.join(", ")} } as const;`);
+    }
     const itemCaps = keys
       .map((key) => [key, deref(file, node.properties[key])])
       .filter(([, prop]) => prop.type === "array" && typeof prop.maxItems === "number")
       .map(([key, prop]) => `${key}: ${prop.maxItems}`);
-    if (itemCaps.length > 0) lines.push("", `export const ${prefix}_MAX_ITEMS = { ${itemCaps.join(", ")} } as const;`);
+    if (itemCaps.length > 0) {
+      has.add("MAX_ITEMS");
+      lines.push("", `export const ${prefix}_MAX_ITEMS = { ${itemCaps.join(", ")} } as const;`);
+    }
     /** @type {[string, string][]} */
     const nested = [];
     /** @type {[string, string][]} */
@@ -240,7 +314,7 @@ export function generate(versionDir) {
       }
     }
     if (shapes.has(name)) throw new Error(`${file}: ${name} is named twice`);
-    shapes.set(name, { prefix, capped: caps.length > 0, itemCapped: itemCaps.length > 0, nested, items, maps });
+    shapes.set(name, { prefix, has, nested, items, maps });
     return lines;
   }
 
@@ -270,8 +344,8 @@ export function generate(versionDir) {
   // The shapes go last, each after the shapes it nests, since a schema may nest another file's object.
   out.push(
     "",
-    "// Each object's shape: its field list, its required fields, its strings' and arrays' caps, its nested objects'",
-    "// shapes, its arrays' item shapes and its maps' rules.",
+    "// Each object's shape: its field list, its required fields, its fields' types, const or enum values, minimums",
+    "// and patterns, its strings' and arrays' caps, its nested objects' shapes, its arrays' item shapes and its maps' rules.",
   );
   /** @type {Set<string>} */
   const emitted = new Set();
@@ -292,10 +366,12 @@ export function generate(versionDir) {
     visiting.add(name);
     const shape = /** @type {ShapeInfo} */ (shapes.get(name));
     for (const [, target] of [...shape.nested, ...shape.items]) emitShape(target);
-    const { prefix } = shape;
+    const { prefix, has } = shape;
+    /** @param {string} suffix */
+    const rule = (suffix) => (has.has(suffix) ? `${prefix}_${suffix}` : "{}");
     out.push(
       "",
-      `export const ${prefix}_SHAPE = { fields: ${prefix}_FIELDS, required: ${prefix}_REQUIRED, maxLength: ${shape.capped ? `${prefix}_MAX_LENGTH` : "{}"}, maxItems: ${shape.itemCapped ? `${prefix}_MAX_ITEMS` : "{}"}, nested: ${record(shape.nested, "_SHAPE")}, items: ${record(shape.items, "_SHAPE")}, maps: ${record(shape.maps, "_MAP")} } as const;`,
+      `export const ${prefix}_SHAPE = { fields: ${prefix}_FIELDS, required: ${prefix}_REQUIRED, types: ${prefix}_TYPES, values: ${rule("VALUES")}, minimum: ${rule("MINIMUM")}, pattern: ${rule("PATTERN")}, maxLength: ${rule("MAX_LENGTH")}, maxItems: ${rule("MAX_ITEMS")}, nested: ${record(shape.nested, "_SHAPE")}, items: ${record(shape.items, "_SHAPE")}, maps: ${record(shape.maps, "_MAP")} } as const;`,
     );
     visiting.delete(name);
     emitted.add(name);

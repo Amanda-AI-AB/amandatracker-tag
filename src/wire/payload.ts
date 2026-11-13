@@ -1,5 +1,6 @@
-// The payload builder: it shapes what the tag sends by the wire schema's generated field lists and
-// length caps (src/wire/generated.ts), so a payload carries exactly the fields the schema allows.
+// The payload builder: it shapes what the tag sends by the wire schema's generated field lists,
+// types and rules (src/wire/generated.ts), so a payload carries exactly the fields the schema
+// allows, each with a value it accepts, or isn't built at all.
 import {
   PURCHASE_EVENT_SHAPE,
   SCHEMA_VERSION,
@@ -53,13 +54,21 @@ export interface MapShape {
   readonly maxLength?: number;
 }
 
+/** A field's JSON type, as generated. */
+export type JsonType = "string" | "number" | "integer" | "boolean" | "object" | "array";
+
 /**
- * An object's shape, as generated: its field list, its required fields, its strings' and arrays'
- * caps, its nested objects' shapes, its arrays' item shapes and its maps' rules.
+ * An object's shape, as generated: its field list, its required fields, its fields' JSON types,
+ * const or enum values, numbers' minimums and strings' patterns, its strings' and arrays' caps, its
+ * nested objects' shapes, its arrays' item shapes and its maps' rules.
  */
 export interface Shape {
   readonly fields: readonly string[];
   readonly required: readonly string[];
+  readonly types: Readonly<Record<string, JsonType>>;
+  readonly values: Readonly<Record<string, readonly (string | number | boolean)[]>>;
+  readonly minimum: Readonly<Record<string, number>>;
+  readonly pattern: Readonly<Record<string, string>>;
   readonly maxLength: Readonly<Record<string, number>>;
   readonly maxItems: Readonly<Record<string, number>>;
   readonly nested: Readonly<Record<string, Shape>>;
@@ -103,6 +112,12 @@ export const OVERFLOW: Readonly<Record<string, "cut" | "subtags" | "drop">> = {
   "ping.utm.term": "cut",
   "ping.utm.content": "cut",
 };
+
+/**
+ * Strings upper-cased before their pattern is checked, by path: an ISO 4217 code means the same in
+ * either case, and site JS often gives it in lower case ("sek").
+ */
+export const UPPER_CASE: readonly string[] = ["event.purchase.currency"];
 
 /** The first `cap` UTF-16 units of value, one fewer when the cut would split a surrogate pair. */
 export function cutText(value: string, cap: number): string {
@@ -187,14 +202,98 @@ function shapeMap(input: unknown, rules: MapShape, path: string): Record<string,
   return out;
 }
 
+const NOUN: Readonly<Record<JsonType, string>> = {
+  string: "a string",
+  number: "a finite number",
+  integer: "an integer",
+  boolean: "a boolean",
+  object: "an object",
+  array: "an array",
+};
+
+/** Whether value is of the JSON type: a number finite, and an integer a whole one. */
+function isType(value: unknown, type: JsonType): boolean {
+  switch (type) {
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "integer":
+      return Number.isInteger(value);
+    case "object":
+      return isRecord(value);
+    case "array":
+      return Array.isArray(value);
+    default:
+      return typeof value === type;
+  }
+}
+
 /**
- * Copies the listed fields that are set, drops empty optional strings, keeps strings to their caps
- * by OVERFLOW, shapes nested objects and arrays' items the same way and maps by their rules, and
- * leaves out an optional object, array or map that ends up empty. Anything not in a list is left
- * out. Throws WirePayloadError when a required field is missing or an empty string, so the result
- * has every field its type requires, when an identifier is over its cap, when an array has more
- * items than its cap (cutting an order's lines would change the order), or when a map breaks a
- * rule (shapeMap).
+ * One field's value kept to its rules: a string upper-cased by UPPER_CASE, kept to its cap by
+ * OVERFLOW and checked against its pattern; a number checked against its minimum; a const or enum
+ * checked against its values; a nested object, an array's items and a map shaped by theirs.
+ * Undefined to leave the field out: an optional string OVERFLOW drops, or an optional object, array
+ * or map that ends up empty. Throws WirePayloadError on a value of another type (a revenue given as
+ * "249.90", NaN, items given as an object), one that breaks a rule, an array over its item cap
+ * (cutting an order's lines would change the order), or an object or array the shape has no rules
+ * for, since sending any of them would have the collector refuse the event.
+ */
+function shapeField(value: unknown, field: string, spec: Shape, at: string, required: boolean): unknown {
+  const type = spec.types[field];
+  if (type === undefined) throw new WirePayloadError(at, "has no type in its shape");
+  if (!isType(value, type)) throw new WirePayloadError(at, `is not ${NOUN[type]}`);
+  if (type === "object") {
+    const nested = spec.nested[field];
+    const map = spec.maps[field];
+    let inner: Record<string, unknown>;
+    if (nested !== undefined) inner = shape(value as Record<string, unknown>, nested, at);
+    else if (map !== undefined) inner = shapeMap(value, map, at);
+    else throw new WirePayloadError(at, "has no shape the tag can check");
+    return required || Object.keys(inner).length > 0 ? inner : undefined;
+  }
+  if (type === "array") {
+    const list = value as unknown[];
+    const items = spec.items[field];
+    if (items === undefined) throw new WirePayloadError(at, "has no item shape the tag can check");
+    const cap = spec.maxItems[field];
+    if (cap !== undefined && list.length > cap) throw new WirePayloadError(at, `has more than ${cap} items`);
+    const inner = list.map((item, index) => {
+      const itemAt = `${at}[${index}]`;
+      if (!isRecord(item)) throw new WirePayloadError(itemAt, "is not an object");
+      return shape(item, items, itemAt);
+    });
+    return required || inner.length > 0 ? inner : undefined;
+  }
+  let kept = value as string | number | boolean;
+  if (typeof kept === "string") {
+    const rule = at.replace(/\[\d+\]/g, "[]");
+    if (UPPER_CASE.includes(rule)) kept = kept.toUpperCase();
+    const cap = spec.maxLength[field];
+    if (cap !== undefined) {
+      const cut = capped(kept, cap, at, rule);
+      if (cut === undefined) return undefined;
+      kept = cut;
+    }
+    const pattern = spec.pattern[field];
+    if (pattern !== undefined && !new RegExp(pattern, "u").test(kept)) {
+      throw new WirePayloadError(at, `does not match ${pattern}`);
+    }
+  }
+  const minimum = spec.minimum[field];
+  if (typeof kept === "number" && minimum !== undefined && kept < minimum) {
+    throw new WirePayloadError(at, `is under its minimum of ${minimum}`);
+  }
+  const values = spec.values[field];
+  if (values !== undefined && !values.includes(kept)) {
+    throw new WirePayloadError(at, `is not one of ${values.join(", ")}`);
+  }
+  return kept;
+}
+
+/**
+ * Copies the listed fields that are set, each kept to its rules (shapeField), and drops empty
+ * optional strings. Anything not in a list is left out. Throws WirePayloadError when a required
+ * field is missing or an empty string, so the result has every field its type requires, or when a
+ * value can't be kept to its rules (shapeField, capped, shapeMap).
  */
 function shape<T extends object>(input: T, spec: Shape, path: string): T {
   const source = input as Record<string, unknown>;
@@ -206,53 +305,24 @@ function shape<T extends object>(input: T, spec: Shape, path: string): T {
       if (required) throw new WirePayloadError(`${path}.${field}`);
       continue;
     }
-    const nested = spec.nested[field];
-    if (nested !== undefined && typeof value === "object" && value !== null) {
-      const inner = shape(value, nested, `${path}.${field}`);
-      if (required || Object.keys(inner).length > 0) out[field] = inner;
-      continue;
-    }
-    const items = spec.items[field];
-    if (items !== undefined && Array.isArray(value)) {
-      const cap = spec.maxItems[field];
-      if (cap !== undefined && value.length > cap) {
-        throw new WirePayloadError(`${path}.${field}`, `has more than ${cap} items`);
-      }
-      const inner = value.map((item: unknown, index) => {
-        const at = `${path}.${field}[${index}]`;
-        if (!isRecord(item)) throw new WirePayloadError(at, "is not an object");
-        return shape(item, items, at);
-      });
-      if (required || inner.length > 0) out[field] = inner;
-      continue;
-    }
-    const map = spec.maps[field];
-    if (map !== undefined) {
-      const inner = shapeMap(value, map, `${path}.${field}`);
-      if (required || Object.keys(inner).length > 0) out[field] = inner;
-      continue;
-    }
-    const cap = spec.maxLength[field];
-    if (typeof value !== "string" || cap === undefined) {
-      out[field] = value;
-      continue;
-    }
-    const kept = capped(value, cap, `${path}.${field}`);
+    const kept = shapeField(value, field, spec, `${path}.${field}`, required);
     if (kept !== undefined) out[field] = kept;
   }
-  // Every field out holds came from input, a capped string still a string, and every required one
-  // was checked above (only an optional one is ever dropped by its cap): out is input narrowed to
-  // the listed fields.
+  // Every field out holds came from input, of its schema type and kept to its rules, and every
+  // required one was checked above (only an optional one is ever dropped by its cap): out is input
+  // narrowed to the listed fields.
   return out as T;
 }
 
 /**
  * Builds an event: a purchase when the input carries a purchase, which then needs type purchase,
  * and any other event otherwise. Throws WirePayloadError when a required field is missing or empty,
- * or a value breaks a rule the tag can't keep for it (shape).
+ * the purchase isn't an object (null included), or a value breaks a rule the tag can't keep for it
+ * (shape).
  */
 export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireEvent {
   if ("purchase" in input && input.purchase !== undefined) {
+    if (!isRecord(input.purchase)) throw new WirePayloadError("event.purchase", "is not an object");
     if (input.type !== "purchase") throw new WirePayloadError("event.type", 'is not "purchase" on an event with a purchase');
     const event: PurchaseEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
     return shape(event, PURCHASE_EVENT_SHAPE, "event");

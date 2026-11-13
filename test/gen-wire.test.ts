@@ -50,8 +50,10 @@ describe("gen-wire", () => {
     expect(out).toContain('export const THING_FIELDS = ["schema_version", "name", "kind"] as const;');
     expect(out).toContain('export const THING_REQUIRED = ["schema_version", "name"] as const;');
     expect(out).toContain("export const THING_MAX_LENGTH = { name: 10 } as const;");
+    expect(out).toContain('export const THING_TYPES = { schema_version: "integer", name: "string", kind: "string" } as const;');
+    expect(out).toContain('export const THING_VALUES = { schema_version: [3], kind: ["a", "b"] } as const;');
     expect(out).toContain(
-      "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, maxLength: THING_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;",
+      "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, types: THING_TYPES, values: THING_VALUES, minimum: {}, pattern: {}, maxLength: THING_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;",
     );
     expect(out).toContain("export const SCHEMA_VERSION = 3;");
   });
@@ -82,11 +84,12 @@ describe("gen-wire", () => {
     expect(out).toContain("export const PART_MAX_LENGTH = { label: 8 } as const;");
     expect(out).toContain("export const PART_REQUIRED = [] as const;");
     expect(out).toContain(
-      "export const PART_SHAPE = { fields: PART_FIELDS, required: PART_REQUIRED, maxLength: PART_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;",
+      "export const PART_SHAPE = { fields: PART_FIELDS, required: PART_REQUIRED, types: PART_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: PART_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;",
     );
     expect(out).toContain(
-      "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, maxLength: {}, maxItems: {}, nested: { part: PART_SHAPE }, items: {}, maps: {} } as const;",
+      "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, types: THING_TYPES, values: THING_VALUES, minimum: {}, pattern: {}, maxLength: {}, maxItems: {}, nested: { part: PART_SHAPE }, items: {}, maps: {} } as const;",
     );
+    expect(out).toContain('export const THING_TYPES = { schema_version: "integer", part: "object", open: "object" } as const;');
     expect(out.indexOf("PART_SHAPE = ")).toBeLessThan(out.indexOf("THING_SHAPE = "));
   });
 
@@ -108,9 +111,52 @@ describe("gen-wire", () => {
     const out = generate(dir);
     expect(out).toContain("export interface Order {\n  schema_version?: 1;\n  lines?: Line[];\n  tags?: string[];\n}");
     expect(out).toContain(
-      "export const ORDER_SHAPE = { fields: ORDER_FIELDS, required: ORDER_REQUIRED, maxLength: {}, maxItems: ORDER_MAX_ITEMS, nested: {}, items: { lines: LINE_SHAPE }, maps: {} } as const;",
+      "export const ORDER_SHAPE = { fields: ORDER_FIELDS, required: ORDER_REQUIRED, types: ORDER_TYPES, values: ORDER_VALUES, minimum: {}, pattern: {}, maxLength: {}, maxItems: ORDER_MAX_ITEMS, nested: {}, items: { lines: LINE_SHAPE }, maps: {} } as const;",
     );
     expect(out.indexOf("LINE_SHAPE = ")).toBeLessThan(out.indexOf("ORDER_SHAPE = "));
+  });
+
+  it("generates the fields' minimums and patterns, following $refs into other files", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        schema_version: { const: 1 },
+        code: { type: "string", pattern: "^[A-Z]{3}$" },
+        count: { type: "integer", minimum: 1 },
+        amount: { type: "number", minimum: 0 },
+        id: { $ref: "b.json#/$defs/Id" },
+        either: { oneOf: [{ $ref: "b.json" }, { $ref: "b.json#/$defs/Pair" }] },
+      },
+    });
+    schema("b.json", {
+      title: "Other",
+      oneOf: [{ $ref: "#/$defs/Pair" }],
+      $defs: {
+        Id: { $ref: "#/$defs/Hex" },
+        Hex: { type: "string", pattern: "^[0-9a-f]{2,8}$" },
+        Pair: { type: "object", additionalProperties: false, properties: { n: { type: "number" } } },
+      },
+    });
+
+    const out = generate(dir);
+    expect(out).toContain(
+      'export const THING_TYPES = { schema_version: "integer", code: "string", count: "integer", amount: "number", id: "string", either: "object" } as const;',
+    );
+    expect(out).toContain("export const THING_MINIMUM = { count: 1, amount: 0 } as const;");
+    expect(out).toContain('export const THING_PATTERN = { code: "^[A-Z]{3}$", id: "^[0-9a-f]{2,8}$" } as const;');
+    expect(out).toContain("minimum: THING_MINIMUM, pattern: THING_PATTERN,");
+  });
+
+  it("refuses a field with no single JSON type, rather than leave its value unchecked", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 }, n: { oneOf: [{ type: "string" }, { type: "number" }] } },
+    });
+    expect(() => generate(dir)).toThrow("Thing.n has no single JSON type");
   });
 
   it("generates a map's type and rules, and ties it into the shapes that hold it", () => {

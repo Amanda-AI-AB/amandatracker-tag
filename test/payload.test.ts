@@ -6,6 +6,7 @@ import {
   cutSubtags,
   cutText,
   OVERFLOW,
+  UPPER_CASE,
   uuidv7,
   WirePayloadError,
   type EventInput,
@@ -180,6 +181,10 @@ describe("OVERFLOW", () => {
       if (required) expect([undefined, "cut"]).toContain(OVERFLOW[at]);
     }
   });
+
+  it("UPPER_CASE names only capped strings", () => {
+    for (const at of UPPER_CASE) expect(all.map((field) => field.at)).toContain(at);
+  });
 });
 
 describe("buildPing", () => {
@@ -322,8 +327,8 @@ describe("buildEvent props", () => {
   });
 
   it("throws when props isn't an object", () => {
-    expect(() => withProps(["a"])).toThrow(new WirePayloadError("event.props", "is not a flat object"));
-    expect(() => withProps("a")).toThrow(new WirePayloadError("event.props", "is not a flat object"));
+    expect(() => withProps(["a"])).toThrow(new WirePayloadError("event.props", "is not an object"));
+    expect(() => withProps("a")).toThrow(new WirePayloadError("event.props", "is not an object"));
   });
 });
 
@@ -420,6 +425,75 @@ describe("buildEvent purchase", () => {
     const items = ["a"] as unknown as Items;
     expect(() => buildEvent({ ...input, purchase: { ...input.purchase, items } })).toThrow(
       new WirePayloadError("event.purchase.items[0]", "is not an object"),
+    );
+  });
+});
+
+describe("buildEvent purchase values (AAI-919)", () => {
+  const validate = validator("event.json");
+  const build = (purchase: unknown) => buildEvent({ ...purchaseInput(), purchase } as unknown as EventInput);
+  const order = PURCHASE.purchase;
+
+  it.each([
+    ["NaN revenue", { ...order, revenue: Number.NaN }, "event.purchase.revenue", "is not a finite number"],
+    ["Infinity revenue", { ...order, revenue: Number.POSITIVE_INFINITY }, "event.purchase.revenue", "is not a finite number"],
+    ["revenue as a string", { ...order, revenue: "249.90" }, "event.purchase.revenue", "is not a finite number"],
+    ["negative revenue", { ...order, revenue: -5 }, "event.purchase.revenue", "is under its minimum of 0"],
+    ["a currency that isn't three letters", { ...order, currency: "kr" }, "event.purchase.currency", "does not match ^[A-Z]{3}$"],
+    ["a currency as a number", { ...order, currency: 752 }, "event.purchase.currency", "is not a string"],
+    ["order_id as a number", { ...order, order_id: 1001 }, "event.purchase.order_id", "is not a string"],
+    ["items not an array", { ...order, items: { sku: "x", qty: 1, price: 1 } }, "event.purchase.items", "is not an array"],
+    ["qty 0", { ...order, items: [{ sku: "x", qty: 0, price: 1 }] }, "event.purchase.items[0].qty", "is under its minimum of 1"],
+    ["qty 1.5", { ...order, items: [{ sku: "x", qty: 1.5, price: 1 }] }, "event.purchase.items[0].qty", "is not an integer"],
+    ["qty as a string", { ...order, items: [{ sku: "x", qty: "2", price: 1 }] }, "event.purchase.items[0].qty", "is not an integer"],
+    ["a negative price", { ...order, items: [{ sku: "x", qty: 1, price: -1 }] }, "event.purchase.items[0].price", "is under its minimum of 0"],
+    ["a price as a string", { ...order, items: [{ sku: "x", qty: 1, price: "1" }] }, "event.purchase.items[0].price", "is not a finite number"],
+  ])("throws on %s, rather than send a purchase the collector refuses", (_, purchase, at, problem) => {
+    expect(() => build(purchase)).toThrow(new WirePayloadError(at, problem));
+  });
+
+  it.each([
+    ["null", null],
+    ["a string", "1001"],
+    ["an array", [order]],
+  ])("throws on %s as the purchase, which isn't an object", (_, purchase) => {
+    expect(() => build(purchase)).toThrow(new WirePayloadError("event.purchase", "is not an object"));
+  });
+
+  it("upper-cases a lower-case currency", () => {
+    const event = build({ ...order, currency: "sek" });
+    expect(event).toHaveProperty("purchase.currency", "SEK");
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("takes a revenue and a price of 0", () => {
+    const event = build({ ...order, revenue: 0, items: [{ sku: "x", qty: 1, price: 0 }] });
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+});
+
+describe("buildEvent envelope values (AAI-919)", () => {
+  it.each([
+    ["client_ts as a string", { client_ts: "1731400000000" }, "event.client_ts", "is not an integer"],
+    ["a fractional client_ts", { client_ts: 1.5 }, "event.client_ts", "is not an integer"],
+    ["a negative client_ts", { client_ts: -1 }, "event.client_ts", "is under its minimum of 0"],
+    ["url as a number", { url: 1 }, "event.url", "is not a string"],
+    ["a visitor_id that isn't a UUIDv7", { visitor_id: "abc" }, "event.visitor_id", "does not match"],
+    ["a tag_version that isn't semver", { tag_version: "v1" }, "event.tag_version", "does not match"],
+    ["a site_id with a space", { site_id: "site 1" }, "event.site_id", "does not match"],
+    ["consent as a string", { consent: "granted" }, "event.consent", "is not an object"],
+    ["a consent state off its list", { consent: { analytics: "yes", ads: "denied" } }, "event.consent.analytics", "is not one of granted, denied, unknown, no_cmp"],
+  ])("throws on %s", (_, change, at, problem) => {
+    expect(() => buildEvent({ ...eventInput(), ...change } as unknown as EventInput)).toThrow(WirePayloadError);
+    expect(() => buildEvent({ ...eventInput(), ...change } as unknown as EventInput)).toThrow(`wire payload: ${at} ${problem}`);
+  });
+});
+
+describe("buildPing values (AAI-919)", () => {
+  it("throws on a path that isn't a scrubbed path, and on utm that isn't an object", () => {
+    expect(() => buildPing({ ...pingInput(), path: "/a?q=1" })).toThrow(new WirePayloadError("ping.path", "does not match ^/[^?#]*$"));
+    expect(() => buildPing({ ...pingInput(), utm: "x" } as unknown as PingInput)).toThrow(
+      new WirePayloadError("ping.utm", "is not an object"),
     );
   });
 });
