@@ -5,18 +5,28 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { generate, GENERATED_FILE, schemaVersions, SCHEMA_ROOT } from "../scripts/gen-wire.mjs";
 
 describe("gen-wire", () => {
+  let root: string;
   let dir: string;
 
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "gen-wire-"));
+    root = mkdtempSync(join(tmpdir(), "gen-wire-"));
+    useVersion(1);
   });
 
   afterEach(() => {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   });
 
+  /** Writes the schemas after it to schema/v<version>/. */
+  function useVersion(version: number): void {
+    dir = join(root, `v${version}`);
+    mkdirSync(dir, { recursive: true });
+  }
+
+  /** Writes a schema, with the $id of its path when it names none. */
   function schema(file: string, body: Record<string, unknown>): void {
-    writeFileSync(join(dir, file), JSON.stringify(body));
+    const $id = `https://example.test/schema/${dir.split("/").pop()}/${file}`;
+    writeFileSync(join(dir, file), JSON.stringify({ $id, ...body }));
   }
 
   it("src/wire/generated.ts is what the newest schema generates (run `pnpm gen:wire`)", () => {
@@ -31,6 +41,7 @@ describe("gen-wire", () => {
   });
 
   it("generates types, field lists and length caps", () => {
+    useVersion(3);
     schema("a.json", {
       title: "Thing",
       type: "object",
@@ -63,7 +74,7 @@ describe("gen-wire", () => {
       title: "Thing",
       type: "object",
       additionalProperties: false,
-      properties: { schema_version: { const: 1 }, part: { $ref: "b.json#/$defs/Part" }, open: { type: "object" } },
+      properties: { schema_version: { const: 1 }, part: { $ref: "b.json#/$defs/Part" } },
     });
     schema("b.json", {
       title: "Other",
@@ -89,7 +100,7 @@ describe("gen-wire", () => {
     expect(out).toContain(
       "export const THING_SHAPE = { fields: THING_FIELDS, required: THING_REQUIRED, types: THING_TYPES, values: THING_VALUES, minimum: {}, pattern: {}, maxLength: {}, maxItems: {}, nested: { part: PART_SHAPE }, items: {}, maps: {} } as const;",
     );
-    expect(out).toContain('export const THING_TYPES = { schema_version: "integer", part: "object", open: "object" } as const;');
+    expect(out).toContain('export const THING_TYPES = { schema_version: "integer", part: "object" } as const;');
     expect(out.indexOf("PART_SHAPE = ")).toBeLessThan(out.indexOf("THING_SHAPE = "));
   });
 
@@ -101,7 +112,6 @@ describe("gen-wire", () => {
       properties: {
         schema_version: { const: 1 },
         lines: { type: "array", maxItems: 5, items: { $ref: "#/$defs/Line" } },
-        tags: { type: "array", items: { type: "string" } },
       },
       $defs: {
         Line: { type: "object", additionalProperties: false, required: ["sku"], properties: { sku: { type: "string", maxLength: 9 } } },
@@ -109,7 +119,7 @@ describe("gen-wire", () => {
     });
 
     const out = generate(dir);
-    expect(out).toContain("export interface Order {\n  schema_version?: 1;\n  lines?: Line[];\n  tags?: string[];\n}");
+    expect(out).toContain("export interface Order {\n  schema_version?: 1;\n  lines?: Line[];\n}");
     expect(out).toContain(
       "export const ORDER_SHAPE = { fields: ORDER_FIELDS, required: ORDER_REQUIRED, types: ORDER_TYPES, values: ORDER_VALUES, minimum: {}, pattern: {}, maxLength: {}, maxItems: ORDER_MAX_ITEMS, nested: {}, items: { lines: LINE_SHAPE }, maps: {} } as const;",
     );
@@ -146,7 +156,8 @@ describe("gen-wire", () => {
     );
     expect(out).toContain("export const THING_MINIMUM = { count: 1, amount: 0 } as const;");
     expect(out).toContain('export const THING_PATTERN = { code: "^[A-Z]{3}$", id: "^[0-9a-f]{2,8}$" } as const;');
-    expect(out).toContain("minimum: THING_MINIMUM, pattern: THING_PATTERN,");
+    // either, a oneOf of objects, has no shape the builder could check it by: neither has Thing.
+    expect(out).not.toContain("THING_SHAPE");
   });
 
   it("refuses a field with no single JSON type, rather than leave its value unchecked", () => {
@@ -226,6 +237,7 @@ describe("gen-wire", () => {
   });
 
   it("generates arrays, their item caps, and an envelope that is a oneOf with no version of its own", () => {
+    useVersion(2);
     schema("a.json", {
       title: "Item",
       type: "object",
@@ -346,7 +358,155 @@ describe("gen-wire", () => {
         properties: { schema_version: { const: version } },
       });
     }
-    expect(() => generate(dir)).toThrow("disagree on schema_version");
+    expect(() => generate(dir)).toThrow("B.schema_version is const 2, not 1 as its directory v1");
+  });
+
+  it("refuses a schema copied to v<N+1> whose schema_version is still N, in $defs too", () => {
+    useVersion(2);
+    schema("a.json", {
+      title: "Envelope",
+      oneOf: [{ $ref: "#/$defs/Event" }],
+      $defs: {
+        Version: { const: 1 },
+        Event: { type: "object", additionalProperties: false, properties: { schema_version: { $ref: "#/$defs/Version" } } },
+      },
+    });
+    expect(() => generate(dir)).toThrow("Event.schema_version is const 1, not 2 as its directory v2");
+  });
+
+  it("refuses a schema whose $id isn't its own path in v<N>", () => {
+    useVersion(2);
+    schema("a.json", {
+      $id: "https://example.test/schema/v1/a.json",
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 2 } },
+    });
+    expect(() => generate(dir)).toThrow("a.json: its $id must end in /v2/a.json");
+  });
+
+  it("refuses a directory not named v<N>", () => {
+    const other = join(root, "draft");
+    mkdirSync(other);
+    expect(() => generate(other)).toThrow("a schema directory is named v<N>");
+  });
+
+  it.each([
+    ["allOf", { allOf: [{ required: ["n"] }] }],
+    ["dependentRequired", { dependentRequired: { n: ["m"] } }],
+    ["minProperties", { minProperties: 1 }],
+    ["maxProperties", { maxProperties: 1 }],
+  ])("refuses an object's own keyword %s it doesn't keep", (keyword, extra) => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 }, n: { type: "string" }, m: { type: "string" } },
+      $defs: { Part: { type: "object", additionalProperties: false, properties: { x: { type: "string" } }, ...extra } },
+    });
+    expect(() => generate(dir)).toThrow(`Part has keyword ${keyword}, which the generator doesn't keep`);
+  });
+
+  it("refuses a map's keyword, or its propertyNames' rule, it doesn't keep", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 } },
+      $defs: { Bag: { type: "object", required: ["a"], additionalProperties: { type: "string" } } },
+    });
+    expect(() => generate(dir)).toThrow("Bag has keyword required");
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 } },
+      $defs: { Bag: { type: "object", propertyNames: { type: "string", maxLength: 3 }, additionalProperties: { type: "string" } } },
+    });
+    expect(() => generate(dir)).toThrow("Bag's propertyNames has keyword maxLength");
+  });
+
+  it("derives caps and shapes through a $ref to a $ref", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        schema_version: { const: 1 },
+        name: { $ref: "#/$defs/Name" },
+        list: { $ref: "#/$defs/List" },
+        part: { $ref: "#/$defs/PartAlias" },
+        parts: { type: "array", items: { $ref: "#/$defs/PartAlias" } },
+      },
+      $defs: {
+        Name: { $ref: "#/$defs/Text" },
+        Text: { type: "string", maxLength: 12 },
+        List: { $ref: "#/$defs/Lines" },
+        Lines: { type: "array", maxItems: 4, items: { $ref: "#/$defs/PartAlias" } },
+        PartAlias: { $ref: "#/$defs/Part" },
+        Part: { type: "object", additionalProperties: false, properties: { x: { type: "string" } } },
+      },
+    });
+
+    const out = generate(dir);
+    expect(out).toContain("export const THING_MAX_LENGTH = { name: 12 } as const;");
+    expect(out).toContain("export const THING_MAX_ITEMS = { list: 4 } as const;");
+    expect(out).toContain("nested: { part: PART_SHAPE }, items: { list: PART_SHAPE, parts: PART_SHAPE }, maps: {} } as const;");
+  });
+
+  it("refuses a $ref with a rule beside it, which following it would lose", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 }, name: { $ref: "#/$defs/Text", maxLength: 3 } },
+      $defs: { Text: { type: "string" } },
+    });
+    expect(() => generate(dir)).toThrow("$ref #/$defs/Text has maxLength beside it");
+  });
+
+  it("refuses a rule inside a scalar oneOf's branch, which no shape can keep", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        schema_version: { const: 1 },
+        code: { oneOf: [{ type: "string", maxLength: 3 }, { $ref: "#/$defs/Long" }] },
+      },
+      $defs: { Long: { type: "string", pattern: "^x" } },
+    });
+    expect(() => generate(dir)).toThrow("a oneOf branch of Thing.code has keyword maxLength");
+  });
+
+  it("generates no shape for an object with a field no shape can check, nor for objects that nest it", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        schema_version: { const: 1 },
+        holder: { $ref: "#/$defs/Holder" },
+        ok: { $ref: "#/$defs/Leaf" },
+      },
+      $defs: {
+        Leaf: { type: "object", additionalProperties: false, properties: { x: { type: "string" } } },
+        Other: { type: "object", additionalProperties: false, properties: { y: { type: "string" } } },
+        Holder: {
+          type: "object",
+          additionalProperties: false,
+          properties: { either: { oneOf: [{ $ref: "#/$defs/Leaf" }, { $ref: "#/$defs/Other" }] } },
+        },
+        Tags: { type: "object", additionalProperties: false, properties: { tags: { type: "array", items: { type: "string" } } } },
+        Open: { type: "object", additionalProperties: false, properties: { open: { type: "object" } } },
+      },
+    });
+
+    const out = generate(dir);
+    expect(out).toContain("export const LEAF_SHAPE = ");
+    expect(out).toContain('export const HOLDER_FIELDS = ["either"] as const;');
+    for (const name of ["HOLDER", "THING", "TAGS", "OPEN"]) expect(out).not.toContain(`${name}_SHAPE`);
   });
 
   it("refuses a $ref that resolves to nothing", () => {

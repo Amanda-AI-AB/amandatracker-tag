@@ -60,7 +60,9 @@ truth for what the tag sends and what the collector accepts:
 length caps. The payload builder in `src/wire/payload.ts` shapes every payload by them. A test
 fails when the committed file differs from what the schema generates.
 
-A breaking change adds a new `schema/v<N+1>/` and leaves `v<N>` as it is. `pnpm build` copies
+A breaking change adds a new `schema/v<N+1>/` and leaves `v<N>` as it is. In the copy, each
+`$id` ends in `/v<N+1>/<file>` and each `schema_version` is `const: N+1`; `pnpm gen:wire` refuses
+a schema that doesn't. `pnpm build` copies
 versions N and N−1 to `dist/schema/`, with a `SHA256SUMS` file. The release does not publish
 `dist/schema/`: a consumer pins a release tag of this repo, takes `schema/v<N>/` from that tag, and
 checks its vendored copy against hashes it records itself (the monorepo's `shared/wire`, AAI-62).

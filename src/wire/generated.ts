@@ -325,8 +325,7 @@ export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64 } as const;
 
 // Each object's shape: its field list, its required fields, its fields' types, const or enum values, minimums
 // and patterns, its strings' and arrays' caps, its nested objects' shapes, its arrays' item shapes and its maps' rules.
-
-export const EVENT_BATCH_SHAPE = { fields: EVENT_BATCH_FIELDS, required: EVENT_BATCH_REQUIRED, types: EVENT_BATCH_TYPES, values: {}, minimum: EVENT_BATCH_MINIMUM, pattern: {}, maxLength: {}, maxItems: EVENT_BATCH_MAX_ITEMS, nested: {}, items: {}, maps: {} } as const;
+// An object with a field no shape can check (a oneOf of objects, an array of scalars) has none.
 
 export const UTM_SHAPE = { fields: UTM_FIELDS, required: UTM_REQUIRED, types: UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: UTM_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
@@ -343,7 +342,5 @@ export const PURCHASE_ITEM_SHAPE = { fields: PURCHASE_ITEM_FIELDS, required: PUR
 export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQUIRED, types: PURCHASE_TYPES, values: {}, minimum: PURCHASE_MINIMUM, pattern: PURCHASE_PATTERN, maxLength: PURCHASE_MAX_LENGTH, maxItems: PURCHASE_MAX_ITEMS, nested: {}, items: { items: PURCHASE_ITEM_SHAPE }, maps: {} } as const;
 
 export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, maxItems: {}, nested: { consent: CONSENT_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
-
-export const PUB_SUB_MESSAGE_SHAPE = { fields: PUB_SUB_MESSAGE_FIELDS, required: PUB_SUB_MESSAGE_REQUIRED, types: PUB_SUB_MESSAGE_TYPES, values: PUB_SUB_MESSAGE_VALUES, minimum: PUB_SUB_MESSAGE_MINIMUM, pattern: PUB_SUB_MESSAGE_PATTERN, maxLength: PUB_SUB_MESSAGE_MAX_LENGTH, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const SCHEMA_VERSION = 1;
