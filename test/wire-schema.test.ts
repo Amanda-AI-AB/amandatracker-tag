@@ -173,6 +173,16 @@ describe("wire schema v1: purchase", () => {
     expect(purchase.required).toEqual([...tracked.required, "purchase"]);
   });
 
+  it("names each envelope field once in $defs, so that both events only refer to it", () => {
+    const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, object> }>;
+    for (const name of ["TrackedEvent", "PurchaseEvent"]) {
+      const { type, ...envelope } = defs[name]!.properties;
+      for (const [key, prop] of Object.entries(envelope)) {
+        expect(Object.keys(prop), `${name}.${key}`).toEqual(["$ref"]);
+      }
+    }
+  });
+
   it("rides in a batch and a Pub/Sub message", () => {
     expect(validator("batch.json")({ seq: 1, e: [EVENT, PURCHASE] })).toBe(true);
     const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: PURCHASE };

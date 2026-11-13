@@ -22,63 +22,20 @@
         "consent"
       ],
       "properties": {
-        "schema_version": {
-          "description": "The wire schema's major version: this file's.",
-          "const": 1
-        },
-        "tag_version": {
-          "$ref": "#/$defs/TagVersion"
-        },
-        "site_id": {
-          "$ref": "#/$defs/SiteId"
-        },
-        "event_id": {
-          "description": "Minted by the tag for each event; with site_id, the key that makes redelivery idempotent.",
-          "$ref": "#/$defs/Uuidv7"
-        },
-        "type": {
-          "$ref": "#/$defs/TrackedEventType"
-        },
-        "client_ts": {
-          "description": "When the event happened, by the browser's clock: Unix epoch milliseconds.",
-          "type": "integer",
-          "minimum": 0
-        },
-        "url": {
-          "description": "The page's URL.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2048
-        },
-        "referrer": {
-          "description": "The document's referrer, when it has one.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2048
-        },
-        "page_title": {
-          "description": "The document's title, when it has one.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512
-        },
-        "language": {
-          "$ref": "#/$defs/Language"
-        },
-        "visitor_id": {
-          "description": "The first-party visitor id.",
-          "$ref": "#/$defs/Uuidv7"
-        },
-        "session_id": {
-          "description": "The first-party session id.",
-          "$ref": "#/$defs/Uuidv7"
-        },
-        "consent": {
-          "$ref": "#/$defs/Consent"
-        },
-        "props": {
-          "$ref": "#/$defs/Props"
-        }
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "tag_version": { "$ref": "#/$defs/TagVersion" },
+        "site_id": { "$ref": "#/$defs/SiteId" },
+        "event_id": { "$ref": "#/$defs/EventId" },
+        "type": { "$ref": "#/$defs/TrackedEventType" },
+        "client_ts": { "$ref": "#/$defs/ClientTs" },
+        "url": { "$ref": "#/$defs/Url" },
+        "referrer": { "$ref": "#/$defs/Referrer" },
+        "page_title": { "$ref": "#/$defs/PageTitle" },
+        "language": { "$ref": "#/$defs/Language" },
+        "visitor_id": { "$ref": "#/$defs/VisitorId" },
+        "session_id": { "$ref": "#/$defs/SessionId" },
+        "consent": { "$ref": "#/$defs/Consent" },
+        "props": { "$ref": "#/$defs/Props" }
       }
     },
     "PurchaseEvent": {
@@ -99,68 +56,64 @@
         "purchase"
       ],
       "properties": {
-        "schema_version": {
-          "description": "The wire schema's major version: this file's.",
-          "const": 1
-        },
-        "tag_version": {
-          "$ref": "#/$defs/TagVersion"
-        },
-        "site_id": {
-          "$ref": "#/$defs/SiteId"
-        },
-        "event_id": {
-          "description": "Minted by the tag for each event; with site_id, the key that makes redelivery idempotent.",
-          "$ref": "#/$defs/Uuidv7"
-        },
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "tag_version": { "$ref": "#/$defs/TagVersion" },
+        "site_id": { "$ref": "#/$defs/SiteId" },
+        "event_id": { "$ref": "#/$defs/EventId" },
         "type": {
           "description": "Always purchase.",
           "const": "purchase"
         },
-        "client_ts": {
-          "description": "When the event happened, by the browser's clock: Unix epoch milliseconds.",
-          "type": "integer",
-          "minimum": 0
-        },
-        "url": {
-          "description": "The page's URL.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2048
-        },
-        "referrer": {
-          "description": "The document's referrer, when it has one.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2048
-        },
-        "page_title": {
-          "description": "The document's title, when it has one.",
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 512
-        },
-        "language": {
-          "$ref": "#/$defs/Language"
-        },
-        "visitor_id": {
-          "description": "The first-party visitor id.",
-          "$ref": "#/$defs/Uuidv7"
-        },
-        "session_id": {
-          "description": "The first-party session id.",
-          "$ref": "#/$defs/Uuidv7"
-        },
-        "consent": {
-          "$ref": "#/$defs/Consent"
-        },
-        "props": {
-          "$ref": "#/$defs/Props"
-        },
-        "purchase": {
-          "$ref": "#/$defs/Purchase"
-        }
+        "client_ts": { "$ref": "#/$defs/ClientTs" },
+        "url": { "$ref": "#/$defs/Url" },
+        "referrer": { "$ref": "#/$defs/Referrer" },
+        "page_title": { "$ref": "#/$defs/PageTitle" },
+        "language": { "$ref": "#/$defs/Language" },
+        "visitor_id": { "$ref": "#/$defs/VisitorId" },
+        "session_id": { "$ref": "#/$defs/SessionId" },
+        "consent": { "$ref": "#/$defs/Consent" },
+        "props": { "$ref": "#/$defs/Props" },
+        "purchase": { "$ref": "#/$defs/Purchase" }
       }
+    },
+    "SchemaVersion": {
+      "description": "The wire schema's major version: this file's.",
+      "const": 1
+    },
+    "EventId": {
+      "description": "Minted by the tag for each event; with site_id, the key that makes redelivery idempotent.",
+      "$ref": "#/$defs/Uuidv7"
+    },
+    "ClientTs": {
+      "description": "When the event happened, by the browser's clock: Unix epoch milliseconds.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "Url": {
+      "description": "The page's URL.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "Referrer": {
+      "description": "The document's referrer, when it has one.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "PageTitle": {
+      "description": "The document's title, when it has one.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "VisitorId": {
+      "description": "The first-party visitor id.",
+      "$ref": "#/$defs/Uuidv7"
+    },
+    "SessionId": {
+      "description": "The first-party session id.",
+      "$ref": "#/$defs/Uuidv7"
     },
     "TagVersion": {
       "description": "The semver of the tag build that sent the event.",

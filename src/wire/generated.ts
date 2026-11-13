@@ -42,26 +42,18 @@ export type WireBatch = EventBatch | PingBatch;
 
 /** An event that isn't a purchase, such as a pageview or a custom event. */
 export interface TrackedEvent {
-  /** The wire schema's major version: this file's. */
-  schema_version: 1;
+  schema_version: SchemaVersion;
   tag_version: TagVersion;
   site_id: SiteId;
-  /** Minted by the tag for each event; with site_id, the key that makes redelivery idempotent. */
-  event_id: Uuidv7;
+  event_id: EventId;
   type: TrackedEventType;
-  /** When the event happened, by the browser's clock: Unix epoch milliseconds. */
-  client_ts: number;
-  /** The page's URL. */
-  url: string;
-  /** The document's referrer, when it has one. */
-  referrer?: string;
-  /** The document's title, when it has one. */
-  page_title?: string;
+  client_ts: ClientTs;
+  url: Url;
+  referrer?: Referrer;
+  page_title?: PageTitle;
   language?: Language;
-  /** The first-party visitor id. */
-  visitor_id: Uuidv7;
-  /** The first-party session id. */
-  session_id: Uuidv7;
+  visitor_id: VisitorId;
+  session_id: SessionId;
   consent: Consent;
   props?: Props;
 }
@@ -82,27 +74,19 @@ export const TRACKED_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64
 
 /** A purchase: the envelope every event carries, type purchase, and the order in purchase (01 §4). */
 export interface PurchaseEvent {
-  /** The wire schema's major version: this file's. */
-  schema_version: 1;
+  schema_version: SchemaVersion;
   tag_version: TagVersion;
   site_id: SiteId;
-  /** Minted by the tag for each event; with site_id, the key that makes redelivery idempotent. */
-  event_id: Uuidv7;
+  event_id: EventId;
   /** Always purchase. */
   type: "purchase";
-  /** When the event happened, by the browser's clock: Unix epoch milliseconds. */
-  client_ts: number;
-  /** The page's URL. */
-  url: string;
-  /** The document's referrer, when it has one. */
-  referrer?: string;
-  /** The document's title, when it has one. */
-  page_title?: string;
+  client_ts: ClientTs;
+  url: Url;
+  referrer?: Referrer;
+  page_title?: PageTitle;
   language?: Language;
-  /** The first-party visitor id. */
-  visitor_id: Uuidv7;
-  /** The first-party session id. */
-  session_id: Uuidv7;
+  visitor_id: VisitorId;
+  session_id: SessionId;
   consent: Consent;
   props?: Props;
   purchase: Purchase;
@@ -121,6 +105,30 @@ export const PURCHASE_EVENT_MINIMUM = { client_ts: 0 } as const;
 export const PURCHASE_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
 
 export const PURCHASE_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
+
+/** The wire schema's major version: this file's. */
+export type SchemaVersion = 1;
+
+/** Minted by the tag for each event; with site_id, the key that makes redelivery idempotent. */
+export type EventId = Uuidv7;
+
+/** When the event happened, by the browser's clock: Unix epoch milliseconds. */
+export type ClientTs = number;
+
+/** The page's URL. */
+export type Url = string;
+
+/** The document's referrer, when it has one. */
+export type Referrer = string;
+
+/** The document's title, when it has one. */
+export type PageTitle = string;
+
+/** The first-party visitor id. */
+export type VisitorId = Uuidv7;
+
+/** The first-party session id. */
+export type SessionId = Uuidv7;
 
 /** The semver of the tag build that sent the event. */
 export type TagVersion = string;
