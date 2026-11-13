@@ -3,6 +3,21 @@
 The Amanda Tracker website tag, `a.js`: one script, first-party cookies only, consent-native.
 Licensed under Apache-2.0.
 
+## Status
+
+The tag is not yet functional. This repo holds its building blocks: the wire schema and payload
+builder, the endpoint and request options (`src/core/endpoint.ts`) and the adapter loader
+(`src/core/adapter-loader.ts`). `src/core/index.ts` only re-exports them, and nothing in the built
+`a.js` calls them, so the tag does nothing on a page yet. Still to come:
+
+- the command queue, config fetch, pageview and error boundary (AAI-67);
+- the transport, which posts batches (AAI-68);
+- the `_amnda_id` and `_amnda_ses` cookies (AAI-98);
+- `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).
+
+Where this README or a guide describes what the tag does at runtime, it describes the design these
+tickets build, and says so.
+
 ## Guides
 
 - [First-party reverse proxy](docs/first-party-proxy.md): serve the tag and its collection endpoint from
@@ -46,40 +61,45 @@ length caps. The payload builder in `src/wire/payload.ts` shapes every payload b
 fails when the committed file differs from what the schema generates.
 
 A breaking change adds a new `schema/v<N+1>/` and leaves `v<N>` as it is. `pnpm build` copies
-versions N and N−1 to `dist/schema/`, with a `SHA256SUMS` file for consumers that pin a tagged
-release.
+versions N and N−1 to `dist/schema/`, with a `SHA256SUMS` file. The release does not publish
+`dist/schema/`: a consumer pins a release tag of this repo, takes `schema/v<N>/` from that tag, and
+checks its vendored copy against hashes it records itself (the monorepo's `shared/wire`, AAI-62).
 
 ## Build
 
 - `src/core/index.ts` builds to **`dist/a.js`**: a single minified IIFE, ES2018, with no runtime
   dependencies.
 - Each consent-manager adapter `src/adapters/<name>.ts` builds to its own IIFE,
-  `dist/adapters/<name>.js`, which the core loads only for the sites whose config names it. A name is
+  `dist/adapters/<name>.js`, which the core is to load only for the sites whose config names it, once
+  it fetches the config (AAI-67). A name is
   lowercase letters, digits and `-`; the build refuses any other, and fails when `src/adapters/` is
   missing.
 - The adapters build first. The core is built with its version (`.release-version`, which the
   release writes, or else `package.json`'s) and each adapter's SHA-384 baked in
-  (`src/core/build-info.ts`). It loads `adapters/<version>/<name>.js`, its own version's file, with
-  that hash as `integrity` and `crossOrigin = "anonymous"`, and refuses an adapter it wasn't built
-  with.
+  (`src/core/build-info.ts`). Its `loadAdapter` loads `adapters/<version>/<name>.js`, its own
+  version's file, with that hash as `integrity` and `crossOrigin = "anonymous"`, and refuses an
+  adapter it wasn't built with.
 
 ## The endpoint
 
-The tag fetches `cfg/<SITE_PUBLIC_ID>.json`, posts to `v1/e` and loads `adapters/<version>/<name>.js` from one
-base, `https://eu.serversider.com` by default. The script tag's `data-endpoint` attribute sets
-another (`src/core/endpoint.ts`):
+Planned: the tag is to fetch `cfg/<SITE_PUBLIC_ID>.json` (AAI-67), post to `v1/e` (AAI-68) and load
+`adapters/<version>/<name>.js` from one base, `https://eu.serversider.com` by default, and the script
+tag's `data-endpoint` attribute is to set another (AAI-831). `src/core/endpoint.ts` already builds
+those URLs and request options; nothing calls them yet. It resolves `data-endpoint` this way:
 
 - a path, such as `data-endpoint="/amnda"`, is on the page's own origin: a
   [first-party reverse proxy](docs/first-party-proxy.md);
 - a full URL must be `https:`, or the page's own origin;
 - credentials, a query or a fragment are refused.
 
-Event batches go out with `credentials: "same-origin"`, so that behind a proxy the browser stores the
-cookies the collector re-issues with `Set-Cookie`. Ping batches and the config fetch go out with
-`credentials: "omit"`: they never carry the site's cookies. Every request the tag makes, adapter
+Its request options are the ones the transport and boot are to use. `batchRequestInit` sends event
+batches with `credentials: "same-origin"`, so that behind a proxy the browser stores the cookies the
+collector re-issues with `Set-Cookie` (AAI-827). It sends ping batches, and `configRequestInit` the
+config fetch, with `credentials: "omit"`: they never carry the site's cookies. Every request, adapter
 scripts included, sends the page's origin alone as `Referer` (`referrerPolicy: "strict-origin"`),
-never its path or query. Only the pagehide flush adds `keepalive`, and
-its bodies stay within 60 KiB together. Browsers refuse a keepalive request once the bodies of all
+never its path or query. Only the pagehide flush adds `keepalive`, and `batchRequestInit` refuses a
+keepalive body over 60 KiB; keeping the flush's bodies within 60 KiB together is the transport's job
+(AAI-68). Browsers refuse a keepalive request once the bodies of all
 of a page's keepalive requests in flight would pass 64 KiB, and that quota is shared with
 `sendBeacon` and with every other script's beacons on the page (analytics and ad tags firing on the
 same pagehide). The 4 KiB left over is a margin, not a reservation: a pagehide request can still be

@@ -7,15 +7,20 @@ full lifetime instead of expiring after 7 days.
 This is a pattern you run on your own infrastructure. Amanda does not host it for you (see
 [Why not a hosted tracking domain?](#why-not-a-hosted-tracking-domain)).
 
-> **Availability.** The proxy works today for loading the tag, its config and sending events. The Safari
-> cookie-lifetime benefit needs two changes that are still being built: the collector setting the cookies
-> through your proxy (AAI-827), and the tag's `data-endpoint` attribute (AAI-828). This note goes away when
-> both are live.
+> **Availability: planned, not yet working.** This guide describes how the tag is designed to work behind
+> a proxy. The tag itself is still being built: its boot and config fetch (AAI-67), its transport (AAI-68)
+> and its cookies (AAI-98). The tag can already read a `data-endpoint` attribute and build its URLs from it
+> (AAI-828), but its boot doesn't use it yet (AAI-831). The collector setting the cookies through your
+> proxy is AAI-827. Until these land, a proxy set up as described here serves `a.js`, which does nothing on
+> the page yet. This note goes away when they are live.
 
 ## What it does, and why
 
-The tag stores two first-party cookies on your domain, and only when the visitor has granted analytics
-consent:
+This section, like the rest of the guide, describes the design that the tickets in the availability note
+build.
+
+The tag is to store two first-party cookies on your domain (AAI-98), and only when the visitor has granted
+analytics consent:
 
 | Cookie       | Holds                       | Lifetime            |
 | ------------ | --------------------------- | ------------------- |
@@ -31,20 +36,20 @@ site's own. Since Safari 16.4 that means a server whose IP address shares the fi
 website's IP address (the same IPv4 /16 or IPv6 /64). It does not mean a subdomain that is merely a DNS
 alias for someone else's server.
 
-With the proxy in place:
+With the proxy in place, once those tickets land:
 
 1. The page loads `a.js` from `https://www.example.com/amnda/a.js`, a path on your own site.
-2. The tag sends events to `https://www.example.com/amnda/v1/e`.
+2. The tag sends events to `https://www.example.com/amnda/v1/e` (AAI-68, AAI-831).
 3. Your CDN or web server forwards those requests to Amanda's collector.
 4. When the visitor has granted analytics consent, the collector's response re-issues `_amnda_id` and
-   `_amnda_ses` with `Set-Cookie`.
+   `_amnda_ses` with `Set-Cookie` (AAI-827).
 5. The browser receives that response from your own site's servers, so Safari keeps the cookie for its
    full lifetime.
 
 **Consent is unchanged.**
-- No cookie is set, by the tag or through the proxy, unless analytics consent is granted.
-- When consent is withdrawn, the tag deletes both cookies straight away. The collector never marks them
-  `HttpOnly`, so the tag can always remove them.
+- No cookie is to be set, by the tag or through the proxy, unless analytics consent is granted.
+- When consent is withdrawn, the tag is to delete both cookies straight away (AAI-98). The collector never
+  marks them `HttpOnly`, so the tag can always remove them.
 - The proxy changes where requests go, not what is collected or when.
 
 ## What you need
@@ -83,8 +88,11 @@ The simplest way is to forward the whole prefix, as the examples below do. The p
     `X-Forwarded-Host`.
 
   An allowlist also keeps out headers you add later or that another layer of your stack adds.
-- **Append the visitor's IP to `X-Forwarded-For`.** Append to it rather than replacing it. Amanda uses
-  the IP in memory only, to derive country and region and to filter bots, and never stores it.
+- **Append the visitor's IP to `X-Forwarded-For`.** Append to it rather than replacing it, as both
+  examples below do. The collector reads the visitor's IP from the right-most entry it trusts: the one
+  your proxy appended, just before those of Amanda's own load balancer. Entries further left came with
+  the visitor's request, and anyone can forge them. Amanda uses the IP in memory only, to derive country
+  and region and to filter bots, and never stores it.
 - **Set `X-Forwarded-Host` to your site's host** (e.g. `www.example.com`) and `X-Forwarded-Proto: https`.
   The collector sets cookies only for a host on your site's allowed-domain list in the Amanda portal, so
   add every host you proxy on to that list.
@@ -111,8 +119,8 @@ Point both the script and its endpoint at your prefix:
 `referrerpolicy="strict-origin"` keeps the page's path and query out of the request for `a.js`, as the
 tag itself does for every request it makes.
 
-`data-endpoint` tells the tag to fetch its config and send its events through `/amnda` instead of the
-collection host. If you install through Google Tag Manager, set the template's **Endpoint** field to
+`data-endpoint` is to tell the tag to fetch its config and send its events through `/amnda` instead of
+the collection host, once its boot reads the attribute (AAI-831). If you install through Google Tag Manager, set the template's **Endpoint** field to
 `/amnda`.
 
 ## Examples
@@ -243,7 +251,10 @@ export default {
       const value = request.headers.get(name);
       if (value !== null) headers.set(name, value);
     }
-    headers.set("x-forwarded-for", request.headers.get("cf-connecting-ip"));
+    // Append the visitor's address: the collector reads the right-most entry, never the forgeable ones before it.
+    const visitor = request.headers.get("cf-connecting-ip");
+    const forwarded = request.headers.get("x-forwarded-for");
+    headers.set("x-forwarded-for", forwarded === null ? visitor : `${forwarded}, ${visitor}`);
     headers.set("x-forwarded-host", url.host);
     headers.set("x-forwarded-proto", "https");
 
@@ -282,6 +293,9 @@ If you deployed an earlier version of this Worker that built its target with
 version followed paths such as `/amnda//other.example/x` to other hosts, and served their responses from
 your site.
 
+If you deployed an earlier version of this Worker that set `x-forwarded-for` to `cf-connecting-ip` alone,
+replace it with the one above, which appends to the header as the guide asks.
+
 ### Other CDNs
 
 Any CDN that can route a path prefix to a different origin can do this; Fastly, Akamai, CloudFront and
@@ -296,6 +310,8 @@ Azure Front Door all can. Configure it the same way:
 The proxy must run on the same CDN distribution as your website.
 
 ## Check it works
+
+Steps 2 to 6 check the full design, and cannot pass before the tickets in the availability note land.
 
 1. **The tag loads through your site:**
 

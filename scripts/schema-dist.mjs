@@ -1,6 +1,7 @@
 // Lays out the wire JSON Schema for a release: the newest version N and the one before it, N-1,
-// under dist/schema/v<N>/, with a SHA256SUMS file that consumers pinning a release (the
-// monorepo's shared/wire) check their vendored copy against.
+// under dist/schema/v<N>/, with a SHA256SUMS file. The release does not publish dist/schema/:
+// consumers (the monorepo's shared/wire) pin a release tag, take schema/v<N>/ from it, and check
+// their vendored copy against hashes they record themselves.
 import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";

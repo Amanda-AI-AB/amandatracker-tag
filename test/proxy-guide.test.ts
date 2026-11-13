@@ -77,6 +77,23 @@ describe("the proxy guide's Cloudflare Worker", () => {
     expect(sent?.get("x-forwarded-host")).toBe("www.customer.com");
   });
 
+  it("appends the visitor's address to X-Forwarded-For rather than replacing it", async () => {
+    let sent: Headers | undefined;
+    const worker = loadWorker(async (_target, init) => {
+      sent = new Headers(init.headers);
+      return new Response(null, { status: 204 });
+    });
+    await worker.fetch(
+      new Request(`${SITE}/amnda/v1/e`, {
+        method: "POST",
+        body: "{}",
+        headers: { "x-forwarded-for": "198.51.100.1, 192.0.2.9", "cf-connecting-ip": "203.0.113.7" },
+      }),
+    );
+    // The right-most entry, the one the collector reads, is the address the proxy saw.
+    expect(sent?.get("x-forwarded-for")).toBe("198.51.100.1, 192.0.2.9, 203.0.113.7");
+  });
+
   it("forwards only the allowlisted request headers, never Authorization", async () => {
     let sent: Headers | undefined;
     const worker = loadWorker(async (_target, init) => {
