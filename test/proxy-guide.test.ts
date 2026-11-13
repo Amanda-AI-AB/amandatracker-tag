@@ -77,3 +77,21 @@ describe("the proxy guide's Cloudflare Worker", () => {
     expect(sent?.get("x-forwarded-host")).toBe("www.customer.com");
   });
 });
+
+describe("the proxy guide's nginx example", () => {
+  function nginxBlock(): string {
+    const section = GUIDE.split("### nginx")[1]?.split("### ")[0];
+    if (section === undefined) throw new Error("the guide has no nginx section");
+    const block = /```nginx\n([\s\S]*?)```/.exec(section);
+    if (block === null) throw new Error("the nginx section has no nginx block");
+    return block[1]!;
+  }
+
+  it("verifies the collector's certificate, which nginx does not by default", () => {
+    const block = nginxBlock();
+    expect(block).toMatch(/^\s*proxy_ssl_server_name on;/m);
+    expect(block).toMatch(/^\s*proxy_ssl_verify on;/m);
+    expect(block).toMatch(/^\s*proxy_ssl_trusted_certificate \S+;/m);
+    expect(block).toMatch(/^\s*proxy_ssl_verify_depth \d+;/m);
+  });
+});

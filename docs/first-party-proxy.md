@@ -111,12 +111,40 @@ collection host. If you install through Google Tag Manager, set the template's *
 location /amnda/ {
     proxy_pass https://eu.serversider.com/;          # the trailing slash strips /amnda
     proxy_ssl_server_name on;
+    proxy_ssl_verify on;                             # nginx's default is off: accept no other certificate
+    proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+    proxy_ssl_verify_depth 3;
     proxy_set_header Host eu.serversider.com;
     proxy_set_header Cookie "";                      # never forward your site's cookies
     proxy_set_header Referer "";                     # nor the page's URL
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Host $host;
     proxy_set_header X-Forwarded-Proto https;
+}
+```
+
+**Keep `proxy_ssl_verify on`.** nginx does not check an upstream's TLS certificate unless you tell it to.
+Without it, anyone on the path between your server and the collector can present any certificate, serve a
+modified `a.js` from your own site to all of your visitors, and read every event.
+`proxy_ssl_trusted_certificate` must point at your system's CA bundle, whose path differs per distribution:
+
+| Distribution                       | CA bundle                            |
+| ---------------------------------- | ------------------------------------ |
+| Debian, Ubuntu, Alpine             | `/etc/ssl/certs/ca-certificates.crt` |
+| RHEL, CentOS, Fedora, Amazon Linux | `/etc/pki/tls/certs/ca-bundle.crt`   |
+
+nginx resolves a host name written literally in `proxy_pass` once, when it starts, and keeps using those
+addresses until it reloads. If the collector's addresses change, requests fail until then. To have nginx
+look the name up again, give it a `resolver` and put the host in a variable. With a variable, nginx no
+longer strips the prefix for you, so a `rewrite` does it:
+
+```nginx
+location /amnda/ {
+    resolver 127.0.0.53 valid=300s;                  # your own DNS resolver
+    set $amnda_upstream eu.serversider.com;
+    rewrite ^/amnda/(.*)$ /$1 break;                 # strip /amnda
+    proxy_pass https://$amnda_upstream;
+    # ...then the same proxy_ssl_* and proxy_set_header lines as above
 }
 ```
 
@@ -212,6 +240,7 @@ The proxy must run on the same CDN distribution as your website.
 | --------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `a.js` returns 404 or your site's error page  | The prefix isn't stripped, or the route doesn't match `/amnda/*`.                    |
 | TLS errors, or a 4xx from the collection host | The `Host` header isn't `eu.serversider.com`, or SNI is off.                         |
+| nginx logs `upstream SSL certificate verify error` | `proxy_ssl_trusted_certificate` doesn't point at your system's CA bundle.       |
 | `/v1/e` works but there's no `Set-Cookie`     | Consent isn't granted, `X-Forwarded-Host` is missing or not on the allowed-domain list, or the CDN strips `Set-Cookie`. |
 | Safari still shows a 7-day expiry             | The proxy isn't on the same infrastructure as your pages (different IP space), or the cookie still comes from the script only. |
 | All visitors appear to come from one place    | `X-Forwarded-For` holds your proxy's address, not the visitor's.                     |
