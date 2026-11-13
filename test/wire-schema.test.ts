@@ -267,6 +267,26 @@ describe("wire schema v1: Pub/Sub message", () => {
     expect(validate({ ...message, country: "se", event: PING })).toBe(false);
     expect(validate({ ...message, device_class: "smartwatch", event: PING })).toBe(false);
   });
+
+  it("carries an event's subdivision, browser family and major, and OS family (AAI-908)", () => {
+    const derived = { subdivision: "SE-AB", browser_family: "Chrome Mobile", browser_major: 131, os_family: "Android" };
+    expect(validate({ ...message, ...derived, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...message, subdivision: "GB-ENG", event: EVENT })).toBe(true);
+    expect(validate({ ...message, subdivision: "FR-75C", event: EVENT })).toBe(true);
+  });
+
+  it("checks the shape of the subdivision and the user-agent fields", () => {
+    for (const subdivision of ["se-ab", "SE", "SE-", "SE-ABCD", "SEAB"]) {
+      expect(validate({ ...message, subdivision, event: EVENT }), subdivision).toBe(false);
+    }
+    expect(validate({ ...message, browser_family: "", event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_family: "x".repeat(65), event: EVENT })).toBe(false);
+    expect(validate({ ...message, os_family: "", event: EVENT })).toBe(false);
+    expect(validate({ ...message, os_family: "x".repeat(65), event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_major: -1, event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_major: 131.5, event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_major: "131", event: EVENT })).toBe(false);
+  });
 });
 
 describe("wire schema v1: batch (the body of POST /v1/e)", () => {

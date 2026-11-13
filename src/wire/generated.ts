@@ -310,24 +310,32 @@ export interface PubSubMessage {
   region: string;
   /** The ISO 3166-1 alpha-2 country derived from the client's IP address, when one could be; the address itself is dropped. */
   country?: string;
+  /** The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Never on a ping's message: a ping carries country-level geo only (06 §3). */
+  subdivision?: string;
   device_class: DeviceClass;
+  /** The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Never on a ping's message. */
+  browser_family?: string;
+  /** The browser's major version the collector parses from the user agent, when it could. Never on a ping's message. */
+  browser_major?: number;
+  /** The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message. */
+  os_family?: string;
   /** The client's payload: an event, or an anonymous ping. */
   event: WireEvent | WirePing;
 }
 
-export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "device_class", "event"] as const;
+export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "subdivision", "device_class", "browser_family", "browser_major", "os_family", "event"] as const;
 
 export const PUB_SUB_MESSAGE_REQUIRED = ["schema_version", "received_at", "region", "device_class", "event"] as const;
 
-export const PUB_SUB_MESSAGE_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", device_class: "string", event: "object" } as const;
+export const PUB_SUB_MESSAGE_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", subdivision: "string", device_class: "string", browser_family: "string", browser_major: "integer", os_family: "string", event: "object" } as const;
 
 export const PUB_SUB_MESSAGE_VALUES = { schema_version: [1], device_class: ["desktop", "mobile", "tablet", "other"] } as const;
 
-export const PUB_SUB_MESSAGE_MINIMUM = { received_at: 0 } as const;
+export const PUB_SUB_MESSAGE_MINIMUM = { received_at: 0, browser_major: 0 } as const;
 
-export const PUB_SUB_MESSAGE_PATTERN = { region: "^[a-z0-9-]+$", country: "^[A-Z]{2}$" } as const;
+export const PUB_SUB_MESSAGE_PATTERN = { region: "^[a-z0-9-]+$", country: "^[A-Z]{2}$", subdivision: "^[A-Z]{2}-[A-Z0-9]{1,3}$" } as const;
 
-export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64 } as const;
+export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64, browser_family: 64, os_family: 64 } as const;
 
 // Each object's shape: its field list, its required fields, its fields' types, const or enum values, minimums
 // and patterns, its strings' and arrays' caps, its arrays' item minimums, its nested objects' shapes, its arrays' item shapes and its maps' rules.

@@ -53,7 +53,9 @@ truth for what the tag sends and what the collector accepts:
   events or pings, never both. A batch of events always carries `seq`, the page's batch counter,
   which the collector reads for loss. A batch of pings never carries it.
 - `pubsub-message.json`: what the collector publishes to Pub/Sub. It holds the client's event or
-  ping and the fields the collector derives (received time, region, country, device class). It
+  ping and the fields the collector derives (received time, region, country, device class). For an
+  event it may also carry the ISO 3166-2 `subdivision`, `browser_family`, `browser_major` and
+  `os_family`; a ping's message leaves them off, as a ping carries country-level geo only. It
   never includes the IP address.
 
 `pnpm gen:wire` generates `src/wire/generated.ts` from the newest version: types, field lists and
