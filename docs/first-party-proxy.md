@@ -131,7 +131,14 @@ const PREFIX = "/amnda";
 export default {
   async fetch(request) {
     const url = new URL(request.url);
-    const target = new URL(url.pathname.slice(PREFIX.length) + url.search, UPSTREAM);
+    if (!url.pathname.startsWith(PREFIX + "/")) return new Response(null, { status: 404 });
+
+    // Set the path on the upstream URL; never resolve it against UPSTREAM. A path such as
+    // /amnda//evil.example/x would otherwise be read as protocol-relative, and reach another host.
+    const target = new URL(UPSTREAM);
+    target.pathname = url.pathname.slice(PREFIX.length);
+    target.search = url.search;
+    if (target.origin !== UPSTREAM) return new Response(null, { status: 400 });
 
     const headers = new Headers(request.headers);
     headers.delete("cookie");
@@ -149,7 +156,14 @@ export default {
 };
 ```
 
-The Worker returns the collector's response as it is, `Set-Cookie` and `Cache-Control` included.
+The Worker returns the collector's response as it is, `Set-Cookie` and `Cache-Control` included. It
+only ever forwards to `eu.serversider.com`: a path outside the prefix gets a 404, and any request whose
+target would land on another origin gets a 400.
+
+If you deployed an earlier version of this Worker that built its target with
+`new URL(url.pathname.slice(PREFIX.length) + url.search, UPSTREAM)`, replace it with the one above. That
+version followed paths such as `/amnda//other.example/x` to other hosts, and served their responses from
+your site.
 
 ### Other CDNs
 
