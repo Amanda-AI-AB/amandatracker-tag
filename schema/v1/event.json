@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/event.json",
   "title": "WireEvent",
-  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; every other event is a TrackedEvent, which never does. The two are told apart by purchase alone: one requires it and the other doesn't list it.",
+  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; every other event is a TrackedEvent, which never does, and whose type is never purchase. The two are told apart by purchase: one requires it and the other doesn't list it.",
   "oneOf": [{ "$ref": "#/$defs/TrackedEvent" }, { "$ref": "#/$defs/PurchaseEvent" }],
   "$defs": {
     "TrackedEvent": {
@@ -37,7 +37,7 @@
           "$ref": "#/$defs/Uuidv7"
         },
         "type": {
-          "$ref": "#/$defs/EventType"
+          "$ref": "#/$defs/TrackedEventType"
         },
         "client_ts": {
           "description": "When the event happened, by the browser's clock: Unix epoch milliseconds.",
@@ -191,6 +191,13 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 64
+    },
+    "TrackedEventType": {
+      "description": "A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order. The pattern refuses exactly purchase, and has no lookahead, so that every regex engine the schema is read with takes it alike.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(?:[^p]|p(?:[^u]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S])"
     },
     "ConsentState": {
       "description": "One category's consent: granted, denied, unknown (not yet decided) or no_cmp (the site has no consent manager).",

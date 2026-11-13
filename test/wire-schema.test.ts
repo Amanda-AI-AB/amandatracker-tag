@@ -110,9 +110,22 @@ describe("wire schema v1: purchase", () => {
     expect(validate({ ...PURCHASE, type: "pageview" })).toBe(false);
   });
 
-  it("reads an event of type purchase without a purchase as an ordinary event, which is how it is told apart", () => {
+  it("rejects an event of type purchase without a purchase, which no other event may be (AAI-921)", () => {
     const { purchase, ...rest } = PURCHASE;
-    expect(validate(rest), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate(rest)).toBe(false);
+    expect(validate({ ...EVENT, type: "purchase" })).toBe(false);
+  });
+
+  it.each(["p", "pu", "purchas", "purchased", "purchase_intent", "Purchase", "PURCHASE", "xpurchase", "purchase\n"])(
+    "takes %j as the type of an ordinary event",
+    (type) => {
+      expect(validate({ ...EVENT, type }), JSON.stringify(validate.errors)).toBe(true);
+    },
+  );
+
+  it("still takes a ping of type purchase, whose type stays any EventType", () => {
+    const validatePing = validator("ping.json");
+    expect(validatePing({ ...PING, type: "purchase" }), JSON.stringify(validatePing.errors)).toBe(true);
   });
 
   it.each(["order_id", "revenue", "currency"])("requires %s", (field) => {

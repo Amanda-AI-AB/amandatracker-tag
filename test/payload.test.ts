@@ -372,9 +372,17 @@ describe("buildEvent purchase", () => {
 
   it("builds an ordinary event when the input carries no purchase", () => {
     const { purchase, ...rest } = purchaseInput();
-    const event = buildEvent(rest);
+    const event = buildEvent({ ...rest, type: "add_to_cart" });
     expect(event).not.toHaveProperty("purchase");
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("throws on an event of type purchase without its purchase, rather than send an order with no order_id (AAI-921)", () => {
+    const { purchase, ...rest } = purchaseInput();
+    expect(() => buildEvent(rest)).toThrow(new WirePayloadError("event.purchase"));
+    expect(() => buildEvent({ ...rest, purchase: undefined } as unknown as EventInput)).toThrow(
+      new WirePayloadError("event.purchase"),
+    );
   });
 
   it.each(["order_id", "currency"] as const)("throws when the required %s is empty or missing", (field) => {

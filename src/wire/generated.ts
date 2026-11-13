@@ -48,7 +48,7 @@ export interface TrackedEvent {
   site_id: SiteId;
   /** Minted by the tag for each event; with site_id, the key that makes redelivery idempotent. */
   event_id: Uuidv7;
-  type: EventType;
+  type: TrackedEventType;
   /** When the event happened, by the browser's clock: Unix epoch milliseconds. */
   client_ts: number;
   /** The page's URL. */
@@ -76,7 +76,7 @@ export const TRACKED_EVENT_VALUES = { schema_version: [1] } as const;
 
 export const TRACKED_EVENT_MINIMUM = { client_ts: 0 } as const;
 
-export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", type: "^(?:[^p]|p(?:[^u]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S])", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
 
 export const TRACKED_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
 
@@ -136,6 +136,9 @@ export type SiteId = string;
 
 /** The event's name, such as pageview. */
 export type EventType = string;
+
+/** A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order. The pattern refuses exactly purchase, and has no lookahead, so that every regex engine the schema is read with takes it alike. */
+export type TrackedEventType = string;
 
 /** One category's consent: granted, denied, unknown (not yet decided) or no_cmp (the site has no consent manager). */
 export type ConsentState = "granted" | "denied" | "unknown" | "no_cmp";
@@ -210,7 +213,7 @@ export const PURCHASE_ITEM_MINIMUM = { qty: 1, price: 0 } as const;
 
 export const PURCHASE_ITEM_MAX_LENGTH = { sku: 128, name: 200 } as const;
 
-/** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; every other event is a TrackedEvent, which never does. The two are told apart by purchase alone: one requires it and the other doesn't list it. */
+/** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; every other event is a TrackedEvent, which never does, and whose type is never purchase. The two are told apart by purchase: one requires it and the other doesn't list it. */
 export type WireEvent = TrackedEvent | PurchaseEvent;
 
 // ping.json

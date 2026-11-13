@@ -316,8 +316,9 @@ function shape<T extends object>(input: T, spec: Shape, path: string): T {
 
 /**
  * Builds an event: a purchase when the input carries a purchase, which then needs type purchase,
- * and any other event otherwise. Throws WirePayloadError when a required field is missing or empty,
- * the purchase isn't an object (null included), or a value breaks a rule the tag can't keep for it
+ * and any other event otherwise, whose type is never purchase. Throws WirePayloadError when a
+ * required field is missing or empty (an event of type purchase without its purchase included), the
+ * purchase isn't an object (null included), or a value breaks a rule the tag can't keep for it
  * (shape).
  */
 export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireEvent {
@@ -327,6 +328,7 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
     const event: PurchaseEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
     return shape(event, PURCHASE_EVENT_SHAPE, "event");
   }
+  if (input.type === "purchase") throw new WirePayloadError("event.purchase");
   const event: TrackedEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
   return shape(event, TRACKED_EVENT_SHAPE, "event");
 }
