@@ -72,6 +72,9 @@ The simplest way is to forward the whole prefix, as the examples below do. The p
 - **Connect over HTTPS, with SNI and `Host: eu.serversider.com`.** The collector refuses any other host.
 - **Remove the `Cookie` header.** Your site's own cookies, such as logins and carts, must never leave your
   infrastructure. The tag sends the IDs the collector needs in the request body.
+- **Remove the `Referer` header.** The tag asks for the page's origin alone, but a page's URL can carry
+  personal data in its query (`/reset?email=…`), and the collector never needs it: it reads your host from
+  `X-Forwarded-Host`.
 - **Append the visitor's IP to `X-Forwarded-For`.** Append to it rather than replacing it. Amanda uses
   the IP in memory only, to derive country and region and to filter bots, and never stores it.
 - **Set `X-Forwarded-Host` to your site's host** (e.g. `www.example.com`) and `X-Forwarded-Proto: https`.
@@ -90,8 +93,11 @@ The simplest way is to forward the whole prefix, as the examples below do. The p
 Point both the script and its endpoint at your prefix:
 
 ```html
-<script async src="/amnda/a.js" data-site="SITE_PUBLIC_ID" data-endpoint="/amnda"></script>
+<script async src="/amnda/a.js" referrerpolicy="strict-origin" data-site="SITE_PUBLIC_ID" data-endpoint="/amnda"></script>
 ```
+
+`referrerpolicy="strict-origin"` keeps the page's path and query out of the request for `a.js`, as the
+tag itself does for every request it makes.
 
 `data-endpoint` tells the tag to fetch its config and send its events through `/amnda` instead of the
 collection host. If you install through Google Tag Manager, set the template's **Endpoint** field to
@@ -107,6 +113,7 @@ location /amnda/ {
     proxy_ssl_server_name on;
     proxy_set_header Host eu.serversider.com;
     proxy_set_header Cookie "";                      # never forward your site's cookies
+    proxy_set_header Referer "";                     # nor the page's URL
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Host $host;
     proxy_set_header X-Forwarded-Proto https;
@@ -142,6 +149,7 @@ export default {
 
     const headers = new Headers(request.headers);
     headers.delete("cookie");
+    headers.delete("referer");
     headers.set("x-forwarded-for", request.headers.get("cf-connecting-ip"));
     headers.set("x-forwarded-host", url.host);
     headers.set("x-forwarded-proto", "https");

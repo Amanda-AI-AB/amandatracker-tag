@@ -54,7 +54,7 @@ describe("the proxy guide's Cloudflare Worker", () => {
     expect(await run(path)).toEqual({ status: 404, targets: [] });
   });
 
-  it("drops the site's cookies and forwards the visitor's address", async () => {
+  it("drops the site's cookies and the page's URL, and forwards the visitor's address", async () => {
     let sent: Headers | undefined;
     const worker = loadWorker(async (_target, init) => {
       sent = new Headers(init.headers);
@@ -64,10 +64,15 @@ describe("the proxy guide's Cloudflare Worker", () => {
       new Request(`${SITE}/amnda/v1/e`, {
         method: "POST",
         body: "{}",
-        headers: { cookie: "session=secret", "cf-connecting-ip": "203.0.113.7" },
+        headers: {
+          cookie: "session=secret",
+          referer: `${SITE}/reset?email=a@b.example`,
+          "cf-connecting-ip": "203.0.113.7",
+        },
       }),
     );
     expect(sent?.get("cookie")).toBeNull();
+    expect(sent?.get("referer")).toBeNull();
     expect(sent?.get("x-forwarded-for")).toBe("203.0.113.7");
     expect(sent?.get("x-forwarded-host")).toBe("www.customer.com");
   });

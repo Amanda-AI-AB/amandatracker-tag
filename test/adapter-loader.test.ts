@@ -4,7 +4,13 @@ import { DEFAULT_ENDPOINT, EndpointError, resolveEndpoint } from "../src/core/en
 
 const PAGE = "https://shop.example.com";
 
-type FakeScript = { async?: boolean; src?: string; onload?: () => void; onerror?: () => void };
+type FakeScript = {
+  async?: boolean;
+  referrerPolicy?: string;
+  src?: string;
+  onload?: () => void;
+  onerror?: () => void;
+};
 
 function fakeDocument() {
   const appended: FakeScript[] = [];
@@ -22,6 +28,8 @@ describe("loadAdapter", () => {
     expect(appended).toHaveLength(1);
     expect(appended[0]!.src).toBe("https://shop.example.com/amnda/adapters/example-cmp.js");
     expect(appended[0]!.async).toBe(true);
+    // the page's origin alone as Referer, never its path or query
+    expect(appended[0]!.referrerPolicy).toBe("strict-origin");
     appended[0]!.onload!();
     await expect(loaded).resolves.toBeUndefined();
   });

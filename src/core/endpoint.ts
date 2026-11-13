@@ -106,13 +106,35 @@ export function bodyBytes(body: string): number {
 }
 
 /**
- * The fetch options for a batch to eventsUrl; `body` is a WireBatch (schema/v1/batch.json) as
- * JSON. credentials: "same-origin" lets the browser store
- * the Set-Cookie with which the collector, behind a first-party proxy, re-issues _amnda_id and
- * _amnda_ses (AAI-827); to the cross-origin default host no cookie is sent or stored. The
- * transport (AAI-68) uses these for every fetch it sends, and sends the pageview's immediate flush
- * with fetch, never sendBeacon, so at least one batch per page gets the server-set cookies
- * whatever a browser does with a beacon's response.
+ * The referrer policy of every request the tag makes to its endpoint: batches, the config fetch and
+ * the adapter scripts. The browser's default sends the full page URL, query included, as Referer to
+ * a same-origin proxy, which would undo the ping's path-only scrubbing. strict-origin sends the
+ * page's origin alone, and, unlike no-referrer, keeps the Origin header of a same-origin POST.
+ */
+export const REFERRER_POLICY: ReferrerPolicy = "strict-origin";
+
+/** The fetch options for the site's config from configUrl. It sends no cookie, to any host. */
+export function configRequestInit(): RequestInit {
+  return { credentials: "omit", referrerPolicy: REFERRER_POLICY };
+}
+
+/**
+ * Which WireBatch (schema/v1/batch.json) a request carries: events, sent with consent, or the
+ * anonymous pings of declined mode. A batch is never both.
+ */
+export type BatchKind = "events" | "pings";
+
+/**
+ * The fetch options for a batch to eventsUrl; `body` is a WireBatch of `kind` as JSON.
+ *
+ * An event batch goes with credentials: "same-origin", which lets the browser store the Set-Cookie
+ * with which the collector, behind a first-party proxy, re-issues _amnda_id and _amnda_ses
+ * (AAI-827); to the cross-origin default host no cookie is sent or stored. A ping batch goes with
+ * credentials: "omit": it never carries the site's cookies, even to a same-origin proxy, and the
+ * browser ignores any Set-Cookie in its response. The transport (AAI-68) uses these for every
+ * fetch it sends, and sends the pageview's immediate flush with fetch, never sendBeacon, so at
+ * least one event batch per page gets the server-set cookies whatever a browser does with a
+ * beacon's response.
  *
  * keepalive, which lets a batch outlive the page, is set only for the pagehide flush (`unload`).
  * An ordinary batch goes without it, so that it never counts against the browser's 64 KiB
@@ -120,8 +142,13 @@ export function bodyBytes(body: string): number {
  * KEEPALIVE_BODY_LIMIT throws BatchSizeError: the transport splits the unload flush by
  * bodyBytes, and keeps the bodies it has in flight within KEEPALIVE_BODY_LIMIT together.
  */
-export function batchRequestInit(body: string, unload = false): RequestInit {
-  const init: RequestInit = { method: "POST", body, credentials: "same-origin" };
+export function batchRequestInit(body: string, kind: BatchKind, unload = false): RequestInit {
+  const init: RequestInit = {
+    method: "POST",
+    body,
+    credentials: kind === "events" ? "same-origin" : "omit",
+    referrerPolicy: REFERRER_POLICY,
+  };
   if (!unload) return init;
   const bytes = bodyBytes(body);
   if (bytes > KEEPALIVE_BODY_LIMIT) {

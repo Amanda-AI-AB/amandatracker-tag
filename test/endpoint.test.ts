@@ -4,9 +4,11 @@ import {
   DEFAULT_ENDPOINT,
   EndpointError,
   KEEPALIVE_BODY_LIMIT,
+  REFERRER_POLICY,
   adapterUrl,
   batchRequestInit,
   bodyBytes,
+  configRequestInit,
   configUrl,
   currentScript,
   endpointFromScript,
@@ -14,7 +16,7 @@ import {
   resolveEndpoint,
 } from "../src/core/endpoint";
 import type { WireBatch } from "../src/wire/generated";
-import { EVENT } from "./wire-validator";
+import { EVENT, PING } from "./wire-validator";
 
 const PAGE = "https://shop.example.com";
 
@@ -169,45 +171,71 @@ describe("the endpoint's URLs", () => {
   });
 });
 
+describe("REFERRER_POLICY", () => {
+  it("sends the page's origin alone as Referer, never its path or query", () => {
+    expect(REFERRER_POLICY).toBe("strict-origin");
+  });
+});
+
+describe("configRequestInit", () => {
+  it("sends no cookie, and the page's origin alone as Referer", () => {
+    expect(configRequestInit()).toEqual({ credentials: "omit", referrerPolicy: "strict-origin" });
+  });
+});
+
 describe("batchRequestInit", () => {
   const batch: WireBatch = { seq: 1, e: [EVENT] };
   const body = JSON.stringify(batch);
+  const pings: WireBatch = { e: [PING] };
+  const pingBody = JSON.stringify(pings);
 
-  it("posts with same-origin credentials, so a proxied response's Set-Cookie is stored", () => {
-    expect(batchRequestInit(body)).toEqual({
+  it("posts events with same-origin credentials, so a proxied response's Set-Cookie is stored", () => {
+    expect(batchRequestInit(body, "events")).toEqual({
       method: "POST",
       body,
       credentials: "same-origin",
+      referrerPolicy: "strict-origin",
     });
+  });
+
+  it("posts pings without credentials, so the site's cookies never go with them", () => {
+    expect(batchRequestInit(pingBody, "pings")).toEqual({
+      method: "POST",
+      body: pingBody,
+      credentials: "omit",
+      referrerPolicy: "strict-origin",
+    });
+    expect(batchRequestInit(pingBody, "pings", true).credentials).toBe("omit");
   });
 
   it("leaves keepalive off an ordinary batch, so one over 64 KiB is still sent", () => {
     const body = "x".repeat(100 * 1024);
-    const init = batchRequestInit(body);
+    const init = batchRequestInit(body, "events");
     expect(init.keepalive).toBeUndefined();
     expect(init.body).toBe(body);
   });
 
   it("sets keepalive on the pagehide flush", () => {
-    expect(batchRequestInit(body, true)).toEqual({
+    expect(batchRequestInit(body, "events", true)).toEqual({
       method: "POST",
       body,
       credentials: "same-origin",
+      referrerPolicy: "strict-origin",
       keepalive: true,
     });
   });
 
   it("takes a pagehide body up to the limit, counted in UTF-8 bytes", () => {
-    expect(batchRequestInit("x".repeat(KEEPALIVE_BODY_LIMIT), true).keepalive).toBe(true);
+    expect(batchRequestInit("x".repeat(KEEPALIVE_BODY_LIMIT), "events", true).keepalive).toBe(true);
     expect(bodyBytes("é😀")).toBe(6);
     // 3 bytes per character in UTF-8, though only one UTF-16 unit each
     const wide = "€".repeat(Math.floor(KEEPALIVE_BODY_LIMIT / 3) + 1);
     expect(wide.length).toBeLessThan(KEEPALIVE_BODY_LIMIT);
-    expect(() => batchRequestInit(wide, true)).toThrow(BatchSizeError);
+    expect(() => batchRequestInit(wide, "events", true)).toThrow(BatchSizeError);
   });
 
   it("refuses a pagehide body over the limit, which fetch would reject", () => {
     expect(KEEPALIVE_BODY_LIMIT).toBeLessThan(64 * 1024);
-    expect(() => batchRequestInit("x".repeat(KEEPALIVE_BODY_LIMIT + 1), true)).toThrow(BatchSizeError);
+    expect(() => batchRequestInit("x".repeat(KEEPALIVE_BODY_LIMIT + 1), "pings", true)).toThrow(BatchSizeError);
   });
 });
