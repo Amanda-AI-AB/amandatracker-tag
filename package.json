@@ -1,6 +1,6 @@
 {
   "name": "amandatracker-tag",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "The Amanda Tracker website tag (a.js): one IIFE, first-party cookies only, consent-native.",
   "license": "Apache-2.0",
