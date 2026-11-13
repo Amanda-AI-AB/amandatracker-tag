@@ -3,9 +3,12 @@
 
 import { adapterUrl } from "./endpoint";
 
-/** Injects an adapter's script; `endpoint` is one resolveEndpoint returned. */
-export function loadAdapter(doc: Document, endpoint: string, name: string): Promise<void> {
-  const src = adapterUrl(endpoint, name);
+/**
+ * Injects an adapter's script; `endpoint` is one resolveEndpoint returned for `pageOrigin`. It
+ * throws, before injecting anything, for an endpoint off the collection host and the page's origin.
+ */
+export function loadAdapter(doc: Document, endpoint: string, name: string, pageOrigin: string): Promise<void> {
+  const src = adapterUrl(endpoint, name, pageOrigin);
   return new Promise((resolve, reject) => {
     const script = doc.createElement("script");
     script.async = true;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BatchSizeError,
   DEFAULT_ENDPOINT,
@@ -8,6 +8,7 @@ import {
   batchRequestInit,
   bodyBytes,
   configUrl,
+  currentScript,
   endpointFromScript,
   eventsUrl,
   resolveEndpoint,
@@ -68,17 +69,61 @@ describe("resolveEndpoint", () => {
   });
 });
 
+const element = (tagName: string, endpoint: string | null) =>
+  ({ tagName, getAttribute: (name: string) => (name === "data-endpoint" ? endpoint : null) }) as unknown as Element;
+
 describe("endpointFromScript", () => {
-  const script = (value: string | null) =>
-    ({ getAttribute: (name: string) => (name === "data-endpoint" ? value : null) }) as unknown as Element;
+  const script = (value: string | null) => element("SCRIPT", value);
 
   it("reads data-endpoint from the installing script tag", () => {
     expect(endpointFromScript(script("/amnda"), PAGE)).toBe("https://shop.example.com/amnda");
   });
 
-  it("defaults without the attribute or without a script", () => {
+  it("defaults only for a script without the attribute", () => {
     expect(endpointFromScript(script(null), PAGE)).toBe(DEFAULT_ENDPOINT);
-    expect(endpointFromScript(null, PAGE)).toBe(DEFAULT_ENDPOINT);
+  });
+
+  it("throws without a script, rather than silently going to the default host", () => {
+    expect(() => endpointFromScript(null, PAGE)).toThrow(EndpointError);
+  });
+
+  it("throws for an element that is not a script, such as a clobbering <img name=currentScript>", () => {
+    expect(() => endpointFromScript(element("IMG", "https://evil.example"), PAGE)).toThrow(EndpointError);
+    expect(() => endpointFromScript(element("FORM", null), PAGE)).toThrow(EndpointError);
+    // an SVG <script> reports a lowercase tagName
+    expect(() => endpointFromScript(element("script", "/amnda"), PAGE)).toThrow(EndpointError);
+  });
+});
+
+describe("currentScript", () => {
+  const installing = element("SCRIPT", "/amnda");
+
+  // The node test environment has no DOM: a stand-in Document whose prototype getter returns the
+  // installing script, as a browser's does.
+  class FakeDocument {
+    get currentScript(): Element | null {
+      return installing;
+    }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reads the prototype's getter, which a named element cannot shadow", () => {
+    vi.stubGlobal("Document", FakeDocument);
+    const doc = new FakeDocument();
+    Object.defineProperty(doc, "currentScript", { value: element("IMG", "https://evil.example") });
+    expect((doc as unknown as Document).currentScript!.tagName).toBe("IMG");
+    expect(currentScript(doc as unknown as Document)).toBe(installing);
+    expect(endpointFromScript(currentScript(doc as unknown as Document), PAGE)).toBe(
+      "https://shop.example.com/amnda",
+    );
+  });
+
+  it("throws when Document.prototype has no currentScript getter", () => {
+    vi.stubGlobal("Document", class {});
+    expect(() => currentScript({} as Document)).toThrow(EndpointError);
   });
 });
 
@@ -88,20 +133,20 @@ describe("the endpoint's URLs", () => {
   it("serves config, events and adapters from the proxy", () => {
     expect(configUrl(endpoint, "SITE_1")).toBe("https://shop.example.com/amnda/cfg/SITE_1.json");
     expect(eventsUrl(endpoint)).toBe("https://shop.example.com/amnda/v1/e");
-    expect(adapterUrl(endpoint, "example-cmp")).toBe("https://shop.example.com/amnda/adapters/example-cmp.js");
+    expect(adapterUrl(endpoint, "example-cmp", PAGE)).toBe("https://shop.example.com/amnda/adapters/example-cmp.js");
   });
 
   it("serves them from the collection host by default", () => {
     expect(configUrl(DEFAULT_ENDPOINT, "SITE_1")).toBe("https://eu.serversider.com/cfg/SITE_1.json");
     expect(eventsUrl(DEFAULT_ENDPOINT)).toBe("https://eu.serversider.com/v1/e");
-    expect(adapterUrl(DEFAULT_ENDPOINT, "example-cmp")).toBe("https://eu.serversider.com/adapters/example-cmp.js");
+    expect(adapterUrl(DEFAULT_ENDPOINT, "example-cmp", PAGE)).toBe("https://eu.serversider.com/adapters/example-cmp.js");
   });
 
   it("builds every URL from a trailing-slash data-endpoint without a double slash", () => {
     const slashed = resolveEndpoint("/amnda/", PAGE);
     expect(configUrl(slashed, "SITE_1")).toBe("https://shop.example.com/amnda/cfg/SITE_1.json");
     expect(eventsUrl(slashed)).toBe("https://shop.example.com/amnda/v1/e");
-    expect(adapterUrl(slashed, "example-cmp")).toBe("https://shop.example.com/amnda/adapters/example-cmp.js");
+    expect(adapterUrl(slashed, "example-cmp", PAGE)).toBe("https://shop.example.com/amnda/adapters/example-cmp.js");
   });
 
   it("escapes the site id in the config path", () => {
@@ -109,7 +154,18 @@ describe("the endpoint's URLs", () => {
   });
 
   it("refuses an adapter name that could leave the adapters directory", () => {
-    expect(() => adapterUrl(DEFAULT_ENDPOINT, "../evil")).toThrow("invalid adapter name");
+    expect(() => adapterUrl(DEFAULT_ENDPOINT, "../evil", PAGE)).toThrow("invalid adapter name");
+  });
+
+  it("serves adapters only from the collection host or the page's own origin", () => {
+    const evil = resolveEndpoint("https://evil.example", PAGE);
+    expect(eventsUrl(evil)).toBe("https://evil.example/v1/e");
+    expect(() => adapterUrl(evil, "x", PAGE)).toThrow(EndpointError);
+    expect(() => adapterUrl(resolveEndpoint("https://t.example.com/amnda", PAGE), "x", PAGE)).toThrow(
+      EndpointError,
+    );
+    const dev = "http://localhost:8080";
+    expect(adapterUrl(resolveEndpoint("/amnda", dev), "x", dev)).toBe("http://localhost:8080/amnda/adapters/x.js");
   });
 });
 

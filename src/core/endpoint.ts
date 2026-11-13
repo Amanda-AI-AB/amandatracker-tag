@@ -33,9 +33,33 @@ export function resolveEndpoint(value: string | null | undefined, pageOrigin: st
   return url.origin + url.pathname.replace(/\/+$/, "");
 }
 
-/** The endpoint the installing script tag names; `script` is document.currentScript at boot. */
+/**
+ * The script element whose code is running, read through Document.prototype's own getter. A named
+ * element (<img name="currentScript">, <form name="currentScript">) shadows document.currentScript
+ * on the document itself (DOM clobbering, as in webpack's CVE-2024-43788), but not the prototype's
+ * getter. Call it once, synchronously at the top level of a.js: after an await, in a callback or from
+ * a module script it is null.
+ */
+export function currentScript(doc: Document): Element | null {
+  const getter = Object.getOwnPropertyDescriptor(Document.prototype, "currentScript")?.get;
+  if (!getter) throw new EndpointError("Document.prototype has no currentScript getter");
+  return getter.call(doc) as Element | null;
+}
+
+/**
+ * The endpoint the installing script tag names; `script` is currentScript(document) at boot. It
+ * must be a <script> element: anything else, or null, throws EndpointError, so that a clobbered or
+ * lost currentScript never silently sends a proxied site's traffic to another host. Only a script
+ * without data-endpoint gets the default.
+ */
 export function endpointFromScript(script: Element | null, pageOrigin: string): string {
-  return resolveEndpoint(script ? script.getAttribute("data-endpoint") : null, pageOrigin);
+  if (script === null) {
+    throw new EndpointError("no current script: read currentScript synchronously at the top level of a.js");
+  }
+  if (script.tagName !== "SCRIPT") {
+    throw new EndpointError(`the current script is a <${script.tagName.toLowerCase()}>, not a <script>`);
+  }
+  return resolveEndpoint(script.getAttribute("data-endpoint"), pageOrigin);
 }
 
 export function configUrl(endpoint: string, siteId: string): string {
@@ -48,10 +72,19 @@ export function eventsUrl(endpoint: string): string {
 
 const ADAPTER_NAME = /^[a-z0-9-]+$/;
 
-/** A consent-manager adapter's own file (dist/adapters/<name>.js) beside the core. */
-export function adapterUrl(endpoint: string, name: string): string {
+/**
+ * A consent-manager adapter's own file (dist/adapters/<name>.js) beside the core. Adapters are code
+ * run on the customer's page, so they load only from the collection host or the page's own origin
+ * (a first-party proxy, docs/first-party-proxy.md); an endpoint on any other origin throws
+ * EndpointError, whatever data-endpoint or the config it served says.
+ */
+export function adapterUrl(endpoint: string, name: string, pageOrigin: string): string {
   if (!ADAPTER_NAME.test(name)) {
     throw new Error(`invalid adapter name: ${name}`);
+  }
+  const origin = new URL(endpoint).origin;
+  if (origin !== DEFAULT_ENDPOINT && origin !== pageOrigin) {
+    throw new EndpointError(`adapters load only from ${DEFAULT_ENDPOINT} or the page's own origin, not ${origin}`);
   }
   return `${endpoint}/adapters/${name}.js`;
 }
