@@ -45,8 +45,11 @@ function substitute(text: string, values: Record<string, string>): string {
   });
 }
 
+// The Node image every Node step runs in, pinned by digest so that a commit always runs the same one.
+const NODE_IMAGE = /^node:22-bookworm@sha256:[0-9a-f]{64}$/;
+
 const CHECKS = [
-  { id: "install", args: ["pnpm", "install", "--frozen-lockfile"] },
+  { id: "install", args: ["pnpm", "install", "--frozen-lockfile", "--ignore-scripts"] },
   { id: "typecheck", args: ["pnpm", "typecheck"] },
   { id: "test", args: ["pnpm", "test"] },
   { id: "build", args: ["pnpm", "build"] },
@@ -66,9 +69,15 @@ describe.each(["pr.yaml", "release.yaml"])("cloudbuild/%s", (file) => {
   it("installs from the lockfile, type-checks, tests, and builds through the size gate", () => {
     const config = load(file);
     expect(checkSteps(config)).toEqual(CHECKS);
-    for (const step of config.steps.filter((s) => s.entrypoint === "corepack")) {
-      expect(step.name).toBe("node:22-bookworm");
-    }
+  });
+
+  it("runs every Node step in the same Node image, pinned by digest", () => {
+    const nodeSteps = load(file).steps.filter((step) => step.name.startsWith("node:"));
+    expect(nodeSteps.map((step) => step.id)).toEqual(
+      file === "release.yaml" ? ["version", ...CHECKS.map((check) => check.id)] : CHECKS.map((check) => check.id),
+    );
+    for (const step of nodeSteps) expect(step.name).toMatch(NODE_IMAGE);
+    expect(new Set(nodeSteps.map((step) => step.name)).size).toBe(1);
   });
 
   it("uses only substitutions the build defines", () => {
@@ -82,6 +91,13 @@ describe.each(["pr.yaml", "release.yaml"])("cloudbuild/%s", (file) => {
       }
     }
   });
+});
+
+it("package.json pins pnpm, the version corepack runs in every build, by its hash", () => {
+  const { packageManager } = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+    packageManager: string;
+  };
+  expect(packageManager).toMatch(/^pnpm@\d+\.\d+\.\d+\+sha512\.[0-9a-f]{128}$/);
 });
 
 describe("cloudbuild/pr.yaml", () => {
@@ -100,19 +116,50 @@ describe("cloudbuild/release.yaml", () => {
   // This build's dist/a.js.
   const BUILT = "(()=>{})();\n";
 
+  let origin: string;
+
+  /** Runs git in `cwd`, with a committer of its own, and returns its output. */
+  function git(cwd: string, ...args: string[]): string {
+    const ident = { GIT_AUTHOR_NAME: "test", GIT_AUTHOR_EMAIL: "test@example.com" };
+    return execFileSync("git", args, {
+      cwd,
+      env: { ...process.env, ...ident, GIT_COMMITTER_NAME: "test", GIT_COMMITTER_EMAIL: "test@example.com" },
+      stdio: "pipe",
+    })
+      .toString("utf8")
+      .trim();
+  }
+
+  /** The build's checkout: a clone of origin with the release tag v0.3.0 checked out, as Cloud Build's. */
+  function checkout(...cloneArgs: string[]): void {
+    rmSync(workspace, { recursive: true, force: true });
+    git(dirname(workspace), "clone", "--quiet", ...cloneArgs, `file://${origin}`, workspace);
+    git(workspace, "-c", "advice.detachedHead=false", "checkout", "--quiet", "v0.3.0");
+    mkdirSync(join(workspace, "scripts"), { recursive: true });
+    mkdirSync(join(workspace, "dist"), { recursive: true });
+    copyFileSync(join(root, "scripts/release-version.mjs"), join(workspace, "scripts/release-version.mjs"));
+    writeFileSync(join(workspace, "package.json"), JSON.stringify({ version: "0.3.0" }));
+    writeFileSync(join(workspace, "dist/a.js"), BUILT);
+  }
+
   beforeEach(() => {
     const dir = mkdtempSync(join(tmpdir(), "tag-release-"));
     workspace = join(dir, "workspace");
     fakeBin = join(dir, "bin");
     callLog = join(dir, "calls");
     buckets = join(dir, "gcs");
-    mkdirSync(join(workspace, "scripts"), { recursive: true });
-    mkdirSync(join(workspace, "dist"));
+    // origin: main has the release commit, tagged v0.3.0, and a later one, so the tag isn't main's tip.
+    origin = join(dir, "origin.git");
+    const seed = join(dir, "seed");
+    mkdirSync(seed);
+    git(seed, "init", "--quiet", "-b", "main");
+    git(seed, "commit", "--quiet", "--allow-empty", "-m", "chore(release): 0.3.0");
+    git(seed, "tag", "v0.3.0");
+    git(seed, "commit", "--quiet", "--allow-empty", "-m", "feat: after 0.3.0");
+    git(dir, "clone", "--quiet", "--bare", seed, origin);
+    checkout();
     mkdirSync(fakeBin);
     mkdirSync(buckets);
-    copyFileSync(join(root, "scripts/release-version.mjs"), join(workspace, "scripts/release-version.mjs"));
-    writeFileSync(join(workspace, "package.json"), JSON.stringify({ version: "0.3.0" }));
-    writeFileSync(join(workspace, "dist/a.js"), BUILT);
     copyFileSync(join(root, "test/fake-gcloud.sh"), join(fakeBin, "gcloud"));
     chmodSync(join(fakeBin, "gcloud"), 0o755);
     writeFileSync(callLog, "");
@@ -335,5 +382,43 @@ describe("cloudbuild/release.yaml", () => {
       'release version: release tag "v0.3.1" does not match package.json version 0.3.0: expected v0.3.0\n',
     );
     expect(calls).toEqual([]);
+  });
+
+  it("prod: a release tag on a commit that isn't on main fails before anything is uploaded", () => {
+    // v0.3.0 moved to a commit pushed to another branch, never merged to main.
+    git(workspace, "checkout", "--quiet", "-b", "hotfix");
+    git(workspace, "commit", "--quiet", "--allow-empty", "-m", "fix: not on main");
+    git(workspace, "push", "--quiet", "origin", "hotfix");
+    const head = git(workspace, "rev-parse", "HEAD");
+
+    const { ran, failed, status, stderr, calls } = release({ _ENV: "prod", TAG_NAME: "v0.3.0", SHORT_SHA: "def5678" });
+
+    expect(ran).toEqual([]);
+    expect(failed).toBe("version");
+    expect(status).toBe(1);
+    expect(stderr).toBe(`release v0.3.0: commit ${head} is not on main; a prod release builds only from main\n`);
+    expect(calls).toEqual([]);
+  });
+
+  it("prod: a shallow checkout of a release tag on main fetches main's history and goes on", () => {
+    // Only the tagged commit, with no main branch: the checkout a tag trigger may give.
+    checkout("--depth", "1", "--branch", "v0.3.0");
+    expect(git(workspace, "rev-parse", "--is-shallow-repository")).toBe("true");
+
+    const { ran, failed } = release({ _ENV: "prod", TAG_NAME: "v0.3.0", SHORT_SHA: "abc1234" });
+
+    expect(failed).toBeUndefined();
+    expect(ran).toEqual(["version", "upload", "promote"]);
+    expect(git(workspace, "rev-parse", "--is-shallow-repository")).toBe("false");
+  });
+
+  it("dev: builds from main without checking the commit against origin", () => {
+    // A dev build runs on a push to main; it never fetches, so it can't fail on reaching origin.
+    rmSync(origin, { recursive: true });
+
+    const { ran, failed } = release({ _ENV: "dev", TAG_NAME: "", SHORT_SHA: "abc1234" });
+
+    expect(failed).toBeUndefined();
+    expect(ran).toEqual(["version", "upload", "promote"]);
   });
 });

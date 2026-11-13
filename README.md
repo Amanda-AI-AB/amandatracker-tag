@@ -118,8 +118,10 @@ core budget.
 
 Cloud Build runs the pipelines in `cloudbuild/`:
 
-- `pr.yaml` checks every pull request: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test`
-  and `pnpm build`, so a core over its size budget fails the check. It uploads nothing.
+- `pr.yaml` checks every pull request: `pnpm install --frozen-lockfile --ignore-scripts`,
+  `pnpm typecheck`, `pnpm test` and `pnpm build`, so a core over its size budget fails the check. It
+  uploads nothing. The Node image is pinned by digest and pnpm by `packageManager`'s hash: when you
+  bump either, update every step's digest, or the hash, in the same commit.
 - `release.yaml` runs the same checks, then uploads the adapters as the immutable
   `adapters/<version>/<name>.js` and, after them, the core as the immutable `a.<version>.js` to the
   environment's static bucket. `scripts/release-version.mjs` picks the version: `package.json`'s on a
@@ -128,4 +130,4 @@ Cloud Build runs the pipelines in `cloudbuild/`:
   - **dev** (every merge to `main`) also promotes the build to the evergreen `a.js`, and purges it
     from the CDN.
   - **prod** (a release tag, after approval) uploads the versioned files only; promotion to `a.js`
-    follows the canary rollout.
+    follows the canary rollout. A release tag on a commit that isn't on `main` fails the build.

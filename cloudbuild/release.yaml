@@ -20,8 +20,11 @@ steps:
   # The version: package.json's on a release tag `v<semver>` (the two must agree), or
   # `<package version>-dev.g<short sha>` for a dev build from main. It runs first, so that a prod
   # build without a tag fails before anything else; it writes outside dist/, which the build empties.
+  # A prod build also fails unless the tagged commit is on main (AAI-939), so that any `v<semver>` tag
+  # pushed on another branch is refused before the approval gate is all that stands in its way. The
+  # build's checkout may be shallow, so it fetches main's whole history first.
   - id: version
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: bash
     env:
       - RELEASE_ENV=${_ENV}
@@ -32,26 +35,38 @@ steps:
       - |
         set -euo pipefail
         node scripts/release-version.mjs > .release-version
+        if [ "${_ENV}" = "prod" ]; then
+          MAIN="+refs/heads/main:refs/remotes/origin/main"
+          if [ "$$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --quiet --no-tags --unshallow origin "$${MAIN}"
+          else
+            git fetch --quiet --no-tags origin "$${MAIN}"
+          fi
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "release $${TAG_NAME}: commit $$(git rev-parse HEAD) is not on main; a prod release builds only from main" >&2
+            exit 1
+          fi
+        fi
         echo "releasing a.$$(cat .release-version).js to ${_ENV}"
 
   - id: install
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
-    args: [pnpm, install, --frozen-lockfile]
+    args: [pnpm, install, --frozen-lockfile, --ignore-scripts]
 
   - id: typecheck
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
     args: [pnpm, typecheck]
 
   - id: test
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
     args: [pnpm, test]
 
   # The build reads .release-version, and bakes it into the core as the version of its adapters.
   - id: build
-    name: node:22-bookworm
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
     entrypoint: corepack
     args: [pnpm, build]
 
