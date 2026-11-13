@@ -19,7 +19,10 @@ type FakeScript = {
 function fakeDocument() {
   const appended: FakeScript[] = [];
   const doc = {
-    createElement: () => ({}) as FakeScript,
+    createElement: (tagName: string) => {
+      expect(tagName).toBe("script");
+      return {} as FakeScript;
+    },
     head: { appendChild: (script: FakeScript) => appended.push(script) },
   } as unknown as Document;
   return { doc, appended };
