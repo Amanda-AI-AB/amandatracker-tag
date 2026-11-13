@@ -38,7 +38,7 @@ export const PING = {
   utm: { source: "newsletter", medium: "email", campaign: "nov" },
 } as const;
 
-export type SchemaFile = "event.json" | "ping.json" | "pubsub-message.json";
+export type SchemaFile = "batch.json" | "event.json" | "ping.json" | "pubsub-message.json";
 
 export function loadSchemas(version = 1): Record<string, Record<string, unknown>> {
   const dir = join(SCHEMA_ROOT, `v${version}`);

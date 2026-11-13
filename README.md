@@ -31,6 +31,9 @@ truth for what the tag sends and what the collector accepts:
 - `ping.json`: the anonymous ping that declined mode `pings` sends. It has no ids, no `seq` and
   nothing linkable across events. Its field list is frozen after counsel sign-off, so adding a
   field is a framework amendment, never a routine release.
+- `batch.json`: the request body of `POST /v1/e`, `{"seq": 3, "e": [...]}`. It holds 1 to 10
+  events or pings, never both. A batch of events may carry `seq`, the page's batch counter, which
+  the collector reads for loss. A batch of pings never carries it.
 - `pubsub-message.json`: what the collector publishes to Pub/Sub. It holds the client's event or
   ping and the fields the collector derives (received time, region, country, device class). It
   never includes the IP address.

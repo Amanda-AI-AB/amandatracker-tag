@@ -1,11 +1,11 @@
 // Generates src/wire/generated.ts from the newest wire JSON Schema in schema/v<N>/: a TypeScript
 // type for each schema and each of its $defs, and, for each object with properties (a schema's
-// top-level object or an object in $defs), its field list, its required fields, its strings' length caps and a shape that
+// top-level object or an object in $defs), its field list, its required fields, its strings' length caps, its arrays' item caps and a shape that
 // ties in its nested objects' shapes, which the payload builder uses. The schema is the source of
 // truth; a test fails when the committed file differs from what this generates.
 //
-// It covers the subset of JSON Schema the wire uses (object, string, integer, boolean, const,
-// enum, oneOf, $ref) and throws on anything else, rather than generate a looser type.
+// It covers the subset of JSON Schema the wire uses (object, array, string, integer, boolean,
+// const, enum, oneOf, $ref) and throws on anything else, rather than generate a looser type.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,9 +17,12 @@ export const GENERATED_FILE = join(root, "src/wire/generated.ts");
 // Keywords that only document or constrain values, and change no TypeScript type.
 const ANNOTATIONS = new Set([
   "$schema", "$id", "$defs", "title", "description", "minLength", "maxLength", "pattern", "minimum",
+  "minItems", "maxItems",
 ]);
 // Keywords the generator turns into types.
-const TYPED = new Set(["type", "const", "enum", "oneOf", "$ref", "properties", "required", "additionalProperties"]);
+const TYPED = new Set([
+  "type", "const", "enum", "oneOf", "$ref", "properties", "required", "additionalProperties", "items",
+]);
 
 /**
  * @param {string} schemaRoot
@@ -85,6 +88,11 @@ export function generate(versionDir) {
         return "number";
       case "boolean":
         return "boolean";
+      case "array": {
+        if (!node.items) throw new Error(`${file}: an array needs items`);
+        const item = typeOf(file, node.items);
+        return item.includes(" | ") ? `(${item})[]` : `${item}[]`;
+      }
       case "object":
         if (node.properties) throw new Error(`${file}: name a nested object in $defs`);
         return "Record<string, unknown>";
@@ -154,6 +162,11 @@ export function generate(versionDir) {
       .filter(([, prop]) => prop.type === "string" && typeof prop.maxLength === "number")
       .map(([key, prop]) => `${key}: ${prop.maxLength}`);
     if (caps.length > 0) lines.push("", `export const ${prefix}_MAX_LENGTH = { ${caps.join(", ")} } as const;`);
+    const itemCaps = keys
+      .map((key) => [key, deref(file, node.properties[key])])
+      .filter(([, prop]) => prop.type === "array" && typeof prop.maxItems === "number")
+      .map(([key, prop]) => `${key}: ${prop.maxItems}`);
+    if (itemCaps.length > 0) lines.push("", `export const ${prefix}_MAX_ITEMS = { ${itemCaps.join(", ")} } as const;`);
     /** @type {[string, string][]} */
     const nested = [];
     for (const key of keys) {
@@ -174,15 +187,19 @@ export function generate(versionDir) {
   /** @type {Set<unknown>} */
   const versions = new Set();
   for (const [file, schema] of schemas) {
-    versions.add(schema.properties?.schema_version?.const);
+    // An envelope with no schema_version of its own (batch.json, whose items carry theirs) has its
+    // directory's version.
+    const version = schema.properties?.schema_version?.const;
+    if (version !== undefined) versions.add(version);
     out.push("", `// ${file}`);
     for (const [name, def] of Object.entries(schema.$defs ?? {})) {
       out.push("", declaration(file, name, def));
       if (def.type === "object" && def.properties) out.push(...constants(file, name, def));
     }
     out.push("", declaration(file, schema.title, schema));
-    out.push(...constants(file, schema.title, schema));
+    if (schema.type === "object" && schema.properties) out.push(...constants(file, schema.title, schema));
   }
+  if (versions.size === 0) throw new Error(`${versionDir}: no schema declares schema_version`);
   if (versions.size !== 1) throw new Error(`${versionDir}: the schemas disagree on schema_version`);
 
   // The shapes go last, each after the shapes it nests, since a schema may nest another file's object.

@@ -90,6 +90,56 @@ describe("gen-wire", () => {
     expect(out.indexOf("PART_SHAPE = ")).toBeLessThan(out.indexOf("THING_SHAPE = "));
   });
 
+  it("generates arrays, their item caps, and an envelope that is a oneOf with no version of its own", () => {
+    schema("a.json", {
+      title: "Item",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 2 } },
+    });
+    schema("b.json", {
+      title: "Envelope",
+      oneOf: [{ $ref: "#/$defs/Many" }, { $ref: "#/$defs/Mixed" }],
+      $defs: {
+        Many: {
+          type: "object",
+          additionalProperties: false,
+          required: ["e"],
+          properties: { e: { type: "array", minItems: 1, maxItems: 10, items: { $ref: "a.json" } } },
+        },
+        Mixed: {
+          type: "object",
+          additionalProperties: false,
+          properties: { e: { type: "array", items: { oneOf: [{ $ref: "a.json" }, { type: "string" }] } } },
+        },
+      },
+    });
+
+    const out = generate(dir);
+    expect(out).toContain("export interface Many {\n  e: Item[];\n}");
+    expect(out).toContain("export interface Mixed {\n  e?: (Item | string)[];\n}");
+    expect(out).toContain("export const MANY_MAX_ITEMS = { e: 10 } as const;");
+    expect(out).not.toContain("MIXED_MAX_ITEMS");
+    expect(out).toContain("export type Envelope = Many | Mixed;");
+    expect(out).not.toContain("ENVELOPE_FIELDS");
+    expect(out).toContain("export const SCHEMA_VERSION = 2;");
+  });
+
+  it("refuses an array without items", () => {
+    schema("a.json", {
+      title: "Thing",
+      type: "object",
+      additionalProperties: false,
+      properties: { schema_version: { const: 1 }, list: { type: "array" } },
+    });
+    expect(() => generate(dir)).toThrow("an array needs items");
+  });
+
+  it("refuses schemas none of which declares a version", () => {
+    schema("a.json", { title: "Thing", type: "object", additionalProperties: false, properties: { n: { type: "string" } } });
+    expect(() => generate(dir)).toThrow("no schema declares schema_version");
+  });
+
   it("refuses an object that nests itself", () => {
     schema("a.json", {
       title: "Thing",

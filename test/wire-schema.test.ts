@@ -130,6 +130,57 @@ describe("wire schema v1: Pub/Sub message", () => {
   });
 });
 
+describe("wire schema v1: batch (the body of POST /v1/e)", () => {
+  const validate = validator("batch.json");
+  const second = { ...EVENT, event_id: "01934f6c-8d2a-7b3c-9d4e-5f6a7b8c9d0f" };
+
+  it("accepts a batch of events with seq, and without it", () => {
+    expect(validate({ seq: 3, e: [EVENT, second] }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ e: [EVENT] }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("accepts a batch of pings without seq", () => {
+    expect(validate({ e: [PING, PING] }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects seq on a batch holding a ping", () => {
+    expect(validate({ seq: 1, e: [PING] })).toBe(false);
+  });
+
+  it("rejects a batch that mixes events and pings", () => {
+    expect(validate({ e: [EVENT, PING] })).toBe(false);
+    expect(validate({ seq: 2, e: [EVENT, PING] })).toBe(false);
+  });
+
+  it("rejects an empty or missing e", () => {
+    expect(validate({ e: [] })).toBe(false);
+    expect(validate({ seq: 1, e: [] })).toBe(false);
+    expect(validate({ seq: 1 })).toBe(false);
+  });
+
+  it("takes 10 items and rejects 11", () => {
+    expect(validate({ seq: 1, e: Array(10).fill(EVENT) })).toBe(true);
+    expect(validate({ seq: 1, e: Array(11).fill(EVENT) })).toBe(false);
+    expect(validate({ e: Array(10).fill(PING) })).toBe(true);
+    expect(validate({ e: Array(11).fill(PING) })).toBe(false);
+  });
+
+  it("rejects a seq below 1 or fractional", () => {
+    expect(validate({ seq: 0, e: [EVENT] })).toBe(false);
+    expect(validate({ seq: 1.5, e: [EVENT] })).toBe(false);
+  });
+
+  it("rejects a key the schema doesn't list", () => {
+    expect(validate({ seq: 1, e: [EVENT], site_id: "site_123" })).toBe(false);
+    expect(validate({ e: [PING], v: 1 })).toBe(false);
+  });
+
+  it("rejects an item that is neither an event nor a ping", () => {
+    expect(validate({ seq: 1, e: [{ ...EVENT, ip: "203.0.113.7" }] })).toBe(false);
+    expect(validate({ e: [{ ...PING, visitor_id: EVENT.visitor_id }] })).toBe(false);
+  });
+});
+
 describe("wire schema v1: every object is closed", () => {
   function openObjects(node: unknown, path: string, found: string[]): string[] {
     if (node && typeof node === "object") {

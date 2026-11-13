@@ -12,6 +12,8 @@ import {
   eventsUrl,
   resolveEndpoint,
 } from "../src/core/endpoint";
+import type { WireBatch } from "../src/wire/generated";
+import { EVENT } from "./wire-validator";
 
 const PAGE = "https://shop.example.com";
 
@@ -112,10 +114,13 @@ describe("the endpoint's URLs", () => {
 });
 
 describe("batchRequestInit", () => {
+  const batch: WireBatch = { seq: 1, e: [EVENT] };
+  const body = JSON.stringify(batch);
+
   it("posts with same-origin credentials, so a proxied response's Set-Cookie is stored", () => {
-    expect(batchRequestInit('{"e":[]}')).toEqual({
+    expect(batchRequestInit(body)).toEqual({
       method: "POST",
-      body: '{"e":[]}',
+      body,
       credentials: "same-origin",
     });
   });
@@ -128,9 +133,9 @@ describe("batchRequestInit", () => {
   });
 
   it("sets keepalive on the pagehide flush", () => {
-    expect(batchRequestInit('{"e":[]}', true)).toEqual({
+    expect(batchRequestInit(body, true)).toEqual({
       method: "POST",
-      body: '{"e":[]}',
+      body,
       credentials: "same-origin",
       keepalive: true,
     });
