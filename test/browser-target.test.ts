@@ -27,11 +27,33 @@ function srcDiagnostics(file: string): string[] {
 }
 
 /**
- * A global scope with the browser APIs the tag uses at load time, and nothing of Node's. Add to it
- * what new top-level code needs (a document stub for the boot, AAI-67), never a Node global.
+ * A global scope with the browser APIs the tag uses at load time, and nothing of Node's: a page
+ * installed by a.js's snippet for site_123, whose fetch answers with fetchFn (by default never).
+ * Add to it what new top-level code needs, never a Node global.
  */
-function browserContext(): object {
-  const context: Record<string, unknown> = { URL, TextEncoder };
+function browserContext(fetchFn: (url: string) => Promise<unknown> = () => new Promise(() => undefined)): Record<string, unknown> {
+  const script = {
+    tagName: "SCRIPT",
+    getAttribute: (name: string) => ({ "data-site": "site_123" })[name] ?? null,
+  };
+  class Document {
+    get currentScript(): unknown {
+      return script;
+    }
+    readonly title = "Products";
+    readonly referrer = "";
+  }
+  const context: Record<string, unknown> = {
+    URL,
+    TextEncoder,
+    Document,
+    document: new Document(),
+    location: { href: "https://shop.example.com/products", origin: "https://shop.example.com" },
+    navigator: { language: "sv-SE" },
+    history: { pushState() {}, replaceState() {} },
+    addEventListener() {},
+    fetch: fetchFn,
+  };
   context.window = context;
   context.self = context;
   return createContext(context);
@@ -81,6 +103,21 @@ describe("browser target", () => {
     for (const file of [coreFile, ...adapterFiles]) {
       expect(() => runInContext(readFileSync(file, "utf8"), browserContext(), { filename: file })).not.toThrow();
     }
+  });
+
+  it("boots the built core: it fetches the site's config and installs window.amanda", async () => {
+    const { coreFile } = await build({ outdir: join(dir, "dist") });
+    const fetched: string[] = [];
+    const context = browserContext(async (url) => {
+      fetched.push(url);
+      return { ok: true, status: 200, json: async () => ({ schema_version: 1, site: "site_123", config_version: 1 }) };
+    });
+
+    runInContext(readFileSync(coreFile, "utf8"), context, { filename: coreFile });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetched).toEqual(["https://eu.serversider.com/cfg/site_123.json"]);
+    expect((context.amanda as { loaded?: boolean }).loaded).toBe(true);
   });
 
   it("fails a build that uses a Node global at load time", async () => {

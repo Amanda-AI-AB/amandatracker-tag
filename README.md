@@ -5,13 +5,17 @@ Licensed under Apache-2.0.
 
 ## Status
 
-The tag is not yet functional. This repo holds its building blocks: the wire schema and payload
-builder, the endpoint and request options (`src/core/endpoint.ts`) and the adapter loader
-(`src/core/adapter-loader.ts`). `src/core/index.ts` only re-exports them, and nothing in the built
-`a.js` calls them, so the tag does nothing on a page yet. Still to come:
+The tag boots but sends nothing yet. `a.js` (`src/core/boot.ts`) reads its script tag's `data-site`
+and `data-endpoint`, fetches the site's config from `cfg/<SITE_PUBLIC_ID>.json` without cookies,
+replaces the snippet's `window.amanda` stub with the real command function and runs the calls it
+queued, then makes a pageview on load and on each route change of a single-page app
+(`history.pushState`, `history.replaceState` and `popstate`; a fragment-only change is not a new
+page). Every step runs inside an error boundary (`src/core/boundary.ts`): a failure never reaches the
+host page, and is reported, sampled and capped per page. Still to come:
 
-- the command queue, config fetch, pageview and error boundary (AAI-67);
-- the transport, which posts batches (AAI-68);
+- sending the error reports to the telemetry endpoint, which is not decided yet; until then they go
+  to the browser console (AAI-67);
+- the transport, which posts batches, pageviews included (AAI-68);
 - the `_amnda_id` and `_amnda_ses` cookies (AAI-98);
 - `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).
 
@@ -74,8 +78,8 @@ checks its vendored copy against hashes it records itself (the monorepo's `share
 - `src/core/index.ts` builds to **`dist/a.js`**: a single minified IIFE, ES2018, with no runtime
   dependencies.
 - Each consent-manager adapter `src/adapters/<name>.ts` builds to its own IIFE,
-  `dist/adapters/<name>.js`, which the core is to load only for the sites whose config names it, once
-  it fetches the config (AAI-67). A name is
+  `dist/adapters/<name>.js`, which the core is to load only for the sites whose config names it
+  (AAI-831; the config doesn't name one yet). A name is
   lowercase letters, digits and `-`; the build refuses any other, and fails when `src/adapters/` is
   missing.
 - The adapters build first. The core is built with its version (`.release-version`, which the
@@ -86,10 +90,10 @@ checks its vendored copy against hashes it records itself (the monorepo's `share
 
 ## The endpoint
 
-Planned: the tag is to fetch `cfg/<SITE_PUBLIC_ID>.json` (AAI-67), post to `v1/e` (AAI-68) and load
-`adapters/<version>/<name>.js` from one base, `https://eu.serversider.com` by default, and the script
-tag's `data-endpoint` attribute is to set another (AAI-831). `src/core/endpoint.ts` already builds
-those URLs and request options; nothing calls them yet. It resolves `data-endpoint` this way:
+The tag fetches `cfg/<SITE_PUBLIC_ID>.json` from one base, `https://eu.serversider.com` by default,
+or the one the script tag's `data-endpoint` attribute sets. Planned: it is to post to `v1/e` (AAI-68)
+and load `adapters/<version>/<name>.js` (AAI-831) from the same base; `src/core/endpoint.ts` already
+builds those URLs and request options. It resolves `data-endpoint` this way:
 
 - a path, such as `data-endpoint="/amnda"`, is on the page's own origin: a
   [first-party reverse proxy](docs/first-party-proxy.md);
