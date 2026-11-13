@@ -118,12 +118,22 @@ describe("cloudbuild/release.yaml", () => {
 
   let origin: string;
 
-  /** Runs git in `cwd`, with a committer of its own, and returns its output. */
+  // Every commit's time, two hours east of UTC, so that a dev version shows it converted to UTC.
+  const COMMITTED = "2026-11-13T20:53:00+02:00";
+  // A dev build of package.json's 0.3.0 at that commit: the next patch, the commit's UTC time, its sha.
+  const DEV_VERSION = "0.3.1-dev.20261113185300.gabc1234";
+
+  /** Runs git in `cwd`, with a committer and a commit time of its own, and returns its output. */
   function git(cwd: string, ...args: string[]): string {
-    const ident = { GIT_AUTHOR_NAME: "test", GIT_AUTHOR_EMAIL: "test@example.com" };
+    const ident = { GIT_AUTHOR_NAME: "test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_AUTHOR_DATE: COMMITTED };
+    const committer = {
+      GIT_COMMITTER_NAME: "test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+      GIT_COMMITTER_DATE: COMMITTED,
+    };
     return execFileSync("git", args, {
       cwd,
-      env: { ...process.env, ...ident, GIT_COMMITTER_NAME: "test", GIT_COMMITTER_EMAIL: "test@example.com" },
+      env: { ...process.env, ...ident, ...committer },
       stdio: "pipe",
     })
       .toString("utf8")
@@ -263,10 +273,10 @@ describe("cloudbuild/release.yaml", () => {
     expect(ran).toEqual(["version", "upload", "promote"]);
     const bucket = "gs://amandatrk-dev-data-static";
     expect(calls).toEqual([
-      ...uploadCalls("dist/adapters/example-cmp.js", `${bucket}/adapters/0.3.0-dev.gabc1234/example-cmp.js`),
-      ...uploadCalls("dist/adapters/other-cmp.js", `${bucket}/adapters/0.3.0-dev.gabc1234/other-cmp.js`),
-      ...uploadCalls("dist/a.js", `${bucket}/a.0.3.0-dev.gabc1234.js`),
-      ["storage", "cp", "--cache-control=public, max-age=300", JS, `${bucket}/a.0.3.0-dev.gabc1234.js`, `${bucket}/a.js`],
+      ...uploadCalls("dist/adapters/example-cmp.js", `${bucket}/adapters/${DEV_VERSION}/example-cmp.js`),
+      ...uploadCalls("dist/adapters/other-cmp.js", `${bucket}/adapters/${DEV_VERSION}/other-cmp.js`),
+      ...uploadCalls("dist/a.js", `${bucket}/a.${DEV_VERSION}.js`),
+      ["storage", "cp", "--cache-control=public, max-age=300", JS, `${bucket}/a.${DEV_VERSION}.js`, `${bucket}/a.js`],
       [
         "compute",
         "url-maps",
@@ -277,10 +287,10 @@ describe("cloudbuild/release.yaml", () => {
         "--project=amandatrk-dev-data",
       ],
     ]);
-    expect(object("amandatrk-dev-data-static/a.0.3.0-dev.gabc1234.js")).toBe(BUILT);
+    expect(object(`amandatrk-dev-data-static/a.${DEV_VERSION}.js`)).toBe(BUILT);
     expect(object("amandatrk-dev-data-static/a.js")).toBe(BUILT);
-    expect(object("amandatrk-dev-data-static/adapters/0.3.0-dev.gabc1234/example-cmp.js")).toBe(ADAPTER);
-    expect(object("amandatrk-dev-data-static/adapters/0.3.0-dev.gabc1234/other-cmp.js")).toBe(ADAPTER);
+    expect(object(`amandatrk-dev-data-static/adapters/${DEV_VERSION}/example-cmp.js`)).toBe(ADAPTER);
+    expect(object(`amandatrk-dev-data-static/adapters/${DEV_VERSION}/other-cmp.js`)).toBe(ADAPTER);
   });
 
   it("dev without adapters: promotes and purges a.js alone", () => {
@@ -289,12 +299,12 @@ describe("cloudbuild/release.yaml", () => {
     expect(failed).toBeUndefined();
     const copiesAndPurges = calls.filter((call) => call[1] !== "hash" && call[1] !== "objects");
     expect(copiesAndPurges.map((call) => call.slice(0, 3).concat(call.slice(-2)))).toEqual([
-      ["storage", "cp", "--no-clobber", "dist/a.js", "gs://amandatrk-dev-data-static/a.0.3.0-dev.gabc1234.js"],
+      ["storage", "cp", "--no-clobber", "dist/a.js", `gs://amandatrk-dev-data-static/a.${DEV_VERSION}.js`],
       [
         "storage",
         "cp",
         "--cache-control=public, max-age=300",
-        "gs://amandatrk-dev-data-static/a.0.3.0-dev.gabc1234.js",
+        `gs://amandatrk-dev-data-static/a.${DEV_VERSION}.js`,
         "gs://amandatrk-dev-data-static/a.js",
       ],
       ["compute", "url-maps", "invalidate-cdn-cache", "--path=/a.js", "--project=amandatrk-dev-data"],
@@ -352,7 +362,7 @@ describe("cloudbuild/release.yaml", () => {
   });
 
   it("dev: another build of the same version fails before a.js is promoted", () => {
-    stored("amandatrk-dev-data-static/a.0.3.0-dev.gabc1234.js", "(()=>{broken()})();\n");
+    stored(`amandatrk-dev-data-static/a.${DEV_VERSION}.js`, "(()=>{broken()})();\n");
     stored("amandatrk-dev-data-static/a.js", "(()=>{previous()})();\n");
 
     const { failed, calls } = release({ _ENV: "dev", TAG_NAME: "", SHORT_SHA: "abc1234" });
@@ -422,5 +432,39 @@ describe("cloudbuild/release.yaml", () => {
 
     expect(failed).toBeUndefined();
     expect(ran).toEqual(["version", "upload", "promote"]);
+  });
+
+  it("dev: a retried build of the same commit publishes the same version, and finds its own bytes", () => {
+    expect(release({ _ENV: "dev", TAG_NAME: "", SHORT_SHA: "abc1234" }).failed).toBeUndefined();
+    writeFileSync(callLog, "");
+
+    const { ran, failed, calls } = release({ _ENV: "dev", TAG_NAME: "", SHORT_SHA: "abc1234" });
+
+    expect(failed).toBeUndefined();
+    expect(ran).toEqual(["version", "upload", "promote"]);
+    expect(calls[0]).toContain(`gs://amandatrk-dev-data-static/a.${DEV_VERSION}.js`);
+    expect(object(`amandatrk-dev-data-static/a.${DEV_VERSION}.js`)).toBe(BUILT);
+  });
+
+  it("dev: a shallow checkout still has the commit's time", () => {
+    checkout("--depth", "1", "--branch", "v0.3.0");
+    expect(git(workspace, "rev-parse", "--is-shallow-repository")).toBe("true");
+
+    const { failed } = release({ _ENV: "dev", TAG_NAME: "", SHORT_SHA: "abc1234" });
+
+    expect(failed).toBeUndefined();
+    expect(readFileSync(join(workspace, ".release-version"), "utf8")).toBe(`${DEV_VERSION}\n`);
+  });
+
+  it("dev: a checkout without .git fails before anything is uploaded, rather than take the build's time", () => {
+    rmSync(join(workspace, ".git"), { recursive: true });
+
+    const { ran, failed, status, stderr, calls } = release({ _ENV: "dev", TAG_NAME: "", SHORT_SHA: "abc1234" });
+
+    expect(ran).toEqual([]);
+    expect(failed).toBe("version");
+    expect(status).toBe(1);
+    expect(stderr).toContain("dev release: the checkout has no git history to take the commit's time from\n");
+    expect(calls).toEqual([]);
   });
 });

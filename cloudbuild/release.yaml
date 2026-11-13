@@ -18,8 +18,12 @@ substitutions:
 
 steps:
   # The version: package.json's on a release tag `v<semver>` (the two must agree), or
-  # `<package version>-dev.g<short sha>` for a dev build from main. It runs first, so that a prod
-  # build without a tag fails before anything else; it writes outside dist/, which the build empties.
+  # `<next patch>-dev.<commit time>.g<short sha>` for a dev build from main (AAI-954). It runs first,
+  # so that a prod build without a tag fails before anything else; it writes outside dist/, which the
+  # build empties.
+  # A dev build takes the commit's UTC time from git, so a retried build of the same commit publishes
+  # the same version, and the upload finds its own bytes. Without .git in the checkout it fails rather
+  # than fall back to the build's own time. A shallow checkout still has HEAD's time.
   # A prod build also fails unless the tagged commit is on main (AAI-939), so that any `v<semver>` tag
   # pushed on another branch is refused before the approval gate is all that stands in its way. The
   # build's checkout may be shallow, so it fetches main's whole history first.
@@ -34,6 +38,13 @@ steps:
       - -c
       - |
         set -euo pipefail
+        if [ "${_ENV}" = "dev" ]; then
+          if ! COMMIT_TIME="$$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)"; then
+            echo "dev release: the checkout has no git history to take the commit's time from" >&2
+            exit 1
+          fi
+          export COMMIT_TIME
+        fi
         node scripts/release-version.mjs > .release-version
         if [ "${_ENV}" = "prod" ]; then
           MAIN="+refs/heads/main:refs/remotes/origin/main"

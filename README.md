@@ -125,8 +125,10 @@ Cloud Build runs the pipelines in `cloudbuild/`:
 - `release.yaml` runs the same checks, then uploads the adapters as the immutable
   `adapters/<version>/<name>.js` and, after them, the core as the immutable `a.<version>.js` to the
   environment's static bucket. `scripts/release-version.mjs` picks the version: `package.json`'s on a
-  release tag `v<version>` (the two must agree), or `<version>-dev.g<short sha>` for a build from
-  `main`.
+  release tag `v<version>` (the two must agree), or `<next patch>-dev.<commit time>.g<short sha>`
+  for a build from `main`, such as `0.2.1-dev.20261113185300.gabc1234` after `0.2.0`, so dev builds
+  sort after the release they follow and by the commit's UTC time. A prerelease `package.json`
+  version keeps its version: `0.1.0-rc.1.dev.<commit time>.g<short sha>`.
   - **dev** (every merge to `main`) also promotes the build to the evergreen `a.js`, and purges it
     from the CDN.
   - **prod** (a release tag, after approval) uploads the versioned files only; promotion to `a.js`

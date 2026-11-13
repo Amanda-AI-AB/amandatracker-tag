@@ -1,9 +1,16 @@
 // The version a release publishes the tag under, as dist/a.<version>.js: cloudbuild/release.yaml
 // runs it before uploading.
 // - A release tag `v<semver>` publishes package.json's version, and the two must agree.
-// - A dev build from a branch (every merge to main) publishes `<package version>-dev.g<short sha>`,
-//   so each commit gets its own immutable object. The `g` keeps an all-digit sha from being a
-//   numeric prerelease identifier, which semver forbids with a leading zero.
+// - A dev build from a branch (every merge to main) publishes
+//   `<next patch>-dev.<commit time>.g<short sha>`, so each commit gets its own immutable object
+//   (AAI-954):
+//   - The next patch makes it sort after the release it follows: `0.2.0` gives `0.2.1-dev.…`. A
+//     prerelease package version such as `0.1.0-rc.1` already sorts before what follows it, so it
+//     keeps its version and takes `.dev.…` after it.
+//   - The commit's UTC time, as YYYYMMDDHHMMSS, orders dev builds by time rather than by sha, and
+//     keeps a retried build of the same commit at the same version.
+//   - The `g` keeps an all-digit sha from being a numeric prerelease identifier, which semver forbids
+//     with a leading zero.
 // - A prod build needs a release tag.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -32,10 +39,11 @@ export function isSemver(version) {
 }
 
 /**
- * @param {{ env: string, packageVersion: string, tagName?: string, shortSha?: string }} build
+ * @param {{ env: string, packageVersion: string, tagName?: string, shortSha?: string, commitTime?: string }} build
+ *   `commitTime` is the commit's UTC time as YYYYMMDDHHMMSS, which a dev build needs.
  * @returns {string} the version to publish
  */
-export function releaseVersion({ env, packageVersion, tagName = "", shortSha = "" }) {
+export function releaseVersion({ env, packageVersion, tagName = "", shortSha = "", commitTime = "" }) {
   if (!RELEASE_ENVS.includes(env)) {
     throw new ReleaseVersionError(`unknown release environment ${JSON.stringify(env)}: expected dev or prod`);
   }
@@ -56,8 +64,15 @@ export function releaseVersion({ env, packageVersion, tagName = "", shortSha = "
   if (!/^[0-9a-f]{7,40}$/.test(shortSha)) {
     throw new ReleaseVersionError(`a dev release needs the commit's short sha, got ${JSON.stringify(shortSha)}`);
   }
-  const separator = packageVersion.includes("-") ? "." : "-";
-  const version = `${packageVersion}${separator}dev.g${shortSha}`;
+  if (!/^[1-9]\d{13}$/.test(commitTime)) {
+    throw new ReleaseVersionError(
+      `a dev release needs the commit's UTC time as YYYYMMDDHHMMSS, got ${JSON.stringify(commitTime)}`,
+    );
+  }
+  const [, major, minor, patch, prerelease] = /** @type {RegExpExecArray} */ (SEMVER.exec(packageVersion));
+  const stamp = `dev.${commitTime}.g${shortSha}`;
+  const version =
+    prerelease === undefined ? `${major}.${minor}.${Number(patch) + 1}-${stamp}` : `${packageVersion}.${stamp}`;
   if (!isSemver(version)) throw new ReleaseVersionError(`${version} is not semver`);
   return version;
 }
@@ -72,6 +87,7 @@ await runMain(
         packageVersion,
         tagName: process.env.TAG_NAME ?? "",
         shortSha: process.env.SHORT_SHA ?? "",
+        commitTime: process.env.COMMIT_TIME ?? "",
       }),
     );
   },
