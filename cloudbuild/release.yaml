@@ -54,8 +54,11 @@ steps:
     entrypoint: corepack
     args: [pnpm, build]
 
-  # The versioned file is immutable: --no-clobber never replaces one that exists, so a retried build
-  # leaves the first upload in place, and the promotion below copies from the bucket.
+  # The versioned file is immutable: --no-clobber never replaces one that exists, and skips it
+  # silently. So the object's hash is then compared with this build's: a retried build finds its own
+  # bytes and goes on, but another build of the same version (a release tag moved to a fix commit,
+  # say) fails here, before the promotion below or the canary (AAI-149) can serve the old bytes.
+  # CRC32C, because every object has one; a composite object has no MD5.
   - id: upload
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -64,10 +67,21 @@ steps:
       - |
         set -euo pipefail
         VERSION="$$(cat .release-version)"
+        OBJECT="gs://amandatrk-${_ENV}-data-static/a.$${VERSION}.js"
         gcloud storage cp --no-clobber \
           --cache-control="public, max-age=31536000, immutable" \
           --content-type="text/javascript; charset=utf-8" \
-          dist/a.js "gs://amandatrk-${_ENV}-data-static/a.$${VERSION}.js"
+          dist/a.js "$${OBJECT}"
+        BUILT="$$(gcloud storage hash dist/a.js --skip-md5 --format='value(crc32c_hash)')"
+        STORED="$$(gcloud storage objects describe "$${OBJECT}" --format='value(crc32c_hash)')"
+        if [ -z "$${BUILT}" ] || [ -z "$${STORED}" ]; then
+          echo "no CRC32C hash for dist/a.js (\"$${BUILT}\") or $${OBJECT} (\"$${STORED}\")" >&2
+          exit 1
+        fi
+        if [ "$${BUILT}" != "$${STORED}" ]; then
+          echo "a.$${VERSION}.js already exists with other contents: bump the version" >&2
+          exit 1
+        fi
 
   # dev only: the evergreen a.js becomes this build, the adapters it loads are replaced, and the CDN
   # drops its copies. The CDN caches at most 300 s anyway (AAI-70), so a failed purge heals itself.
