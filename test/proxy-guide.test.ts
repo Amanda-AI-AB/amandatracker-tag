@@ -76,15 +76,76 @@ describe("the proxy guide's Cloudflare Worker", () => {
     expect(sent?.get("x-forwarded-for")).toBe("203.0.113.7");
     expect(sent?.get("x-forwarded-host")).toBe("www.customer.com");
   });
+
+  it("forwards only the allowlisted request headers, never Authorization", async () => {
+    let sent: Headers | undefined;
+    const worker = loadWorker(async (_target, init) => {
+      sent = new Headers(init.headers);
+      return new Response(null, { status: 204 });
+    });
+    await worker.fetch(
+      new Request(`${SITE}/amnda/v1/e`, {
+        method: "POST",
+        body: "{}",
+        headers: {
+          authorization: "Basic dXNlcjpwYXNz",
+          "x-site-secret": "s3cret",
+          "content-type": "text/plain;charset=UTF-8",
+          "user-agent": "Mozilla/5.0 test",
+          "accept-language": "sv-SE",
+          origin: SITE,
+          "cf-connecting-ip": "203.0.113.7",
+        },
+      }),
+    );
+    expect(sent?.get("authorization")).toBeNull();
+    expect(sent?.get("x-site-secret")).toBeNull();
+    expect(sent?.get("cf-connecting-ip")).toBeNull();
+    expect(sent?.get("content-type")).toBe("text/plain;charset=UTF-8");
+    expect(sent?.get("user-agent")).toBe("Mozilla/5.0 test");
+    expect(sent?.get("accept-language")).toBe("sv-SE");
+    expect(sent?.get("origin")).toBe(SITE);
+  });
+
+  it("passes back only the tracker's Set-Cookie headers, and the rest of the response", async () => {
+    const upstreamHeaders = new Headers({ "cache-control": "no-store", "content-type": "application/json" });
+    upstreamHeaders.append("set-cookie", "_amnda_id=v1; Domain=.customer.com; Path=/; SameSite=Lax; Secure");
+    upstreamHeaders.append("set-cookie", "session=attacker; Domain=.customer.com; Path=/; HttpOnly; Secure");
+    upstreamHeaders.append("set-cookie", "_amnda_ses=s1; Domain=.customer.com; Path=/; SameSite=Lax; Secure");
+    upstreamHeaders.append("set-cookie", "_amnda_idx=other; Path=/");
+    const worker = loadWorker(async () => new Response("{}", { status: 202, headers: upstreamHeaders }));
+    const response = await worker.fetch(new Request(`${SITE}/amnda/v1/e`, { method: "POST", body: "{}" }));
+    expect(response.status).toBe(202);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.text()).toBe("{}");
+    expect(response.headers.getSetCookie()).toEqual([
+      "_amnda_id=v1; Domain=.customer.com; Path=/; SameSite=Lax; Secure",
+      "_amnda_ses=s1; Domain=.customer.com; Path=/; SameSite=Lax; Secure",
+    ]);
+  });
 });
 
 describe("the proxy guide's nginx example", () => {
-  function nginxBlock(): string {
+  function nginxSection(): string {
     const section = GUIDE.split("### nginx")[1]?.split("### ")[0];
     if (section === undefined) throw new Error("the guide has no nginx section");
-    const block = /```nginx\n([\s\S]*?)```/.exec(section);
+    return section;
+  }
+
+  function nginxBlock(): string {
+    const block = /```nginx\n([\s\S]*?)```/.exec(nginxSection());
     if (block === null) throw new Error("the nginx section has no nginx block");
     return block[1]!;
+  }
+
+  type NjsRequest = { headersOut: Record<string, string[] | undefined> };
+
+  function cookieFilter(): (r: NjsRequest) => void {
+    const block = /```js\n([\s\S]*?)```/.exec(nginxSection());
+    if (block === null) throw new Error("the nginx section has no njs block");
+    expect(block[1]).toContain("export default {");
+    const body = block[1]!.replace("export default {", "return {");
+    return (new Function(body)() as { keepTrackerCookies: (r: NjsRequest) => void }).keepTrackerCookies;
   }
 
   it("verifies the collector's certificate, which nginx does not by default", () => {
@@ -93,5 +154,31 @@ describe("the proxy guide's nginx example", () => {
     expect(block).toMatch(/^\s*proxy_ssl_verify on;/m);
     expect(block).toMatch(/^\s*proxy_ssl_trusted_certificate \S+;/m);
     expect(block).toMatch(/^\s*proxy_ssl_verify_depth \d+;/m);
+  });
+
+  it("forwards only the request headers it sets, never Authorization or Cookie", () => {
+    const block = nginxBlock();
+    expect(block).toMatch(/^\s*proxy_pass_request_headers off;/m);
+    expect(block).not.toMatch(/^\s*proxy_set_header (Authorization|Cookie|Referer) \$/im);
+    expect(block).toMatch(/^\s*js_header_filter amnda\.keepTrackerCookies;/m);
+  });
+
+  it("filters the response's Set-Cookie headers down to the tracker's", () => {
+    const keep = cookieFilter();
+    const r: NjsRequest = {
+      headersOut: {
+        "Set-Cookie": ["_amnda_id=v1; Path=/", "session=attacker; Path=/; HttpOnly", "_amnda_ses=s1; Path=/"],
+      },
+    };
+    keep(r);
+    expect(r.headersOut["Set-Cookie"]).toEqual(["_amnda_id=v1; Path=/", "_amnda_ses=s1; Path=/"]);
+
+    const others: NjsRequest = { headersOut: { "Set-Cookie": ["session=attacker; Path=/"] } };
+    keep(others);
+    expect("Set-Cookie" in others.headersOut).toBe(false);
+
+    const none: NjsRequest = { headersOut: {} };
+    keep(none);
+    expect(none.headersOut).toEqual({});
   });
 });
