@@ -545,6 +545,46 @@ describe("buildEvent envelope values (AAI-919)", () => {
   });
 });
 
+describe("null and untyped values (AAI-933)", () => {
+  const validate = validator("event.json");
+  const pingValidate = validator("ping.json");
+  const build = (change: object) => buildEvent({ ...eventInput(), ...change } as unknown as EventInput);
+
+  it.each(["site_id", "url", "client_ts", "consent", "visitor_id"])("throws on a required %s given as null, as missing", (field) => {
+    expect(() => build({ [field]: null })).toThrow(new WirePayloadError(`event.${field}`));
+  });
+
+  it("throws on a required consent state given as null, and on one off its list", () => {
+    expect(() => build({ consent: { analytics: null, ads: "denied" } })).toThrow(new WirePayloadError("event.consent.analytics"));
+    expect(() => build({ consent: { analytics: "granted", ads: "yes" } })).toThrow(
+      new WirePayloadError("event.consent.ads", "is not one of granted, denied, unknown, no_cmp"),
+    );
+  });
+
+  it("throws on a client_ts that is NaN or infinite, rather than send it as JSON null", () => {
+    for (const client_ts of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => build({ client_ts })).toThrow(new WirePayloadError("event.client_ts", "is not an integer"));
+    }
+  });
+
+  it("leaves out an optional field given as null", () => {
+    const event = build({ referrer: null, page_title: null, language: null, props: null });
+    for (const field of ["referrer", "page_title", "language", "props"]) expect(event).not.toHaveProperty(field);
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    const ping = buildPing({ ...pingInput(), referrer_host: null, utm: null } as unknown as PingInput);
+    expect(ping).not.toHaveProperty("referrer_host");
+    expect(ping).not.toHaveProperty("utm");
+    expect(pingValidate(ping), JSON.stringify(pingValidate.errors)).toBe(true);
+  });
+
+  it("throws on an event_id or ping id that isn't a UUIDv7", () => {
+    expect(() => buildEvent(eventInput(), "not-a-uuid")).toThrow(new WirePayloadError("event.event_id", `does not match ${TRACKED_EVENT_SHAPE.pattern.event_id}`));
+    expect(() => buildPing(pingInput(), "00000000-0000-4000-8000-000000000000")).toThrow(
+      new WirePayloadError("ping.event_id", `does not match ${WIRE_PING_SHAPE.pattern.event_id}`),
+    );
+  });
+});
+
 describe("compiledPattern (AAI-922)", () => {
   it("compiles a pattern once and gives back the same RegExp after", () => {
     const first = compiledPattern("^[a-z]+$");

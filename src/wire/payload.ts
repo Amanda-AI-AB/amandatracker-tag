@@ -351,10 +351,12 @@ function shapeField(value: unknown, field: string, spec: Shape, at: string, requ
 }
 
 /**
- * Copies the listed fields that are set, each kept to its rules (shapeField), and drops empty
- * optional strings. Anything not in a list is left out. Throws WirePayloadError when a required
- * field is missing or an empty string, so the result has every field its type requires, or when a
- * value can't be kept to its rules (shapeField, capped, shapeMap).
+ * Copies the listed fields that are set, each kept to its rules (shapeField), and drops optional
+ * fields that are null or empty strings. Anything not in a list is left out. Throws
+ * WirePayloadError when a required field is missing, null or an empty string, so the result has
+ * every field its type requires, or when a value can't be kept to its rules (shapeField, capped,
+ * shapeMap). Null counts as missing because untyped callers (the cfg JSON, an adapter's global,
+ * the command queue) give it for "not set", and the schema allows null nowhere (AAI-933).
  */
 function shape<T extends object>(input: T, spec: Shape, path: string): T {
   const source = input as Record<string, unknown>;
@@ -362,7 +364,7 @@ function shape<T extends object>(input: T, spec: Shape, path: string): T {
   for (const field of spec.fields) {
     const value = source[field];
     const required = spec.required.includes(field);
-    if (value === undefined || value === "") {
+    if (value === undefined || value === null || value === "") {
       if (required) throw new WirePayloadError(`${path}.${field}`);
       continue;
     }
