@@ -4,6 +4,7 @@ import { DEFAULT_ENDPOINT, EndpointError, resolveEndpoint } from "../src/core/en
 
 // vitest.config.ts builds the core as 0.0.0-test, with one adapter: example-cmp, hash sha384-test.
 const PAGE = "https://shop.example.com";
+const LOCATION = { href: `${PAGE}/sv/checkout`, origin: PAGE };
 
 type FakeScript = {
   async?: boolean;
@@ -27,7 +28,7 @@ function fakeDocument() {
 describe("loadAdapter", () => {
   it("injects this core's version of the adapter from the resolved endpoint, async", async () => {
     const { doc, appended } = fakeDocument();
-    const loaded = loadAdapter(doc, resolveEndpoint("/amnda/", PAGE), "example-cmp", PAGE);
+    const loaded = loadAdapter(doc, resolveEndpoint("/amnda/", LOCATION), "example-cmp", PAGE);
     expect(appended).toHaveLength(1);
     expect(appended[0]!.src).toBe("https://shop.example.com/amnda/adapters/0.0.0-test/example-cmp.js");
     expect(appended[0]!.async).toBe(true);
@@ -71,7 +72,7 @@ describe("loadAdapter", () => {
   it("rejects an endpoint on another origin, before injecting anything", async () => {
     const { doc, appended } = fakeDocument();
     await expect(
-      loadAdapter(doc, resolveEndpoint("https://evil.example", PAGE), "example-cmp", PAGE),
+      loadAdapter(doc, resolveEndpoint("https://evil.example", LOCATION), "example-cmp", PAGE),
     ).rejects.toThrow(EndpointError);
     expect(appended).toHaveLength(0);
   });

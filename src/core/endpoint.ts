@@ -8,31 +8,70 @@ export const DEFAULT_ENDPOINT = "https://eu.serversider.com";
 
 export class EndpointError extends Error {
   override name = "EndpointError";
+
+  // ES2018's Error has no options argument, so the cause is set here rather than passed to super.
+  constructor(
+    message: string,
+    readonly cause?: unknown,
+  ) {
+    super(message);
+  }
+}
+
+/** The page the tag runs on: its location.href and location.origin, which are separate because a
+ * sandboxed iframe's origin is the opaque "null" whatever its URL. */
+export interface PageLocation {
+  readonly href: string;
+  readonly origin: string;
 }
 
 /**
- * Resolves a data-endpoint value against the page's origin. No value means the default collection
- * host. A relative value is a path on the page's own origin. Anything else must be https:, or the
- * page's own origin (an http: development site). The result has no trailing slash: configUrl,
- * eventsUrl and adapterUrl take it as it is, and this is the one place that normalises it.
+ * Resolves a data-endpoint value as the browser resolves a link on the page: against its URL, so
+ * "/amnda" is a path on the page's origin and "amnda" is one beside the page. No value means the
+ * default collection host. The result must be https:, or http: on the page's own origin (a
+ * development site); any other scheme (blob:, data:, javascript:, file:, ...) is refused by name. The
+ * result has no trailing slash: configUrl, eventsUrl and adapterUrl take it as it is, and this is the
+ * one place that normalises it.
  */
-export function resolveEndpoint(value: string | null | undefined, pageOrigin: string): string {
+export function resolveEndpoint(value: string | null | undefined, page: PageLocation): string {
   const raw = value == null ? "" : value.trim();
   if (raw === "") return DEFAULT_ENDPOINT;
   let url: URL;
   try {
-    url = new URL(raw, pageOrigin);
+    url = new URL(raw, page.href);
   } catch (error) {
-    if (error instanceof TypeError) throw new EndpointError(`invalid data-endpoint: ${raw}`);
-    throw error;
+    if (!(error instanceof TypeError)) throw error;
+    if (!URL_SCHEME.test(raw) && !isBaseUrl(page.href)) {
+      throw new EndpointError(
+        `a relative data-endpoint cannot resolve against this page's URL, ${page.href}: ${raw}`,
+        error,
+      );
+    }
+    throw new EndpointError(`invalid data-endpoint: ${raw}`, error);
   }
-  if (url.protocol !== "https:" && url.origin !== pageOrigin) {
-    throw new EndpointError(`data-endpoint must be https: or the page's own origin: ${raw}`);
+  const httpOnOwnOrigin = url.protocol === "http:" && url.origin === page.origin;
+  if (url.protocol !== "https:" && !httpOnOwnOrigin) {
+    throw new EndpointError(
+      `data-endpoint must be https:, or http: on the page's own origin, not ${url.protocol}: ${raw}`,
+    );
   }
   if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
     throw new EndpointError(`data-endpoint must not carry credentials, a query or a fragment: ${raw}`);
   }
   return url.origin + url.pathname.replace(/\/+$/, "");
+}
+
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/** Whether a relative URL resolves against `href`: not against a blank or srcdoc page's about: URL. */
+function isBaseUrl(href: string): boolean {
+  try {
+    new URL("x", href);
+    return true;
+  } catch (error) {
+    if (error instanceof TypeError) return false;
+    throw error;
+  }
 }
 
 /**
@@ -49,19 +88,19 @@ export function currentScript(doc: Document): Element | null {
 }
 
 /**
- * The endpoint the installing script tag names; `script` is currentScript(document) at boot. It
- * must be a <script> element: anything else, or null, throws EndpointError, so that a clobbered or
- * lost currentScript never silently sends a proxied site's traffic to another host. Only a script
- * without data-endpoint gets the default.
+ * The endpoint the installing script tag names; `script` is currentScript(document) at boot, and
+ * `page` is location. The script must be a <script> element: anything else, or null, throws
+ * EndpointError, so that a clobbered or lost currentScript never silently sends a proxied site's
+ * traffic to another host. Only a script without data-endpoint gets the default.
  */
-export function endpointFromScript(script: Element | null, pageOrigin: string): string {
+export function endpointFromScript(script: Element | null, page: PageLocation): string {
   if (script === null) {
     throw new EndpointError("no current script: read currentScript synchronously at the top level of a.js");
   }
   if (script.tagName !== "SCRIPT") {
     throw new EndpointError(`the current script is a <${script.tagName.toLowerCase()}>, not a <script>`);
   }
-  return resolveEndpoint(script.getAttribute("data-endpoint"), pageOrigin);
+  return resolveEndpoint(script.getAttribute("data-endpoint"), page);
 }
 
 export function configUrl(endpoint: string, siteId: string): string {

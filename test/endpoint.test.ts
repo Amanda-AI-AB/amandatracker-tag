@@ -19,55 +19,104 @@ import type { WireBatch } from "../src/wire/generated";
 import { EVENT, PING } from "./wire-validator";
 
 const PAGE = "https://shop.example.com";
+// location on a page below the site's root, so a relative value shows what it resolves against
+const LOCATION = { href: `${PAGE}/sv/checkout?step=2#pay`, origin: PAGE };
+const DEV = { href: "http://localhost:8080/sv/checkout", origin: "http://localhost:8080" };
 
 describe("resolveEndpoint", () => {
   it("defaults to the collection host", () => {
     expect(DEFAULT_ENDPOINT).toBe("https://eu.serversider.com");
-    expect(resolveEndpoint(null, PAGE)).toBe(DEFAULT_ENDPOINT);
-    expect(resolveEndpoint(undefined, PAGE)).toBe(DEFAULT_ENDPOINT);
-    expect(resolveEndpoint("  ", PAGE)).toBe(DEFAULT_ENDPOINT);
+    expect(resolveEndpoint(null, LOCATION)).toBe(DEFAULT_ENDPOINT);
+    expect(resolveEndpoint(undefined, LOCATION)).toBe(DEFAULT_ENDPOINT);
+    expect(resolveEndpoint("  ", LOCATION)).toBe(DEFAULT_ENDPOINT);
   });
 
-  it("resolves a path against the page's own origin", () => {
-    expect(resolveEndpoint("/amnda", PAGE)).toBe("https://shop.example.com/amnda");
-    expect(resolveEndpoint("/amnda/", PAGE)).toBe("https://shop.example.com/amnda");
-    expect(resolveEndpoint("amnda", PAGE)).toBe("https://shop.example.com/amnda");
+  it("resolves a relative value against the page's URL, as the browser resolves a link", () => {
+    expect(resolveEndpoint("/amnda", LOCATION)).toBe("https://shop.example.com/amnda");
+    expect(resolveEndpoint("/amnda/", LOCATION)).toBe("https://shop.example.com/amnda");
+    // beside the page, as <script src="amnda/a.js"> on it loads from /sv/amnda/a.js
+    expect(resolveEndpoint("amnda", LOCATION)).toBe("https://shop.example.com/sv/amnda");
+    expect(resolveEndpoint("../amnda", LOCATION)).toBe("https://shop.example.com/amnda");
   });
 
   it("accepts any https: endpoint", () => {
-    expect(resolveEndpoint("https://t.example.com/amnda/", PAGE)).toBe("https://t.example.com/amnda");
-    expect(resolveEndpoint("https://eu.serversider.com", PAGE)).toBe(DEFAULT_ENDPOINT);
+    expect(resolveEndpoint("https://t.example.com/amnda/", LOCATION)).toBe("https://t.example.com/amnda");
+    expect(resolveEndpoint("https://eu.serversider.com", LOCATION)).toBe(DEFAULT_ENDPOINT);
   });
 
   it("accepts http: only on the page's own origin", () => {
-    expect(resolveEndpoint("/amnda", "http://localhost:8080")).toBe("http://localhost:8080/amnda");
-    expect(resolveEndpoint("http://localhost:8080/amnda", "http://localhost:8080")).toBe(
-      "http://localhost:8080/amnda",
-    );
-    expect(() => resolveEndpoint("http://other.example.com/amnda", "http://localhost:8080")).toThrow(
-      EndpointError,
+    expect(resolveEndpoint("/amnda", DEV)).toBe("http://localhost:8080/amnda");
+    expect(resolveEndpoint("http://localhost:8080/amnda", DEV)).toBe("http://localhost:8080/amnda");
+    expect(() => resolveEndpoint("http://other.example.com/amnda", DEV)).toThrow(EndpointError);
+  });
+
+  it("rejects other schemes, naming the scheme", () => {
+    for (const value of ["http://shop.example.com/amnda", "javascript:alert(1)", "data:text/plain,x"]) {
+      expect(() => resolveEndpoint(value, LOCATION)).toThrow(EndpointError);
+    }
+    expect(() => resolveEndpoint("javascript:alert(1)", LOCATION)).toThrow("not javascript:");
+  });
+
+  it("rejects a blob: URL of the page's own origin, whose pathname is a whole URL", () => {
+    expect(new URL("blob:https://shop.example.com/abc").origin).toBe(PAGE);
+    expect(() => resolveEndpoint("blob:https://shop.example.com/abc", LOCATION)).toThrow(
+      "data-endpoint must be https:, or http: on the page's own origin, not blob:: blob:https://shop.example.com/abc",
     );
   });
 
-  it("rejects other schemes", () => {
-    for (const value of ["http://shop.example.com/amnda", "javascript:alert(1)", "data:text/plain,x"]) {
-      expect(() => resolveEndpoint(value, PAGE)).toThrow(EndpointError);
-    }
+  it("rejects a file: URL, on a file: page too", () => {
+    const file = { href: "file:///home/me/site/index.html", origin: "null" };
+    expect(() => resolveEndpoint("amnda", file)).toThrow("not file:");
+    expect(() => resolveEndpoint("file:///home/me/site/amnda", file)).toThrow("not file:");
   });
 
   it("gives a scheme-relative value the page's scheme", () => {
-    expect(resolveEndpoint("//t.example.com/amnda", PAGE)).toBe("https://t.example.com/amnda");
-    expect(() => resolveEndpoint("//t.example.com/amnda", "http://localhost:8080")).toThrow(EndpointError);
+    expect(resolveEndpoint("//t.example.com/amnda", LOCATION)).toBe("https://t.example.com/amnda");
+    expect(() => resolveEndpoint("//t.example.com/amnda", DEV)).toThrow(EndpointError);
   });
 
   it("rejects credentials, a query or a fragment", () => {
-    expect(() => resolveEndpoint("https://u:p@t.example.com", PAGE)).toThrow(EndpointError);
-    expect(() => resolveEndpoint("/amnda?x=1", PAGE)).toThrow(EndpointError);
-    expect(() => resolveEndpoint("/amnda#x", PAGE)).toThrow(EndpointError);
+    expect(() => resolveEndpoint("https://u:p@t.example.com", LOCATION)).toThrow(EndpointError);
+    expect(() => resolveEndpoint("/amnda?x=1", LOCATION)).toThrow(EndpointError);
+    expect(() => resolveEndpoint("/amnda#x", LOCATION)).toThrow(EndpointError);
   });
 
-  it("rejects a value that is not a URL", () => {
-    expect(() => resolveEndpoint("https://", PAGE)).toThrow(EndpointError);
+  it("rejects a value that is not a URL, with the parser's error as its cause", () => {
+    let caught: unknown;
+    try {
+      resolveEndpoint("https://", LOCATION);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(EndpointError);
+    expect((caught as EndpointError).message).toBe("invalid data-endpoint: https://");
+    expect((caught as EndpointError).cause).toBeInstanceOf(TypeError);
+  });
+
+  describe("on a page of opaque origin", () => {
+    // a sandboxed iframe keeps its URL, but its origin is "null"
+    const sandboxed = { href: "https://shop.example.com/sv/frame", origin: "null" };
+    const srcdoc = { href: "about:srcdoc", origin: "null" };
+
+    it("accepts an https: endpoint", () => {
+      expect(resolveEndpoint("https://t.example.com/amnda", sandboxed)).toBe("https://t.example.com/amnda");
+      expect(resolveEndpoint("https://t.example.com/amnda", srcdoc)).toBe("https://t.example.com/amnda");
+      expect(resolveEndpoint("/amnda", sandboxed)).toBe("https://shop.example.com/amnda");
+    });
+
+    it("refuses http:, which is never the page's own origin", () => {
+      const dev = { href: "http://localhost:8080/frame", origin: "null" };
+      expect(() => resolveEndpoint("/amnda", dev)).toThrow("not http:");
+    });
+
+    it("blames the page, not the value, for a relative value it cannot resolve", () => {
+      for (const value of ["/amnda", "amnda", "//t.example.com/amnda"]) {
+        expect(() => resolveEndpoint(value, srcdoc)).toThrow(
+          `a relative data-endpoint cannot resolve against this page's URL, about:srcdoc: ${value}`,
+        );
+      }
+      expect(() => resolveEndpoint("https://", srcdoc)).toThrow("invalid data-endpoint: https://");
+    });
   });
 });
 
@@ -78,22 +127,22 @@ describe("endpointFromScript", () => {
   const script = (value: string | null) => element("SCRIPT", value);
 
   it("reads data-endpoint from the installing script tag", () => {
-    expect(endpointFromScript(script("/amnda"), PAGE)).toBe("https://shop.example.com/amnda");
+    expect(endpointFromScript(script("/amnda"), LOCATION)).toBe("https://shop.example.com/amnda");
   });
 
   it("defaults only for a script without the attribute", () => {
-    expect(endpointFromScript(script(null), PAGE)).toBe(DEFAULT_ENDPOINT);
+    expect(endpointFromScript(script(null), LOCATION)).toBe(DEFAULT_ENDPOINT);
   });
 
   it("throws without a script, rather than silently going to the default host", () => {
-    expect(() => endpointFromScript(null, PAGE)).toThrow(EndpointError);
+    expect(() => endpointFromScript(null, LOCATION)).toThrow(EndpointError);
   });
 
   it("throws for an element that is not a script, such as a clobbering <img name=currentScript>", () => {
-    expect(() => endpointFromScript(element("IMG", "https://evil.example"), PAGE)).toThrow(EndpointError);
-    expect(() => endpointFromScript(element("FORM", null), PAGE)).toThrow(EndpointError);
+    expect(() => endpointFromScript(element("IMG", "https://evil.example"), LOCATION)).toThrow(EndpointError);
+    expect(() => endpointFromScript(element("FORM", null), LOCATION)).toThrow(EndpointError);
     // an SVG <script> reports a lowercase tagName
-    expect(() => endpointFromScript(element("script", "/amnda"), PAGE)).toThrow(EndpointError);
+    expect(() => endpointFromScript(element("script", "/amnda"), LOCATION)).toThrow(EndpointError);
   });
 });
 
@@ -118,7 +167,7 @@ describe("currentScript", () => {
     Object.defineProperty(doc, "currentScript", { value: element("IMG", "https://evil.example") });
     expect((doc as unknown as Document).currentScript!.tagName).toBe("IMG");
     expect(currentScript(doc as unknown as Document)).toBe(installing);
-    expect(endpointFromScript(currentScript(doc as unknown as Document), PAGE)).toBe(
+    expect(endpointFromScript(currentScript(doc as unknown as Document), LOCATION)).toBe(
       "https://shop.example.com/amnda",
     );
   });
@@ -130,7 +179,7 @@ describe("currentScript", () => {
 });
 
 describe("the endpoint's URLs", () => {
-  const endpoint = resolveEndpoint("/amnda", PAGE);
+  const endpoint = resolveEndpoint("/amnda", LOCATION);
 
   it("serves config, events and adapters from the proxy", () => {
     expect(configUrl(endpoint, "SITE_1")).toBe("https://shop.example.com/amnda/cfg/SITE_1.json");
@@ -149,7 +198,7 @@ describe("the endpoint's URLs", () => {
   });
 
   it("builds every URL from a trailing-slash data-endpoint without a double slash", () => {
-    const slashed = resolveEndpoint("/amnda/", PAGE);
+    const slashed = resolveEndpoint("/amnda/", LOCATION);
     expect(configUrl(slashed, "SITE_1")).toBe("https://shop.example.com/amnda/cfg/SITE_1.json");
     expect(eventsUrl(slashed)).toBe("https://shop.example.com/amnda/v1/e");
     expect(adapterUrl(slashed, "0.3.0", "example-cmp", PAGE)).toBe(
@@ -167,14 +216,13 @@ describe("the endpoint's URLs", () => {
   });
 
   it("serves adapters only from the collection host or the page's own origin", () => {
-    const evil = resolveEndpoint("https://evil.example", PAGE);
+    const evil = resolveEndpoint("https://evil.example", LOCATION);
     expect(eventsUrl(evil)).toBe("https://evil.example/v1/e");
     expect(() => adapterUrl(evil, "0.3.0", "x", PAGE)).toThrow(EndpointError);
-    expect(() => adapterUrl(resolveEndpoint("https://t.example.com/amnda", PAGE), "0.3.0", "x", PAGE)).toThrow(
+    expect(() => adapterUrl(resolveEndpoint("https://t.example.com/amnda", LOCATION), "0.3.0", "x", PAGE)).toThrow(
       EndpointError,
     );
-    const dev = "http://localhost:8080";
-    expect(adapterUrl(resolveEndpoint("/amnda", dev), "0.3.0", "x", dev)).toBe(
+    expect(adapterUrl(resolveEndpoint("/amnda", DEV), "0.3.0", "x", DEV.origin)).toBe(
       "http://localhost:8080/amnda/adapters/0.3.0/x.js",
     );
   });

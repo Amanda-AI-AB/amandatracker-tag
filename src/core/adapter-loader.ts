@@ -6,8 +6,8 @@ import { REFERRER_POLICY, adapterUrl } from "./endpoint";
 
 /**
  * Injects an adapter's script, of this core's own version and pinned by the SRI hash the build
- * baked in; `endpoint` is one resolveEndpoint returned for `pageOrigin`. It rejects, before injecting
- * anything, for an invalid adapter name, an adapter this core wasn't built with and an endpoint off
+ * baked in; `endpoint` is one resolveEndpoint returned for the page of origin `pageOrigin`. It
+ * rejects, before injecting anything, for an invalid adapter name, an adapter this core wasn't built with and an endpoint off
  * the collection host and the page's origin: every failure is a rejection, never a synchronous throw,
  * so a caller's .catch sees them all. The script is fetched in CORS mode without credentials, which
  * SRI needs for a cross-origin file, and sends the page's origin alone as Referer (REFERRER_POLICY).
