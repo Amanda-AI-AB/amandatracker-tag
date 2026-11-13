@@ -135,20 +135,26 @@ describe("the endpoint's URLs", () => {
   it("serves config, events and adapters from the proxy", () => {
     expect(configUrl(endpoint, "SITE_1")).toBe("https://shop.example.com/amnda/cfg/SITE_1.json");
     expect(eventsUrl(endpoint)).toBe("https://shop.example.com/amnda/v1/e");
-    expect(adapterUrl(endpoint, "example-cmp", PAGE)).toBe("https://shop.example.com/amnda/adapters/example-cmp.js");
+    expect(adapterUrl(endpoint, "0.3.0", "example-cmp", PAGE)).toBe(
+      "https://shop.example.com/amnda/adapters/0.3.0/example-cmp.js",
+    );
   });
 
   it("serves them from the collection host by default", () => {
     expect(configUrl(DEFAULT_ENDPOINT, "SITE_1")).toBe("https://eu.serversider.com/cfg/SITE_1.json");
     expect(eventsUrl(DEFAULT_ENDPOINT)).toBe("https://eu.serversider.com/v1/e");
-    expect(adapterUrl(DEFAULT_ENDPOINT, "example-cmp", PAGE)).toBe("https://eu.serversider.com/adapters/example-cmp.js");
+    expect(adapterUrl(DEFAULT_ENDPOINT, "0.3.0-dev.gabc1234", "example-cmp", PAGE)).toBe(
+      "https://eu.serversider.com/adapters/0.3.0-dev.gabc1234/example-cmp.js",
+    );
   });
 
   it("builds every URL from a trailing-slash data-endpoint without a double slash", () => {
     const slashed = resolveEndpoint("/amnda/", PAGE);
     expect(configUrl(slashed, "SITE_1")).toBe("https://shop.example.com/amnda/cfg/SITE_1.json");
     expect(eventsUrl(slashed)).toBe("https://shop.example.com/amnda/v1/e");
-    expect(adapterUrl(slashed, "example-cmp", PAGE)).toBe("https://shop.example.com/amnda/adapters/example-cmp.js");
+    expect(adapterUrl(slashed, "0.3.0", "example-cmp", PAGE)).toBe(
+      "https://shop.example.com/amnda/adapters/0.3.0/example-cmp.js",
+    );
   });
 
   it("escapes the site id in the config path", () => {
@@ -156,18 +162,21 @@ describe("the endpoint's URLs", () => {
   });
 
   it("refuses an adapter name that could leave the adapters directory", () => {
-    expect(() => adapterUrl(DEFAULT_ENDPOINT, "../evil", PAGE)).toThrow("invalid adapter name");
+    expect(() => adapterUrl(DEFAULT_ENDPOINT, "0.3.0", "../evil", PAGE)).toThrow("invalid adapter name");
+    expect(() => adapterUrl(DEFAULT_ENDPOINT, "0.3.0", "OneTrust", PAGE)).toThrow("invalid adapter name");
   });
 
   it("serves adapters only from the collection host or the page's own origin", () => {
     const evil = resolveEndpoint("https://evil.example", PAGE);
     expect(eventsUrl(evil)).toBe("https://evil.example/v1/e");
-    expect(() => adapterUrl(evil, "x", PAGE)).toThrow(EndpointError);
-    expect(() => adapterUrl(resolveEndpoint("https://t.example.com/amnda", PAGE), "x", PAGE)).toThrow(
+    expect(() => adapterUrl(evil, "0.3.0", "x", PAGE)).toThrow(EndpointError);
+    expect(() => adapterUrl(resolveEndpoint("https://t.example.com/amnda", PAGE), "0.3.0", "x", PAGE)).toThrow(
       EndpointError,
     );
     const dev = "http://localhost:8080";
-    expect(adapterUrl(resolveEndpoint("/amnda", dev), "x", dev)).toBe("http://localhost:8080/amnda/adapters/x.js");
+    expect(adapterUrl(resolveEndpoint("/amnda", dev), "0.3.0", "x", dev)).toBe(
+      "http://localhost:8080/amnda/adapters/0.3.0/x.js",
+    );
   });
 });
 

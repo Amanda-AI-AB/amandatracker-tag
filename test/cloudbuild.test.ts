@@ -173,12 +173,23 @@ describe("cloudbuild/release.yaml", () => {
 
   const JS = "--content-type=text/javascript; charset=utf-8";
 
-  /** The upload's hash check: this build's a.js, then the stored object. */
-  function hashCalls(object: string): string[][] {
+  const IMMUTABLE = "--cache-control=public, max-age=31536000, immutable";
+
+  /** The upload of one immutable file: the copy, then its hash check, the file's and the object's. */
+  function uploadCalls(file: string, object: string): string[][] {
     return [
-      ["storage", "hash", "dist/a.js", "--skip-md5", "--format=value(crc32c_hash)"],
+      ["storage", "cp", "--no-clobber", IMMUTABLE, JS, file, object],
+      ["storage", "hash", file, "--skip-md5", "--format=value(crc32c_hash)"],
       ["storage", "objects", "describe", object, "--format=value(crc32c_hash)"],
     ];
+  }
+
+  // This build's adapters, in dist/adapters/.
+  const ADAPTER = "(()=>{adapter()})();\n";
+
+  function withAdapters(...names: string[]): void {
+    mkdirSync(join(workspace, "dist/adapters"));
+    for (const name of names) writeFileSync(join(workspace, "dist/adapters", `${name}.js`), ADAPTER);
   }
 
   it("defaults to dev, and runs the checks before anything is uploaded", () => {
@@ -188,9 +199,8 @@ describe("cloudbuild/release.yaml", () => {
     expect(ids).toEqual(["version", "install", "typecheck", "test", "build", "upload", "promote"]);
   });
 
-  it("dev: uploads a.<version>.js, promotes it to a.js with the adapters, and purges both", () => {
-    mkdirSync(join(workspace, "dist/adapters"));
-    writeFileSync(join(workspace, "dist/adapters/example-cmp.js"), "(()=>{})();\n");
+  it("dev: uploads the version's adapters, then a.<version>.js, promotes it to a.js and purges that", () => {
+    withAdapters("example-cmp", "other-cmp");
 
     const { ran, failed, calls } = release({ _ENV: "dev", TAG_NAME: "", SHORT_SHA: "abc1234" });
 
@@ -198,31 +208,24 @@ describe("cloudbuild/release.yaml", () => {
     expect(ran).toEqual(["version", "upload", "promote"]);
     const bucket = "gs://amandatrk-dev-data-static";
     expect(calls).toEqual([
-      [
-        "storage",
-        "cp",
-        "--no-clobber",
-        "--cache-control=public, max-age=31536000, immutable",
-        JS,
-        "dist/a.js",
-        `${bucket}/a.0.3.0-dev.gabc1234.js`,
-      ],
-      ...hashCalls(`${bucket}/a.0.3.0-dev.gabc1234.js`),
+      ...uploadCalls("dist/adapters/example-cmp.js", `${bucket}/adapters/0.3.0-dev.gabc1234/example-cmp.js`),
+      ...uploadCalls("dist/adapters/other-cmp.js", `${bucket}/adapters/0.3.0-dev.gabc1234/other-cmp.js`),
+      ...uploadCalls("dist/a.js", `${bucket}/a.0.3.0-dev.gabc1234.js`),
       ["storage", "cp", "--cache-control=public, max-age=300", JS, `${bucket}/a.0.3.0-dev.gabc1234.js`, `${bucket}/a.js`],
-      ["storage", "cp", "--cache-control=public, max-age=300", JS, "dist/adapters/example-cmp.js", `${bucket}/adapters/`],
-      ...["/a.js", "/adapters/*"].map((path) => [
+      [
         "compute",
         "url-maps",
         "invalidate-cdn-cache",
         "trk-collect-map",
         "--global",
-        `--path=${path}`,
+        "--path=/a.js",
         "--project=amandatrk-dev-data",
-      ]),
+      ],
     ]);
     expect(object("amandatrk-dev-data-static/a.0.3.0-dev.gabc1234.js")).toBe(BUILT);
     expect(object("amandatrk-dev-data-static/a.js")).toBe(BUILT);
-    expect(object("amandatrk-dev-data-static/adapters/example-cmp.js")).toBe("(()=>{})();\n");
+    expect(object("amandatrk-dev-data-static/adapters/0.3.0-dev.gabc1234/example-cmp.js")).toBe(ADAPTER);
+    expect(object("amandatrk-dev-data-static/adapters/0.3.0-dev.gabc1234/other-cmp.js")).toBe(ADAPTER);
   });
 
   it("dev without adapters: promotes and purges a.js alone", () => {
@@ -243,18 +246,32 @@ describe("cloudbuild/release.yaml", () => {
     ]);
   });
 
-  it("prod: uploads the tagged a.<semver>.js only, and never touches a.js", () => {
-    mkdirSync(join(workspace, "dist/adapters"));
-    writeFileSync(join(workspace, "dist/adapters/example-cmp.js"), "(()=>{})();\n");
+  it("prod: uploads the tagged release's adapters and a.<semver>.js only, and never touches a.js", () => {
+    withAdapters("example-cmp");
 
     const { ran, failed, calls } = release({ _ENV: "prod", TAG_NAME: "v0.3.0", SHORT_SHA: "abc1234" });
 
     expect(failed).toBeUndefined();
     expect(ran).toEqual(["version", "upload", "promote"]);
-    expect(calls).toHaveLength(3);
-    expect(calls[0]!.slice(-2)).toEqual(["dist/a.js", "gs://amandatrk-prod-data-static/a.0.3.0.js"]);
-    expect(calls.slice(1)).toEqual(hashCalls("gs://amandatrk-prod-data-static/a.0.3.0.js"));
+    const bucket = "gs://amandatrk-prod-data-static";
+    expect(calls).toEqual([
+      ...uploadCalls("dist/adapters/example-cmp.js", `${bucket}/adapters/0.3.0/example-cmp.js`),
+      ...uploadCalls("dist/a.js", `${bucket}/a.0.3.0.js`),
+    ]);
+    expect(object("amandatrk-prod-data-static/adapters/0.3.0/example-cmp.js")).toBe(ADAPTER);
     expect(object("amandatrk-prod-data-static/a.0.3.0.js")).toBe(BUILT);
+  });
+
+  it("another build of a version whose adapter differs fails before the core is uploaded", () => {
+    withAdapters("example-cmp");
+    stored("amandatrk-prod-data-static/adapters/0.3.0/example-cmp.js", "(()=>{oldAdapter()})();\n");
+
+    const { failed, stderr, calls } = release({ _ENV: "prod", TAG_NAME: "v0.3.0", SHORT_SHA: "def5678" });
+
+    expect(failed).toBe("upload");
+    expect(stderr).toContain("adapters/0.3.0/example-cmp.js already exists with other contents: bump the version");
+    expect(calls.some((call) => call.includes("dist/a.js"))).toBe(false);
+    expect(object("amandatrk-prod-data-static/adapters/0.3.0/example-cmp.js")).toBe("(()=>{oldAdapter()})();\n");
   });
 
   it("a retried build finds its own bytes in a.<version>.js, leaves them in place, and goes on", () => {

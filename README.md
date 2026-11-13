@@ -54,11 +54,18 @@ release.
 - `src/core/index.ts` builds to **`dist/a.js`**: a single minified IIFE, ES2018, with no runtime
   dependencies.
 - Each consent-manager adapter `src/adapters/<name>.ts` builds to its own IIFE,
-  `dist/adapters/<name>.js`, which the core loads only for the sites whose config names it.
+  `dist/adapters/<name>.js`, which the core loads only for the sites whose config names it. A name is
+  lowercase letters, digits and `-`; the build refuses any other, and fails when `src/adapters/` is
+  missing.
+- The adapters build first. The core is built with its version (`.release-version`, which the
+  release writes, or else `package.json`'s) and each adapter's SHA-384 baked in
+  (`src/core/build-info.ts`). It loads `adapters/<version>/<name>.js`, its own version's file, with
+  that hash as `integrity` and `crossOrigin = "anonymous"`, and refuses an adapter it wasn't built
+  with.
 
 ## The endpoint
 
-The tag fetches `cfg/<SITE_PUBLIC_ID>.json`, posts to `v1/e` and loads `adapters/<name>.js` from one
+The tag fetches `cfg/<SITE_PUBLIC_ID>.json`, posts to `v1/e` and loads `adapters/<version>/<name>.js` from one
 base, `https://eu.serversider.com` by default. The script tag's `data-endpoint` attribute sets
 another (`src/core/endpoint.ts`):
 
@@ -87,11 +94,12 @@ Cloud Build runs the pipelines in `cloudbuild/`:
 
 - `pr.yaml` checks every pull request: `pnpm install --frozen-lockfile`, `pnpm typecheck`, `pnpm test`
   and `pnpm build`, so a core over its size budget fails the check. It uploads nothing.
-- `release.yaml` runs the same checks, then uploads the core as the immutable `a.<version>.js` to the
+- `release.yaml` runs the same checks, then uploads the adapters as the immutable
+  `adapters/<version>/<name>.js` and, after them, the core as the immutable `a.<version>.js` to the
   environment's static bucket. `scripts/release-version.mjs` picks the version: `package.json`'s on a
   release tag `v<version>` (the two must agree), or `<version>-dev.g<short sha>` for a build from
   `main`.
-  - **dev** (every merge to `main`) also promotes the build to the evergreen `a.js`, uploads the
-    adapters, and purges both from the CDN.
-  - **prod** (a release tag, after approval) uploads the versioned file only; promotion to `a.js`
+  - **dev** (every merge to `main`) also promotes the build to the evergreen `a.js`, and purges it
+    from the CDN.
+  - **prod** (a release tag, after approval) uploads the versioned files only; promotion to `a.js`
     follows the canary rollout.

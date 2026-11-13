@@ -83,9 +83,10 @@ The simplest way is to forward the whole prefix, as the examples below do. The p
 - **Pass the response back unchanged, `Set-Cookie` included.** Some CDNs drop `Set-Cookie` or rewrite its
   `Domain`; turn that off for this path.
 - **Never cache `/amnda/v1/*`.**
-- **Cache `a.js`, `cfg/*` and `adapters/*` for at most 5 minutes**, or simply follow the upstream
+- **Cache `a.js` and `cfg/*` for at most 5 minutes**, or simply follow the upstream
   `Cache-Control`. Site settings and the emergency kill switch reach visitors within 5 minutes, and a
-  longer cache breaks that promise.
+  longer cache breaks that promise. The versioned `a.<ver>.js` and `adapters/<ver>/*` never change,
+  and may be cached as long as upstream says.
 - **Allow `POST`** on `/amnda/v1/*`, and pass the body through unchanged.
 
 ## Install the tag from your proxy

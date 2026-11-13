@@ -2,6 +2,8 @@
 // script tag's data-endpoint attribute sets it, so that a site behind a first-party reverse proxy
 // (docs/first-party-proxy.md) sends everything through its own origin, e.g. data-endpoint="/amnda".
 
+import { ADAPTER_NAME } from "./adapter-name.mjs";
+
 export const DEFAULT_ENDPOINT = "https://eu.serversider.com";
 
 export class EndpointError extends Error {
@@ -70,15 +72,17 @@ export function eventsUrl(endpoint: string): string {
   return `${endpoint}/v1/e`;
 }
 
-const ADAPTER_NAME = /^[a-z0-9-]+$/;
+export { ADAPTER_NAME };
 
 /**
- * A consent-manager adapter's own file (dist/adapters/<name>.js) beside the core. Adapters are code
- * run on the customer's page, so they load only from the collection host or the page's own origin
- * (a first-party proxy, docs/first-party-proxy.md); an endpoint on any other origin throws
- * EndpointError, whatever data-endpoint or the config it served says.
+ * A consent-manager adapter's file as the release publishes it: dist/adapters/<name>.js, uploaded
+ * beside a.<version>.js as adapters/<version>/<name>.js, so a core asks for the adapters built with
+ * it and never another release's. Adapters are code run on the customer's page, so they load only
+ * from the collection host or the page's own origin (a first-party proxy, docs/first-party-proxy.md);
+ * an endpoint on any other origin throws EndpointError, whatever data-endpoint or the config it
+ * served says.
  */
-export function adapterUrl(endpoint: string, name: string, pageOrigin: string): string {
+export function adapterUrl(endpoint: string, version: string, name: string, pageOrigin: string): string {
   if (!ADAPTER_NAME.test(name)) {
     throw new Error(`invalid adapter name: ${name}`);
   }
@@ -86,7 +90,7 @@ export function adapterUrl(endpoint: string, name: string, pageOrigin: string): 
   if (origin !== DEFAULT_ENDPOINT && origin !== pageOrigin) {
     throw new EndpointError(`adapters load only from ${DEFAULT_ENDPOINT} or the page's own origin, not ${origin}`);
   }
-  return `${endpoint}/adapters/${name}.js`;
+  return `${endpoint}/adapters/${encodeURIComponent(version)}/${name}.js`;
 }
 
 /**

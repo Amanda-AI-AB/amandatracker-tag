@@ -3,3 +3,5 @@ node_modules/
 dist/
 coverage/
 *.log
+# Written by cloudbuild/release.yaml's version step, read by the build.
+.release-version
