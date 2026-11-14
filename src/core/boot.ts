@@ -1,7 +1,8 @@
 // The tag's boot: read the installing script tag, fetch the site's config, then install the
 // command queue, send the first pageview and follow the single-page app's route changes. The
 // engagement clock runs from the page's load, and each hide sends a page_exit (engagement.ts). A
-// config that pins the site to another build hands off to it instead (canary.ts). Every step runs
+// config that pins the site to another build hands off to it instead (canary.ts). A config that
+// pauses the site, its kill switch (AAI-797), stops the boot there: the tag sends nothing. Every step runs
 // inside the error boundary: a failure is reported, and the page never sees it.
 
 import { ADAPTER_COMMAND } from "./adapter-api";
@@ -9,7 +10,7 @@ import { loadAdapter } from "./adapter-loader";
 import { attributionOf } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
 import { handOff, shouldHandOff } from "./canary";
-import { bundleVersion, checkSiteId, customParams, errorSampleRate, fetchConfig, gpcHonored, identifyEnabled, type SiteConfig } from "./config";
+import { bundleVersion, checkSiteId, customParams, errorSampleRate, fetchConfig, gpcHonored, identifyEnabled, paused, type SiteConfig } from "./config";
 import {
   consentCommand,
   createLadder,
@@ -117,7 +118,8 @@ export interface Tag {
  * Boots the tag on win. Call it synchronously at a.js's top level: it reads
  * document.currentScript, which is null anywhere else. Returns the boot's remaining, asynchronous
  * part, which settles with the booted tag, or undefined when the tag didn't boot: its failure was
- * reported, another copy of a.js already runs on the page, or the config pinned another build, which
+ * reported, another copy of a.js already runs on the page, the config paused the site (the kill
+ * switch: nothing more is sent, not even a tag error), or the config pinned another build, which
  * has loaded to run in its place. It never rejects and never throws.
  */
 export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefined> {
@@ -150,6 +152,12 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
   return started.then(
     (tag) =>
       boundary.guard("boot", () => {
+        if (paused(tag.config)) {
+          // The kill switch: the config fetch was the page's only request. Nothing runs, the site's
+          // calls stay on the stub, and the tag reports no error from here on.
+          boundary.setSampleRate(0);
+          return undefined;
+        }
         const rate = errorSampleRate(tag.config);
         if (rate !== undefined) boundary.setSampleRate(rate);
         const pin = bundleVersion(tag.config);

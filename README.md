@@ -15,6 +15,13 @@ host page. It is reported instead (`src/core/telemetry.ts`), as a tag error post
 without cookies, from 10 % of page loads (the config's `telemetry.error_sample_rate` sets another
 share) and at most 5 per page.
 
+A site's config with `paused: true`, its kill switch ("pause tracking"), stops the tag right after
+the config fetch, which is then the page's only request: no command runs (the site's calls stay
+queued on the stub), no pageview is made, no consent source or consent manager's adapter is loaded,
+a pinned `bundle_version` is not loaded, and no tag error is sent from then on. With `paused: false`
+or none, the tag runs normally. A `paused` that isn't a boolean is a config error: the tag doesn't
+run, and reports it.
+
 The transport (`src/core/transport.ts`) is built but not yet fed: it posts events and pings to
 `v1/e` in batches of up to 10, sent 2 s after the first is buffered, at the 10th, or at once for a
 pageview. A batch that meets a network error or a 5xx is retried twice (after 1 s, then 3 s) and

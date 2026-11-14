@@ -1,11 +1,11 @@
 // The site's public config, cfg/<SITE_PUBLIC_ID>.json: rendered by the control plane's publisher
 // (amandatracker, AAI-91), served from the CDN and fetched anonymously once per page at boot. Its
 // layout is the publisher's `schema_version: 1`: site, config_version, endpoint, domains, consent,
-// features, custom_params, paused, the kill switch (AAI-92), telemetry, whose
+// features, custom_params, paused, the kill switch (AAI-92; a paused tag sends nothing, AAI-797), telemetry, whose
 // error_sample_rate overrides the tag's ERROR_SAMPLE_RATE, and bundle_version, the canary pin
 // (AAI-149, canary.ts), and features, whose identify_enabled turns amanda('identify') on (AAI-786,
 // identify.ts). The tag checks what it reads
-// here; the tickets that use a section (consent AAI-84, kill switch AAI-797, ...) check that
+// here; the tickets that use a section (consent AAI-84, ...) check that
 // section's fields.
 
 import { CUSTOM_PARAMS_MAP, TRACKED_EVENT_MAX_LENGTH, TRACKED_EVENT_PATTERN } from "../wire/generated";
@@ -56,12 +56,32 @@ export function parseConfig(json: unknown, site: string): SiteConfig {
   if (typeof version !== "number" || !Number.isInteger(version) || version < 0) {
     throw new ConfigError(`the config's config_version is not a version: ${String(version)}`);
   }
+  checkPaused(config.paused);
   checkTelemetry(config.telemetry);
   checkConsent(config.consent);
   checkCustomParams(config.custom_params);
   checkBundleVersion(config.bundle_version);
   checkFeatures(config.features);
   return config as SiteConfig;
+}
+
+/**
+ * The config's optional paused, the site's kill switch (AAI-92): a boolean. Anything else throws
+ * ConfigError, so the tag doesn't run, since guessing whether a site paused tracking could collect
+ * from a site that stopped it.
+ */
+function checkPaused(paused: unknown): void {
+  if (paused !== undefined && typeof paused !== "boolean") {
+    throw new ConfigError(`the config's paused is not a boolean: ${String(paused)}`);
+  }
+}
+
+/**
+ * Whether the site paused tracking: the config's paused, the kill switch (AAI-92, AAI-797), off when
+ * it sets none. A paused tag sends nothing (boot.ts).
+ */
+export function paused(config: SiteConfig): boolean {
+  return config.paused === true;
 }
 
 /**

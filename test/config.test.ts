@@ -11,6 +11,7 @@ import {
   MAX_CUSTOM_PARAMS,
   noCmpPolicy,
   parseConfig,
+  paused,
 } from "../src/core/config";
 import { configRequestInit } from "../src/core/endpoint";
 
@@ -45,6 +46,20 @@ describe("parseConfig", () => {
     expect(() => parseConfig({ ...CONFIG, site: "other" }, "site_123")).toThrow("for site other");
     for (const config_version of [undefined, "3", -1, 1.5]) {
       expect(() => parseConfig({ ...CONFIG, config_version }, "site_123")).toThrow("config_version");
+    }
+  });
+});
+
+describe("paused, the kill switch", () => {
+  it("is optional, off when the site sets none", () => {
+    expect(paused(parseConfig(CONFIG, "site_123"))).toBe(false);
+    expect(paused(parseConfig({ schema_version: 1, site: "site_123", config_version: 3 }, "site_123"))).toBe(false);
+    expect(paused(parseConfig({ ...CONFIG, paused: true }, "site_123"))).toBe(true);
+  });
+
+  it("refuses a flag that isn't a boolean", () => {
+    for (const value of [null, 0, 1, "true", "false", {}, []]) {
+      expect(() => parseConfig({ ...CONFIG, paused: value }, "site_123")).toThrow(ConfigError);
     }
   });
 });
