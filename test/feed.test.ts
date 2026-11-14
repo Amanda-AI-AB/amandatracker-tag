@@ -1,5 +1,5 @@
 // The pageview feed end to end (AAI-964): the boot, the consent sources, the consent machine, the
-// identity and the transport wired by createFeed as a.js wires them (src/core/index.ts), on a
+// identity and the transport wired by createFeed as a.js wires them (src/core/tag.ts), on a
 // stand-in window whose cookies are a CookieJar. A granted visitor's pageview leaves as an event,
 // a declined one's as a ping in declined mode `pings` and not at all in mode `off`. The consent
 // sources drive the machine (AAI-965): the `consent` command and Consent Mode's dataLayer commands,

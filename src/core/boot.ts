@@ -42,7 +42,7 @@ import {
 import { EVENT_COMMAND, customEventInput, eventCommand, type CustomEventInput } from "./custom-event";
 import { ecommerceInput, watchEcommerce, type EcommerceHost, type EcommerceInput } from "./ecommerce";
 import { pageExitInput, watchEngagement, type EngagementHost, type EngagementWatch, type PageExitInput } from "./engagement";
-import { bootParam, currentScript, endpointFromScript } from "./endpoint";
+import { bootParam, currentScript, endpointFromScript, resolveEndpoint } from "./endpoint";
 import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
 import { IDENTIFY_COMMAND, identifyCommand, identifyInput, type IdentifyInput } from "./identify";
 import { followNoCmpPolicy, type NoCmpInput } from "./no-cmp";
@@ -156,9 +156,23 @@ export interface BootOptions {
    * (no-cmp.ts). Without it, the tag follows no consent source.
    */
   readonly consent?: (config: SiteConfig) => ConsentInput & NoCmpInput;
+  /**
+   * The site and endpoint, given by the code that boots the tag rather than read from the installing
+   * script tag: the npm package's init (src/npm/index.ts, AAI-222), bundled into a site's own code,
+   * has no script tag. The endpoint resolves as data-endpoint does; none means the default. A tag
+   * booted this way never hands off to a build its config pins: the site chose the package's
+   * version when it bundled it.
+   */
+  readonly install?: Install;
   /** Filled in as the boot resolves the endpoint and the site, for the tag errors' sink. */
   readonly target?: TagTarget;
   readonly now?: () => number;
+}
+
+/** A tag's site and endpoint, as its script tag's data-site and data-endpoint would give them. */
+export interface Install {
+  readonly site: string;
+  readonly endpoint?: string | undefined;
 }
 
 /** A booted tag: where it sends, for which site, and with what settings. */
@@ -170,7 +184,7 @@ export interface Tag {
 
 /**
  * Boots the tag on win. Call it synchronously at a.js's top level: it reads
- * document.currentScript, which is null anywhere else. Returns the boot's remaining, asynchronous
+ * document.currentScript, which is null anywhere else; with options.install, from anywhere. Returns the boot's remaining, asynchronous
  * part, which settles with the booted tag, or undefined when the tag didn't boot: its failure was
  * reported, another copy of a.js already runs on the page, the config paused the site (the kill
  * switch: nothing more is sent, not even a tag error), or the config pinned another build, which
@@ -183,17 +197,28 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
   let exitTo: ((engagementMs: number) => void) | undefined;
   /** The engagement watcher, with onPageExit, for the route changes' page_exits. */
   let engagement: EngagementWatch | undefined;
-  /** The installing script tag, a <script> element once endpointFromScript has accepted it. */
+  /**
+   * The installing script tag, a <script> element once endpointFromScript has accepted it; none for
+   * a tag booted with options.install.
+   */
   let script: Element | undefined;
   const started = boundary.guard("boot", () => {
     if (!ensureStub(win)) return undefined;
     if (onPageExit) engagement = watchEngagement(win, boundary, (engagementMs) => exitTo?.(engagementMs), now);
-    const current = currentScript(win.document);
-    const endpoint = endpointFromScript(current, win.location);
-    // endpointFromScript has checked that current is a <script> element.
-    script = current!;
-    if (target) target.endpoint = endpoint;
-    const site = checkSiteId(bootParam(script, "site", win.location));
+    let endpoint: string;
+    let site: string;
+    if (options.install) {
+      endpoint = resolveEndpoint(options.install.endpoint, win.location);
+      if (target) target.endpoint = endpoint;
+      site = checkSiteId(options.install.site);
+    } else {
+      const current = currentScript(win.document);
+      endpoint = endpointFromScript(current, win.location);
+      // endpointFromScript has checked that current is a <script> element.
+      script = current!;
+      if (target) target.endpoint = endpoint;
+      site = checkSiteId(bootParam(script, "site", win.location));
+    }
     if (target) target.site = site;
     return fetchConfig(win.fetch.bind(win), endpoint, site).then((config) => ({ endpoint, site, config }));
   });
@@ -217,7 +242,7 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
         const rate = errorSampleRate(tag.config);
         if (rate !== undefined) boundary.setSampleRate(rate);
         const pin = bundleVersion(tag.config);
-        if (!shouldHandOff(pin, options.tagVersion, script!)) return run(tag);
+        if (!script || !shouldHandOff(pin, options.tagVersion, script)) return run(tag);
         // The pinned build boots in this one's place, with the stub this one left. When it fails to
         // load, the failure is reported and this build runs, so the page is still tracked.
         return handOff(win.document, script!, tag.endpoint, pin!, options.tagVersion, win.location).then(

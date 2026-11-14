@@ -225,6 +225,61 @@ describe("boot", () => {
     expect(win.fetchMock).not.toHaveBeenCalled();
   });
 
+  describe("with install, as the npm package's init boots it (AAI-222)", () => {
+    it("takes the site and endpoint from install, without reading currentScript", async () => {
+      const win = fakeWindow(null, jsonResponse(CONFIG));
+      const target = defaultTarget();
+      const reports: ErrorReport[] = [];
+      const pageviews: PageviewInput[] = [];
+
+      const tag = await boot(win, {
+        tagVersion: "0.2.0",
+        boundary: new ErrorBoundary((r) => reports.push(r), 1),
+        target,
+        install: { site: "site_123", endpoint: "/amnda" },
+        onPageview: (p) => pageviews.push(p),
+      });
+
+      expect(reports).toEqual([]);
+      expect(tag).toMatchObject({ site: "site_123", endpoint: `${PAGE}/amnda` });
+      expect(target).toEqual({ endpoint: `${PAGE}/amnda`, site: "site_123" });
+      expect(win.fetchMock.mock.calls[0]![0]).toBe(`${PAGE}/amnda/cfg/site_123.json`);
+      expect(pageviews).toHaveLength(1);
+    });
+
+    it("sends to the default endpoint when install names none", async () => {
+      const win = fakeWindow(null, jsonResponse(CONFIG));
+
+      const tag = await boot(win, { tagVersion: "0.2.0", boundary: new ErrorBoundary(() => undefined, 1), install: { site: "site_123" }, onPageview: () => undefined });
+
+      expect(tag).toMatchObject({ endpoint: DEFAULT_ENDPOINT });
+    });
+
+    it("refuses a malformed site or endpoint as it does a script tag's, before fetching anything", async () => {
+      for (const install of [{ site: "<script>" }, { site: "site_123", endpoint: "javascript:alert(1)" }]) {
+        const win = fakeWindow(null, jsonResponse(CONFIG));
+        const reports: ErrorReport[] = [];
+
+        expect(await boot(win, { tagVersion: "0.2.0", boundary: new ErrorBoundary((r) => reports.push(r), 1), install, onPageview: () => undefined })).toBeUndefined();
+        expect(reports[0]).toMatchObject({ stage: "boot" });
+        expect(win.fetchMock).not.toHaveBeenCalled();
+      }
+    });
+
+    it("runs itself for a config that pins another build: it never loads that build in its place", async () => {
+      const win = fakeWindow(null, jsonResponse({ ...CONFIG, bundle_version: "0.3.0-canary.1" }));
+      const appendChild = vi.fn();
+      Object.assign(win.document, { head: { appendChild } });
+      const pageviews: PageviewInput[] = [];
+
+      const tag = await boot(win, { tagVersion: "0.2.0", boundary: new ErrorBoundary(() => undefined, 1), install: { site: "site_123" }, onPageview: (p) => pageviews.push(p) });
+
+      expect(tag).toMatchObject({ site: "site_123" });
+      expect(appendChild).not.toHaveBeenCalled();
+      expect(pageviews).toHaveLength(1);
+    });
+  });
+
   it("keeps the default target when data-endpoint is refused, and has no site without data-site", async () => {
     const refused = fakeWindow(scriptTag({ ...SNIPPET, "data-endpoint": "javascript:alert(1)" }));
     const noSite = fakeWindow(scriptTag({ src: SNIPPET.src, "data-endpoint": "/amnda" }));
