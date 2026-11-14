@@ -3,7 +3,8 @@
 // layout is the publisher's `schema_version: 1`: site, config_version, endpoint, domains, consent,
 // features, custom_params, paused, the kill switch (AAI-92), telemetry, whose
 // error_sample_rate overrides the tag's ERROR_SAMPLE_RATE, and bundle_version, the canary pin
-// (AAI-149, canary.ts). The tag checks what it reads
+// (AAI-149, canary.ts), and features, whose identify_enabled turns amanda('identify') on (AAI-786,
+// identify.ts). The tag checks what it reads
 // here; the tickets that use a section (consent AAI-84, kill switch AAI-797, ...) check that
 // section's fields.
 
@@ -59,7 +60,34 @@ export function parseConfig(json: unknown, site: string): SiteConfig {
   checkConsent(config.consent);
   checkCustomParams(config.custom_params);
   checkBundleVersion(config.bundle_version);
+  checkFeatures(config.features);
   return config as SiteConfig;
+}
+
+/**
+ * The config's optional features section, the site's feature toggles; this tag reads its
+ * identify_enabled, a boolean (AAI-786). A section of another shape, or a toggle of another type,
+ * throws ConfigError, since guessing a toggle could send what the site never turned on. Its other
+ * toggles are the tickets' that use them.
+ */
+function checkFeatures(features: unknown): void {
+  if (features === undefined) return;
+  if (typeof features !== "object" || features === null || Array.isArray(features)) {
+    throw new ConfigError("the config's features is not an object");
+  }
+  const identify = (features as Record<string, unknown>).identify_enabled;
+  if (identify !== undefined && typeof identify !== "boolean") {
+    throw new ConfigError(`the config's features.identify_enabled is not a boolean: ${String(identify)}`);
+  }
+}
+
+/**
+ * Whether the site turned identify() on: the config's features.identify_enabled, off when it sets
+ * none (AAI-786; the setting is legal-badged and gated on the DPA addendum, AAI-197, AAI-198).
+ */
+export function identifyEnabled(config: SiteConfig): boolean {
+  const features = config.features as { identify_enabled?: boolean } | undefined;
+  return !!features && features.identify_enabled === true;
 }
 
 /** A tag version, as the wire schema's TagVersion has it: semver, at most 64 characters. */

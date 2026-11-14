@@ -139,6 +139,15 @@ keeps the first one the browser accepts (a browser refuses a cookie on a public 
   helper only reads the cookie: it never mints an ID or writes one. Where the browser refuses the
   copy, or has no Clipboard API, it selects the ID and asks the visitor to copy it themselves. Its
   texts are in English.
+- **identify(), off by default.** `amanda('identify', ref)` (`src/core/identify.ts`) links the
+  visitor to the site's own pseudonymous reference for its logged-in user, such as a hashed customer
+  number, for logged-in stitching: it sends one `identify` event carrying the ref as `user_ref`. It
+  works only on a site whose config turns it on (`features.identify_enabled: true`); elsewhere the
+  call is refused and reported. Raw email addresses are refused in the browser: a ref holding an
+  `@` is never sent, and neither is one that isn't a non-empty string or is over 128 characters.
+  The tag keeps no ref, in memory or in a cookie: the site calls identify on each page its user is
+  logged in on. Like every event, the identify event goes only under granted analytics, never as a
+  ping.
 
 Attribution (`src/core/attribution.ts`) is captured on each landing, the page load's first
 pageview, from the landing URL's query string: the UTM set (`utm_source`, `utm_medium`,
@@ -235,6 +244,9 @@ truth for what the tag sends and what the collector accepts:
   without a transaction ID, a value and a currency code isn't sent, and one whose items don't all
   map, or are over 50, goes without them, each with a console warning. Any other GA4 event is
   ignored. a.js doesn't turn it on yet: the per-site toggle is to come.
+  An `identify` event carries `user_ref`, the site's own pseudonymous reference for its logged-in
+  user (see identify() below): at most 128 characters, and never one holding an `@`, so never an
+  email address. Only the identify event carries it.
 - `ping.json`: the anonymous ping that declined mode `pings` sends. It has no ids, no `seq` and
   nothing linkable across events. Its field list is frozen after counsel sign-off, so adding a
   field is a framework amendment, never a routine release.

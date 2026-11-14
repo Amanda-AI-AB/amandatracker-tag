@@ -9,7 +9,7 @@ import { loadAdapter } from "./adapter-loader";
 import { attributionOf } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
 import { handOff, shouldHandOff } from "./canary";
-import { bundleVersion, checkSiteId, customParams, errorSampleRate, fetchConfig, gpcHonored, type SiteConfig } from "./config";
+import { bundleVersion, checkSiteId, customParams, errorSampleRate, fetchConfig, gpcHonored, identifyEnabled, type SiteConfig } from "./config";
 import {
   consentCommand,
   createLadder,
@@ -27,6 +27,7 @@ import { ecommerceInput, watchEcommerce, type EcommerceHost, type EcommerceInput
 import { pageExitInput, watchEngagement, type EngagementHost, type PageExitInput } from "./engagement";
 import { currentScript, endpointFromScript } from "./endpoint";
 import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
+import { IDENTIFY_COMMAND, identifyCommand, identifyInput, type IdentifyInput } from "./identify";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
 import { PRIVACY_COMMAND, privacyCommand, type PrivacyHost } from "./privacy";
 import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
@@ -85,6 +86,13 @@ export interface BootOptions {
    * mapping makes of it. Without it, the default, the tag reads none of them.
    */
   readonly onEcommerce?: (input: EcommerceInput) => void;
+  /**
+   * Where each identify event goes (identify.ts), as each pageview does: an event only, never a
+   * ping. With it, the booted tag has the `identify` command, which hands over one identify event
+   * for each call with a ref it accepts, and only when the site's config turns identify on. Without
+   * it, the tag has no `identify` command.
+   */
+  readonly onIdentify?: (input: IdentifyInput) => void;
   /**
    * The consent state machine for the booted site's config (createConsent, with the config's
    * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
@@ -169,7 +177,8 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * when the page has one, the adapter of a consent manager the page has or loads later (Cookiebot, OneTrust, Usercentrics),
  * which signals once it has loaded and connected through the `adapter` command, then the site's queued
  * commands (they may set what the pageview carries, such as consent; `privacy` shows the visitor
- * their ID, privacy.ts), then the first pageview,
+ * their ID, privacy.ts; `identify`, when the site turns it on, links the visitor to the site's
+ * pseudonymous ref, identify.ts), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
  * on each route change, a form_submit for each form the page submits (forms.ts), and, when it is
  * turned on, a scroll event for each depth threshold the visitor reaches in each pageview (scroll.ts)
@@ -204,6 +213,12 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
     );
     if (adapter) commands[ADAPTER_COMMAND] = adapter;
     commands.consent = consentCommand(ladder);
+  }
+  const { onIdentify } = options;
+  if (onIdentify) {
+    commands[IDENTIFY_COMMAND] = identifyCommand(identifyEnabled(tag.config), (ref) =>
+      onIdentify(identifyInput(win, tag.site, tagVersion, ref, now())),
+    );
   }
   installCommands(win, commands, boundary);
   pageview();
