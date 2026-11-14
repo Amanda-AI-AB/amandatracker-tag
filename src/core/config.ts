@@ -1,12 +1,13 @@
 // The site's public config, cfg/<SITE_PUBLIC_ID>.json: rendered by the control plane's publisher
 // (amandatracker, AAI-91), served from the CDN and fetched anonymously once per page at boot. Its
 // layout is the publisher's `schema_version: 1`: site, config_version, endpoint, domains, consent,
-// features, custom_params, paused, the kill switch (AAI-92), and telemetry, whose
-// error_sample_rate overrides the tag's ERROR_SAMPLE_RATE. The tag checks what it reads
+// features, custom_params, paused, the kill switch (AAI-92), telemetry, whose
+// error_sample_rate overrides the tag's ERROR_SAMPLE_RATE, and bundle_version, the canary pin
+// (AAI-149, canary.ts). The tag checks what it reads
 // here; the tickets that use a section (consent AAI-84, kill switch AAI-797, ...) check that
 // section's fields.
 
-import { CUSTOM_PARAMS_MAP } from "../wire/generated";
+import { CUSTOM_PARAMS_MAP, TRACKED_EVENT_MAX_LENGTH, TRACKED_EVENT_PATTERN } from "../wire/generated";
 import type { DeclinedMode, NoCmpPolicy } from "./consent";
 import { configRequestInit, configUrl } from "./endpoint";
 
@@ -57,7 +58,28 @@ export function parseConfig(json: unknown, site: string): SiteConfig {
   checkTelemetry(config.telemetry);
   checkConsent(config.consent);
   checkCustomParams(config.custom_params);
+  checkBundleVersion(config.bundle_version);
   return config as SiteConfig;
+}
+
+/** A tag version, as the wire schema's TagVersion has it: semver, at most 64 characters. */
+const TAG_VERSION_PATTERN = new RegExp(TRACKED_EVENT_PATTERN.tag_version);
+
+/**
+ * The config's optional bundle_version (AAI-149, published by AAI-799): the canary pin, the tag
+ * version the site is to run instead of the evergreen a.js's. Anything but a tag version throws
+ * ConfigError, since running a build the publisher never named could be any build.
+ */
+function checkBundleVersion(version: unknown): void {
+  if (version === undefined) return;
+  if (typeof version !== "string" || version.length > TRACKED_EVENT_MAX_LENGTH.tag_version || !TAG_VERSION_PATTERN.test(version)) {
+    throw new ConfigError(`the config's bundle_version is not a tag version: ${String(version)}`);
+  }
+}
+
+/** The tag version the config pins the site to, or undefined when it pins none. */
+export function bundleVersion(config: SiteConfig): string | undefined {
+  return config.bundle_version as string | undefined;
 }
 
 /** The most custom attribution parameters a site may name: the wire's CustomParams cap. */

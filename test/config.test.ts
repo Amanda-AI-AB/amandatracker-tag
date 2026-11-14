@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  bundleVersion,
   checkSiteId,
   ConfigError,
   customParams,
@@ -124,6 +125,22 @@ describe("custom_params", () => {
     const tooMany = Array.from({ length: MAX_CUSTOM_PARAMS + 1 }, (_, i) => `p${i}`);
     for (const custom_params of [null, "ref", { ref: true }, [""], ["ref", 1], [null], tooMany]) {
       expect(() => parseConfig({ ...CONFIG, custom_params }, "site_123")).toThrow(ConfigError);
+    }
+  });
+});
+
+describe("bundle_version", () => {
+  it("is optional, and names the build the site is pinned to", () => {
+    expect(bundleVersion(parseConfig(CONFIG, "site_123"))).toBeUndefined();
+    for (const bundle_version of ["0.3.0", "0.3.1-dev.20261114103000.gabc1234", "1.0.0-canary.1+b7"]) {
+      expect(bundleVersion(parseConfig({ ...CONFIG, bundle_version }, "site_123"))).toBe(bundle_version);
+    }
+  });
+
+  it("refuses anything but a tag version", () => {
+    const tooLong = `1.0.0-${"x".repeat(59)}`;
+    for (const bundle_version of [null, "", "latest", "v0.3.0", "0.3", "../a", "0.3.0/x", "0.3.0 ", 3, {}, tooLong]) {
+      expect(() => parseConfig({ ...CONFIG, bundle_version }, "site_123")).toThrow(ConfigError);
     }
   });
 });

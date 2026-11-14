@@ -135,11 +135,26 @@ export function adapterUrl(endpoint: string, version: string, name: string, page
   if (!ADAPTER_NAME.test(name)) {
     throw new Error(`invalid adapter name: ${name}`);
   }
+  checkCodeOrigin(endpoint, pageOrigin, "adapters");
+  return `${endpoint}/adapters/${encodeURIComponent(version)}/${name}.js`;
+}
+
+/**
+ * The immutable core of tag version `version` as the release publishes it, a.<version>.js, which the
+ * canary pin hands off to (canary.ts). It is code run on the customer's page, as an adapter is, so it
+ * loads only from the collection host or the page's own origin; any other throws EndpointError.
+ */
+export function bundleUrl(endpoint: string, version: string, pageOrigin: string): string {
+  checkCodeOrigin(endpoint, pageOrigin, "versioned builds");
+  return `${endpoint}/a.${encodeURIComponent(version)}.js`;
+}
+
+/** Throws EndpointError unless endpoint is on the collection host or the page's own origin. */
+function checkCodeOrigin(endpoint: string, pageOrigin: string, what: string): void {
   const origin = new URL(endpoint).origin;
   if (origin !== DEFAULT_ENDPOINT && origin !== pageOrigin) {
-    throw new EndpointError(`adapters load only from ${DEFAULT_ENDPOINT} or the page's own origin, not ${origin}`);
+    throw new EndpointError(`${what} load only from ${DEFAULT_ENDPOINT} or the page's own origin, not ${origin}`);
   }
-  return `${endpoint}/adapters/${encodeURIComponent(version)}/${name}.js`;
 }
 
 /**

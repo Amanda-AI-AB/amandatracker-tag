@@ -102,6 +102,19 @@ Click IDs are identifiers: while `ads` is denied, an event carries none, neither
 are campaign labels, still go (`gateClickIds`, to be applied on the identified path by AAI-964). An
 anonymous ping never carries any of it but its five frozen UTM fields.
 
+The canary pin (`src/core/canary.ts`) rolls a new build out to chosen sites without a separate
+loader. A site's config may carry `bundle_version`, a tag version; when it names a build other than
+the running one, the tag doesn't start, but appends one script tag for `a.<bundle_version>.js` from
+its endpoint (the collection host or the page's own origin, as adapters), with the snippet's
+`data-site` and `data-endpoint`, and that build boots in its place, with the snippet's stub and its
+queued calls. That is one extra request, on pinned sites only; an unpinned config, or one that names
+the running build, never makes it. The pinned build's script tag is marked
+`data-amanda-handoff-from="<version>"`, and a build booted from a marked tag never hands off again,
+so a page loads at most one pinned build. A pinned build that fails to load is reported as a tag
+error, and the running build starts instead. A `bundle_version` that isn't a tag version is a config
+error. Every event and tag error carries the `tag_version` of the build that sent it, so a canary
+cohort's telemetry separates from everyone else's.
+
 Still to come:
 
 - the collector accepting `POST /v1/t` and the event debugger showing tag errors (amandatracker);

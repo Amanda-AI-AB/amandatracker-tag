@@ -27,6 +27,31 @@ function srcDiagnostics(file: string): string[] {
     .map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"));
 }
 
+/** A script element: its attributes, and what the tag sets on it. */
+interface FakeScript {
+  readonly tagName: string;
+  getAttribute(name: string): string | null;
+  setAttribute(name: string, value: string): void;
+  src?: string;
+  onload?: () => void;
+}
+
+function fakeScript(attributes: Record<string, string>, tagName = "SCRIPT"): FakeScript {
+  return {
+    tagName,
+    getAttribute: (name) => attributes[name] ?? null,
+    setAttribute: (name, value) => {
+      attributes[name] = value;
+    },
+  };
+}
+
+/** The page's script elements: the one whose code runs now, and those the tag appended to its head. */
+interface BrowserPage {
+  current: FakeScript;
+  readonly appended: FakeScript[];
+}
+
 /**
  * A global scope with the browser APIs the tag uses at load time, and nothing of Node's: a page
  * installed by a.js's snippet for site_123, whose fetch answers with fetchFn (by default never).
@@ -34,19 +59,20 @@ function srcDiagnostics(file: string): string[] {
  */
 function browserContext(
   fetchFn: (url: string, init?: unknown) => Promise<unknown> = () => new Promise(() => undefined),
+  page: BrowserPage = { current: fakeScript({ "data-site": "site_123" }), appended: [] },
 ): Record<string, unknown> {
-  const script = {
-    tagName: "SCRIPT",
-    getAttribute: (name: string) => ({ "data-site": "site_123" })[name] ?? null,
-  };
   class Document {
     get currentScript(): unknown {
-      return script;
+      return page.current;
     }
     readonly title = "Products";
     readonly referrer = "";
     readonly visibilityState = "visible";
+    readonly head = { appendChild: (script: FakeScript) => page.appended.push(script) };
     addEventListener(): void {}
+    createElement(tagName: string): FakeScript {
+      return fakeScript({}, tagName.toUpperCase());
+    }
   }
   const context: Record<string, unknown> = {
     URL,
@@ -115,16 +141,59 @@ describe("browser target", () => {
   it("boots the built core: it fetches the site's config and installs window.amanda", async () => {
     const { coreFile } = await build({ outdir: join(dir, "dist") });
     const fetched: string[] = [];
+    const page: BrowserPage = { current: fakeScript({ "data-site": "site_123" }), appended: [] };
     const context = browserContext(async (url) => {
       fetched.push(url);
       return { ok: true, status: 200, json: async () => ({ schema_version: 1, site: "site_123", config_version: 1 }) };
-    });
+    }, page);
 
     runInContext(readFileSync(coreFile, "utf8"), context, { filename: coreFile });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(fetched).toEqual(["https://eu.serversider.com/cfg/site_123.json"]);
     expect((context.amanda as { loaded?: boolean }).loaded).toBe(true);
+    // An unpinned config never loads another build.
+    expect(page.appended).toEqual([]);
+  });
+
+  it("hands a pinned site off to the versioned build once, and that build reports under its own tag_version", async () => {
+    const running = await build({ outdir: join(dir, "running"), version: "0.2.0" });
+    const pinned = await build({ outdir: join(dir, "pinned"), version: "0.3.0-canary.1" });
+    const config = { schema_version: 1, site: "site_123", config_version: 2, bundle_version: "0.3.0-canary.1" };
+    const requests: { url: string; body: string | undefined }[] = [];
+    const page: BrowserPage = { current: fakeScript({ "data-site": "site_123" }), appended: [] };
+    const context = browserContext(async (url, init) => {
+      requests.push({ url, body: (init as { body?: string } | undefined)?.body });
+      return { ok: true, status: url.endsWith("/v1/t") ? 204 : 200, json: async () => config };
+    }, page);
+    // a sampled page, whose snippet queued a command no build has
+    runInContext("Math.random = () => 0;", context);
+    runInContext("window.amanda = function () { (amanda.q = amanda.q || []).push(arguments); }; amanda('no-such-command');", context);
+
+    runInContext(readFileSync(running.coreFile, "utf8"), context, { filename: running.coreFile });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(page.appended).toHaveLength(1);
+    const script = page.appended[0]!;
+    expect(script.src).toBe("https://eu.serversider.com/a.0.3.0-canary.1.js");
+    expect((context.amanda as { loaded?: boolean }).loaded).toBeUndefined();
+
+    // The browser runs the pinned build from the script tag the running one appended.
+    page.current = script;
+    runInContext(readFileSync(pinned.coreFile, "utf8"), context, { filename: pinned.coreFile });
+    script.onload!();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(page.appended).toHaveLength(1);
+    expect((context.amanda as { loaded?: boolean }).loaded).toBe(true);
+    expect(requests.map((r) => r.url)).toEqual([
+      "https://eu.serversider.com/cfg/site_123.json",
+      "https://eu.serversider.com/cfg/site_123.json",
+      "https://eu.serversider.com/v1/t",
+    ]);
+    const report = JSON.parse(requests[2]!.body!);
+    expect(report).toMatchObject({ tag_version: "0.3.0-canary.1", site_id: "site_123", stage: "command", name: "CommandError" });
+    expect(validator("tag-error.json")(report)).toBe(true);
   });
 
   it("reports a failed boot of the built core to the collector as a tag error", async () => {

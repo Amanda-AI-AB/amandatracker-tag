@@ -1,11 +1,13 @@
 // The tag's boot: read the installing script tag, fetch the site's config, then install the
 // command queue, send the first pageview and follow the single-page app's route changes. The
-// engagement clock runs from the page's load, and each hide sends a page_exit (engagement.ts). Every
-// step runs inside the error boundary: a failure is reported, and the page never sees it.
+// engagement clock runs from the page's load, and each hide sends a page_exit (engagement.ts). A
+// config that pins the site to another build hands off to it instead (canary.ts). Every step runs
+// inside the error boundary: a failure is reported, and the page never sees it.
 
 import { attributionOf } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
-import { checkSiteId, customParams, errorSampleRate, fetchConfig, gpcHonored, type SiteConfig } from "./config";
+import { handOff, shouldHandOff } from "./canary";
+import { bundleVersion, checkSiteId, customParams, errorSampleRate, fetchConfig, gpcHonored, type SiteConfig } from "./config";
 import {
   consentCommand,
   createLadder,
@@ -64,34 +66,52 @@ export interface Tag {
  * Boots the tag on win. Call it synchronously at a.js's top level: it reads
  * document.currentScript, which is null anywhere else. Returns the boot's remaining, asynchronous
  * part, which settles with the booted tag, or undefined when the tag didn't boot: its failure was
- * reported, or another copy of a.js already runs on the page. It never rejects and never throws.
+ * reported, another copy of a.js already runs on the page, or the config pinned another build, which
+ * has loaded to run in its place. It never rejects and never throws.
  */
 export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefined> {
   const { boundary, target, onPageExit } = options;
   const now = options.now || Date.now;
   /** The page_exits' destination, once the tag booted; until then a page_exit is dropped. */
   let exitTo: ((engagementMs: number) => void) | undefined;
+  /** The installing script tag, a <script> element once endpointFromScript has accepted it. */
+  let script: Element | undefined;
   const started = boundary.guard("boot", () => {
     if (!ensureStub(win)) return undefined;
     if (onPageExit) watchEngagement(win, boundary, (engagementMs) => exitTo?.(engagementMs), now);
-    const script = currentScript(win.document);
-    const endpoint = endpointFromScript(script, win.location);
+    const current = currentScript(win.document);
+    const endpoint = endpointFromScript(current, win.location);
+    // endpointFromScript has checked that current is a <script> element.
+    script = current!;
     if (target) target.endpoint = endpoint;
-    // endpointFromScript has checked that script is a <script> element.
-    const site = checkSiteId(script!.getAttribute("data-site"));
+    const site = checkSiteId(script.getAttribute("data-site"));
     if (target) target.site = site;
     return fetchConfig(win.fetch.bind(win), endpoint, site).then((config) => ({ endpoint, site, config }));
   });
   if (started === undefined) return Promise.resolve(undefined);
+  /** Starts the booted tag: from here on, this build runs on the page. */
+  const run = (tag: Tag): Tag => {
+    if (onPageExit) {
+      exitTo = (engagementMs) => onPageExit(pageExitInput(win, tag.site, options.tagVersion, engagementMs, now()));
+    }
+    return start(win, tag, options);
+  };
   return started.then(
     (tag) =>
       boundary.guard("boot", () => {
         const rate = errorSampleRate(tag.config);
         if (rate !== undefined) boundary.setSampleRate(rate);
-        if (onPageExit) {
-          exitTo = (engagementMs) => onPageExit(pageExitInput(win, tag.site, options.tagVersion, engagementMs, now()));
-        }
-        return start(win, tag, options);
+        const pin = bundleVersion(tag.config);
+        if (!shouldHandOff(pin, options.tagVersion, script!)) return run(tag);
+        // The pinned build boots in this one's place, with the stub this one left. When it fails to
+        // load, the failure is reported and this build runs, so the page is still tracked.
+        return handOff(win.document, script!, tag.endpoint, pin!, options.tagVersion, win.location.origin).then(
+          () => undefined,
+          (error: unknown) => {
+            boundary.report("boot", error);
+            return boundary.guard("boot", () => run(tag));
+          },
+        );
       }),
     (error: unknown) => {
       boundary.report("config", error);
