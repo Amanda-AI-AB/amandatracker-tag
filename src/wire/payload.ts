@@ -2,6 +2,8 @@
 // types and rules (src/wire/generated.ts), so a payload carries exactly the fields the schema
 // allows, each with a value it accepts, or isn't built at all.
 import {
+  ATTRIBUTION_UTM_FIELDS,
+  CLICK_IDS_FIELDS,
   PURCHASE_EVENT_SHAPE,
   SCHEMA_VERSION,
   TRACKED_EVENT_SHAPE,
@@ -107,6 +109,13 @@ export class WirePayloadError extends Error {
   }
 }
 
+/** An OVERFLOW entry of `cut` for each of an object's fields, at path. */
+function overflowCuts(path: string, fields: readonly string[]): Record<string, "cut"> {
+  const rules: Record<string, "cut"> = {};
+  for (const field of fields) rules[`${path}.${field}`] = "cut";
+  return rules;
+}
+
 /**
  * What a string over its cap becomes, by its path. `cut`: free text, cut to the cap on a whole
  * character. `subtags`: a BCP 47 tag, cut to its whole subtags that fit (RFC 4647 lookup). `drop`:
@@ -122,6 +131,10 @@ export const OVERFLOW: Readonly<Record<string, "cut" | "subtags" | "drop">> = {
   "event.page_title": "cut",
   "event.language": "subtags",
   "event.props.*": "cut",
+  // An attribution value over the URL's cap is cut: the collector cuts it to 200 anyway (03 §5).
+  ...overflowCuts("event.attribution.utm", ATTRIBUTION_UTM_FIELDS),
+  ...overflowCuts("event.attribution.click_ids", CLICK_IDS_FIELDS),
+  "event.attribution.custom.*": "cut",
   "event.purchase.items[].name": "cut",
   "ping.path": "cut",
   "ping.referrer_host": "drop",

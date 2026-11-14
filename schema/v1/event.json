@@ -35,6 +35,7 @@
         "visitor_id": { "$ref": "#/$defs/VisitorId" },
         "session_id": { "$ref": "#/$defs/SessionId" },
         "consent": { "$ref": "#/$defs/Consent" },
+        "attribution": { "$ref": "#/$defs/Attribution" },
         "props": { "$ref": "#/$defs/Props" }
       }
     },
@@ -72,6 +73,7 @@
         "visitor_id": { "$ref": "#/$defs/VisitorId" },
         "session_id": { "$ref": "#/$defs/SessionId" },
         "consent": { "$ref": "#/$defs/Consent" },
+        "attribution": { "$ref": "#/$defs/Attribution" },
         "props": { "$ref": "#/$defs/Props" },
         "purchase": { "$ref": "#/$defs/Purchase" }
       }
@@ -176,6 +178,56 @@
     "ConsentSource": {
       "description": "The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved.",
       "enum": ["gpc", "manual", "gcm"]
+    },
+    "Attribution": {
+      "description": "The landing's attribution (01 §5): the parameters of the landing page's query string, those present and not empty, read on the page load's first pageview and on no other event. Each value is verbatim, as URLSearchParams decodes it: never case-normalised, so that Summer and summer stay distinct, and never classified, which the processor does (AAI-102). The collector caps each value at 200 characters (03 §5); the 2048 here is the page URL's own cap. Click IDs go only while ads consent isn't denied: under denied ads the tag leaves out click_ids, and drops the click-ID parameters from url and referrer too, while the UTMs and custom parameters, campaign labels rather than identifiers, still go.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "utm": { "$ref": "#/$defs/AttributionUtm" },
+        "click_ids": { "$ref": "#/$defs/ClickIds" },
+        "custom": { "$ref": "#/$defs/CustomParams" }
+      }
+    },
+    "AttributionUtm": {
+      "description": "The UTM set: utm_<field> in the landing URL.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "$ref": "#/$defs/AttributionValue" },
+        "medium": { "$ref": "#/$defs/AttributionValue" },
+        "campaign": { "$ref": "#/$defs/AttributionValue" },
+        "term": { "$ref": "#/$defs/AttributionValue" },
+        "content": { "$ref": "#/$defs/AttributionValue" },
+        "id": { "$ref": "#/$defs/AttributionValue" },
+        "source_platform": { "$ref": "#/$defs/AttributionValue" },
+        "creative_format": { "$ref": "#/$defs/AttributionValue" },
+        "marketing_tactic": { "$ref": "#/$defs/AttributionValue" }
+      }
+    },
+    "ClickIds": {
+      "description": "The ad platforms' click IDs, by their own parameter names in the landing URL: Google Ads' gclid, gbraid and wbraid, Meta's fbclid and Microsoft Advertising's msclkid. Identifiers: sent only while ads consent isn't denied.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gclid": { "$ref": "#/$defs/AttributionValue" },
+        "gbraid": { "$ref": "#/$defs/AttributionValue" },
+        "wbraid": { "$ref": "#/$defs/AttributionValue" },
+        "fbclid": { "$ref": "#/$defs/AttributionValue" },
+        "msclkid": { "$ref": "#/$defs/AttributionValue" }
+      }
+    },
+    "CustomParams": {
+      "description": "The site's own attribution parameters, those its config's custom_params names, by their names in the landing URL: at most 25.",
+      "type": "object",
+      "maxProperties": 25,
+      "additionalProperties": { "type": "string", "maxLength": 2048 }
+    },
+    "AttributionValue": {
+      "description": "One attribution parameter's value, verbatim.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
     },
     "Props": {
       "description": "The event's own properties (01 §4): a flat object of at most 25 keys, each value a string of at most 200 characters (03 §5), a number or a boolean. Keys starting with am_ are reserved for the tag and refused. 01 §4 also caps props at 8 KB in total, which JSON Schema can't express: the collector's payload cap is its backstop (AAI-65).",

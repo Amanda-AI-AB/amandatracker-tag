@@ -60,6 +60,7 @@ export interface TrackedEvent {
   visitor_id: VisitorId;
   session_id: SessionId;
   consent: Consent;
+  attribution?: Attribution;
   props?: Props;
   purchase?: never;
   path?: never;
@@ -67,11 +68,11 @@ export interface TrackedEvent {
   utm?: never;
 }
 
-export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "props"] as const;
+export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props"] as const;
 
 export const TRACKED_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent"] as const;
 
-export const TRACKED_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", props: "object" } as const;
+export const TRACKED_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", attribution: "object", props: "object" } as const;
 
 export const TRACKED_EVENT_VALUES = { schema_version: [1] } as const;
 
@@ -97,6 +98,7 @@ export interface PurchaseEvent {
   visitor_id: VisitorId;
   session_id: SessionId;
   consent: Consent;
+  attribution?: Attribution;
   props?: Props;
   purchase: Purchase;
   path?: never;
@@ -104,11 +106,11 @@ export interface PurchaseEvent {
   utm?: never;
 }
 
-export const PURCHASE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "props", "purchase"] as const;
+export const PURCHASE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "purchase"] as const;
 
 export const PURCHASE_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent", "purchase"] as const;
 
-export const PURCHASE_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", props: "object", purchase: "object" } as const;
+export const PURCHASE_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", attribution: "object", props: "object", purchase: "object" } as const;
 
 export const PURCHASE_EVENT_VALUES = { schema_version: [1], type: ["purchase"] } as const;
 
@@ -180,6 +182,65 @@ export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_
 
 /** The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved. */
 export type ConsentSource = "gpc" | "manual" | "gcm";
+
+/** The landing's attribution (01 §5): the parameters of the landing page's query string, those present and not empty, read on the page load's first pageview and on no other event. Each value is verbatim, as URLSearchParams decodes it: never case-normalised, so that Summer and summer stay distinct, and never classified, which the processor does (AAI-102). The collector caps each value at 200 characters (03 §5); the 2048 here is the page URL's own cap. Click IDs go only while ads consent isn't denied: under denied ads the tag leaves out click_ids, and drops the click-ID parameters from url and referrer too, while the UTMs and custom parameters, campaign labels rather than identifiers, still go. */
+export interface Attribution {
+  utm?: AttributionUtm;
+  click_ids?: ClickIds;
+  custom?: CustomParams;
+}
+
+export const ATTRIBUTION_FIELDS = ["utm", "click_ids", "custom"] as const;
+
+export const ATTRIBUTION_REQUIRED = [] as const;
+
+export const ATTRIBUTION_TYPES = { utm: "object", click_ids: "object", custom: "object" } as const;
+
+/** The UTM set: utm_<field> in the landing URL. */
+export interface AttributionUtm {
+  source?: AttributionValue;
+  medium?: AttributionValue;
+  campaign?: AttributionValue;
+  term?: AttributionValue;
+  content?: AttributionValue;
+  id?: AttributionValue;
+  source_platform?: AttributionValue;
+  creative_format?: AttributionValue;
+  marketing_tactic?: AttributionValue;
+}
+
+export const ATTRIBUTION_UTM_FIELDS = ["source", "medium", "campaign", "term", "content", "id", "source_platform", "creative_format", "marketing_tactic"] as const;
+
+export const ATTRIBUTION_UTM_REQUIRED = [] as const;
+
+export const ATTRIBUTION_UTM_TYPES = { source: "string", medium: "string", campaign: "string", term: "string", content: "string", id: "string", source_platform: "string", creative_format: "string", marketing_tactic: "string" } as const;
+
+export const ATTRIBUTION_UTM_MAX_LENGTH = { source: 2048, medium: 2048, campaign: 2048, term: 2048, content: 2048, id: 2048, source_platform: 2048, creative_format: 2048, marketing_tactic: 2048 } as const;
+
+/** The ad platforms' click IDs, by their own parameter names in the landing URL: Google Ads' gclid, gbraid and wbraid, Meta's fbclid and Microsoft Advertising's msclkid. Identifiers: sent only while ads consent isn't denied. */
+export interface ClickIds {
+  gclid?: AttributionValue;
+  gbraid?: AttributionValue;
+  wbraid?: AttributionValue;
+  fbclid?: AttributionValue;
+  msclkid?: AttributionValue;
+}
+
+export const CLICK_IDS_FIELDS = ["gclid", "gbraid", "wbraid", "fbclid", "msclkid"] as const;
+
+export const CLICK_IDS_REQUIRED = [] as const;
+
+export const CLICK_IDS_TYPES = { gclid: "string", gbraid: "string", wbraid: "string", fbclid: "string", msclkid: "string" } as const;
+
+export const CLICK_IDS_MAX_LENGTH = { gclid: 2048, gbraid: 2048, wbraid: 2048, fbclid: 2048, msclkid: 2048 } as const;
+
+/** The site's own attribution parameters, those its config's custom_params names, by their names in the landing URL: at most 25. */
+export type CustomParams = Record<string, string>;
+
+export const CUSTOM_PARAMS_MAP = { maxProperties: 25, values: ["string"], maxLength: 2048 } as const;
+
+/** One attribution parameter's value, verbatim. */
+export type AttributionValue = string;
 
 /** The event's own properties (01 §4): a flat object of at most 25 keys, each value a string of at most 200 characters (03 §5), a number or a boolean. Keys starting with am_ are reserved for the tag and refused. 01 §4 also caps props at 8 KB in total, which JSON Schema can't express: the collector's payload cap is its backstop (AAI-65). */
 export type Props = Record<string, PropValue>;
@@ -283,6 +344,7 @@ export interface WirePing {
   visitor_id?: never;
   session_id?: never;
   consent?: never;
+  attribution?: never;
   props?: never;
   purchase?: never;
 }
@@ -384,13 +446,19 @@ export const PING_BATCH_SHAPE = { fields: PING_BATCH_FIELDS, required: PING_BATC
 
 export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, types: CONSENT_TYPES, values: CONSENT_VALUES, minimum: {}, pattern: {}, maxLength: {}, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const TRACKED_EVENT_SHAPE = { fields: TRACKED_EVENT_FIELDS, required: TRACKED_EVENT_REQUIRED, types: TRACKED_EVENT_TYPES, values: TRACKED_EVENT_VALUES, minimum: TRACKED_EVENT_MINIMUM, pattern: TRACKED_EVENT_PATTERN, maxLength: TRACKED_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+export const ATTRIBUTION_UTM_SHAPE = { fields: ATTRIBUTION_UTM_FIELDS, required: ATTRIBUTION_UTM_REQUIRED, types: ATTRIBUTION_UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: ATTRIBUTION_UTM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+
+export const CLICK_IDS_SHAPE = { fields: CLICK_IDS_FIELDS, required: CLICK_IDS_REQUIRED, types: CLICK_IDS_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: CLICK_IDS_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+
+export const ATTRIBUTION_SHAPE = { fields: ATTRIBUTION_FIELDS, required: ATTRIBUTION_REQUIRED, types: ATTRIBUTION_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: {}, minItems: {}, maxItems: {}, nested: { utm: ATTRIBUTION_UTM_SHAPE, click_ids: CLICK_IDS_SHAPE }, items: {}, maps: { custom: CUSTOM_PARAMS_MAP } } as const;
+
+export const TRACKED_EVENT_SHAPE = { fields: TRACKED_EVENT_FIELDS, required: TRACKED_EVENT_REQUIRED, types: TRACKED_EVENT_TYPES, values: TRACKED_EVENT_VALUES, minimum: TRACKED_EVENT_MINIMUM, pattern: TRACKED_EVENT_PATTERN, maxLength: TRACKED_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
 export const PURCHASE_ITEM_SHAPE = { fields: PURCHASE_ITEM_FIELDS, required: PURCHASE_ITEM_REQUIRED, types: PURCHASE_ITEM_TYPES, values: {}, minimum: PURCHASE_ITEM_MINIMUM, pattern: {}, maxLength: PURCHASE_ITEM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQUIRED, types: PURCHASE_TYPES, values: {}, minimum: PURCHASE_MINIMUM, pattern: PURCHASE_PATTERN, maxLength: PURCHASE_MAX_LENGTH, minItems: PURCHASE_MIN_ITEMS, maxItems: PURCHASE_MAX_ITEMS, nested: {}, items: { items: PURCHASE_ITEM_SHAPE }, maps: {} } as const;
 
-export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
 export const WIRE_TAG_ERROR_SHAPE = { fields: WIRE_TAG_ERROR_FIELDS, required: WIRE_TAG_ERROR_REQUIRED, types: WIRE_TAG_ERROR_TYPES, values: WIRE_TAG_ERROR_VALUES, minimum: {}, pattern: WIRE_TAG_ERROR_PATTERN, maxLength: WIRE_TAG_ERROR_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 

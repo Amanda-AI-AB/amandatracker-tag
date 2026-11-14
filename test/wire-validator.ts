@@ -24,6 +24,11 @@ export const EVENT = {
   visitor_id: "01934f6c-8d2a-7b3c-8d4e-5f6a7b8c9d01",
   session_id: "01934f6c-8d2a-7b3c-ad4e-5f6a7b8c9d02",
   consent: { analytics: "granted", ads: "denied" },
+  attribution: {
+    utm: { source: "google", medium: "cpc", campaign: "Summer", marketing_tactic: "prospecting" },
+    click_ids: { gclid: "EAIaIQobChMI" },
+    custom: { ref: "partner-7" },
+  },
   props: { plan: "pro" },
 } as const;
 
