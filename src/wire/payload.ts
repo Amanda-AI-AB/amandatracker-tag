@@ -6,11 +6,13 @@ import {
   CLICK_IDS_FIELDS,
   PAGE_EXIT_EVENT_SHAPE,
   PURCHASE_EVENT_SHAPE,
+  PURCHASE_SHAPE,
   SCHEMA_VERSION,
   TRACKED_EVENT_SHAPE,
   WIRE_PING_SHAPE,
   WIRE_TAG_ERROR_SHAPE,
   type PageExitEvent,
+  type Purchase,
   type PurchaseEvent,
   type TrackedEvent,
   type WireEvent,
@@ -443,6 +445,17 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
   if (input.type === "page_exit") throw new WirePayloadError("event.engagement_ms");
   const event: TrackedEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
   return shape(event, TRACKED_EVENT_SHAPE, "event");
+}
+
+/**
+ * Builds a purchase's order, as a purchase event carries it in `purchase`: kept to the schema's
+ * Purchase by the same rules buildEvent keeps it to (its currency upper-cased, an item's name cut to
+ * its cap, fields the schema doesn't list left out). Throws WirePayloadError when the order isn't an
+ * object, or buildEvent would refuse it (shape).
+ */
+export function buildPurchase(input: unknown): Purchase {
+  if (!isRecord(input)) throw new WirePayloadError("event.purchase", "is not an object");
+  return shape(input as unknown as Purchase, PURCHASE_SHAPE, "event.purchase");
 }
 
 /**

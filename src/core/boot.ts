@@ -31,6 +31,7 @@ import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from
 import { IDENTIFY_COMMAND, identifyCommand, identifyInput, type IdentifyInput } from "./identify";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
 import { PRIVACY_COMMAND, privacyCommand, type PrivacyHost } from "./privacy";
+import { PURCHASE_COMMAND, purchaseCommand, purchaseInput, type PurchaseInput } from "./purchase";
 import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
 import { scrollDepthInput, watchScroll, type ScrollDepthInput, type ScrollHost, type ScrollReset } from "./scroll";
 import type { TagTarget } from "./telemetry";
@@ -94,6 +95,13 @@ export interface BootOptions {
    * it, the tag has no `identify` command.
    */
   readonly onIdentify?: (input: IdentifyInput) => void;
+  /**
+   * Where each purchase event goes (purchase.ts), as each pageview does: an event under granted
+   * analytics, a count-only ping in declined mode `pings`. With it, the booted tag has the
+   * `purchase` command, which hands over one purchase event for each call with an order the wire
+   * schema accepts. Without it, the tag has no `purchase` command.
+   */
+  readonly onPurchase?: (input: PurchaseInput) => void;
   /**
    * The consent state machine for the booted site's config (createConsent, with the config's
    * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
@@ -186,7 +194,7 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * which signals once it has loaded and connected through the `adapter` command, then the site's queued
  * commands (they may set what the pageview carries, such as consent; `privacy` shows the visitor
  * their ID, privacy.ts; `identify`, when the site turns it on, links the visitor to the site's
- * pseudonymous ref, identify.ts), then the first pageview,
+ * pseudonymous ref, identify.ts; `purchase` records an order, purchase.ts), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
  * on each route change, a form_submit for each form the page submits (forms.ts), and, when it is
  * turned on, a scroll event for each depth threshold the visitor reaches in each pageview (scroll.ts)
@@ -227,6 +235,10 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
     commands[IDENTIFY_COMMAND] = identifyCommand(identifyEnabled(tag.config), (ref) =>
       onIdentify(identifyInput(win, tag.site, tagVersion, ref, now())),
     );
+  }
+  const { onPurchase } = options;
+  if (onPurchase) {
+    commands[PURCHASE_COMMAND] = purchaseCommand((purchase) => onPurchase(purchaseInput(win, tag.site, tagVersion, purchase, now())));
   }
   installCommands(win, commands, boundary);
   pageview();

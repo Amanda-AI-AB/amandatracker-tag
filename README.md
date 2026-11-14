@@ -156,6 +156,15 @@ keeps the first one the browser accepts (a browser refuses a cookie on a public 
   The tag keeps no ref, in memory or in a cookie: the site calls identify on each page its user is
   logged in on. Like every event, the identify event goes only under granted analytics, never as a
   ping.
+- **purchase().** `amanda('purchase', {order_id, revenue, currency, items})` (`src/core/purchase.ts`),
+  on the order confirmation page, sends one `purchase` event carrying the order as its `purchase`:
+  `order_id`, `revenue` (0 or more, in the currency's major unit), `currency` (ISO 4217; lower case
+  is upper-cased) and, optionally, 1 to 50 `items` of `{sku, name?, qty, price}`. The order is held
+  to the wire schema in the browser: one the collector would refuse (a revenue given as a string, a
+  missing `order_id`, a `qty` of 1.5) is not sent, and the refusal is reported. A key the schema
+  doesn't list is left out, with a console warning. Purchases are deduplicated by `order_id`, so a
+  reloaded confirmation page counts once. In declined mode `pings` the purchase goes as a count-only
+  anonymous ping, without any of the order's fields.
 
 Attribution (`src/core/attribution.ts`) is captured on each landing, the page load's first
 pageview, from the landing URL's query string: the UTM set (`utm_source`, `utm_medium`,
