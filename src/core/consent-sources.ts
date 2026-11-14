@@ -8,7 +8,10 @@
 //   gcm    -> Google Consent Mode v2: gtag('consent', 'default' | 'update', {...}) entries in
 //             window.dataLayer, those already there at boot and those pushed later;
 //   tcf    -> an IAB TCF v2.2 consent manager: __tcfapi('addEventListener', 2, ...), whose
-//             signals carry the TC string to the snapshot (AAI-160).
+//             signals carry the TC string to the snapshot (AAI-160);
+//   cookiebot -> a consent manager set up without Consent Mode or TCF, read through its own API
+//             by an adapter the core loads only once it detects that consent manager
+//             (watchCmpAdapters; Cookiebot, AAI-163).
 //
 // The first source to give a definitive signal (a category granted or denied) wins, and the
 // winner's later signals always apply. A higher rung takes over when it signals: once the site
@@ -18,6 +21,7 @@
 // No source assumes a signal: a category it doesn't decide stays as it is, and nothing here
 // defaults to granted (08 R11).
 
+import type { AdapterConnect } from "./adapter-api";
 import type { ErrorBoundary } from "./boundary";
 import { warn } from "./boundary";
 import { ConsentError, type Category, type ConsentSignal, type ConsentSource } from "./consent";
@@ -29,7 +33,7 @@ export interface ConsentInput {
 }
 
 /** Each source's rung: the lower, the higher its priority. */
-const RUNG: Readonly<Record<ConsentSource, number>> = { gpc: 0, manual: 1, gcm: 2, tcf: 3 };
+const RUNG: Readonly<Record<ConsentSource, number>> = { gpc: 0, manual: 1, gcm: 2, tcf: 3, cookiebot: 4 };
 
 export interface ConsentLadder {
   /** The source whose signals drive the state now; undefined until one gave a definitive signal. */
@@ -102,8 +106,13 @@ const MANUAL_STATES = ["granted", "denied"];
  * unknown or no_cmp, and a misspelt signal must not pass for one.
  */
 export function manualSignal(value: unknown): ConsentSignal {
+  return checkedSignal(value, "amanda('consent', ...)");
+}
+
+/** value checked as manualSignal checks it; `caller` names who gave it in the errors. */
+function checkedSignal(value: unknown, caller: string): ConsentSignal {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new ConsentError("amanda('consent', ...) takes an object: {analytics, ads}");
+    throw new ConsentError(`${caller} takes an object: {analytics, ads}`);
   }
   const signal: ConsentSignal = {};
   for (const key of Object.keys(value)) {
@@ -114,7 +123,7 @@ export function manualSignal(value: unknown): ConsentSignal {
     }
     signal[key as Category] = state as "granted" | "denied";
   }
-  if (!isDefinitive(signal)) throw new ConsentError("amanda('consent', ...) decides neither analytics nor ads");
+  if (!isDefinitive(signal)) throw new ConsentError(`${caller} decides neither analytics nor ads`);
   return signal;
 }
 
@@ -294,4 +303,82 @@ export function watchTcf(win: TcfHost, boundary: ErrorBoundary, ladder: ConsentL
     });
   });
   return true;
+}
+
+// Consent-manager adapters.
+//
+// A consent manager set up without Consent Mode or TCF is read through its own API, by an adapter
+// built to its own file (src/adapters/<name>.ts, scripts/build.mjs), so it costs the core nothing on
+// the sites that don't use it. The core loads one only once it detects its consent manager: the
+// global that manager defines is there at boot, or one of the window events it fires on loading
+// comes later. The adapter then connects through amanda('adapter', name, connect)
+// (adapter-api.ts), and its signals drive the ladder as its own source, below TCF.
+
+/** The page's window, as far as detecting consent managers goes. */
+export interface CmpHost {
+  addEventListener(type: string, listener: () => void): void;
+}
+
+/** A consent manager the tag has an adapter for. */
+export interface CmpAdapter {
+  /** The adapter's name, its file's (adapters/<version>/<name>.js), and the consent source it signals as. */
+  readonly name: ConsentSource;
+  /** The window property the consent manager defines once its script runs. */
+  readonly global: string;
+  /** The window events the consent manager fires as it loads or decides, for one loaded after the tag. */
+  readonly events: readonly string[];
+}
+
+export const CMP_ADAPTERS: readonly CmpAdapter[] = [
+  { name: "cookiebot", global: "Cookiebot", events: ["CookiebotOnLoad", "CookiebotOnConsentReady"] },
+];
+
+/**
+ * Loads the adapter of each consent manager in `adapters` the page has, with `load`, at once when
+ * the manager's global is there and else on the first of its events; at most once per adapter, and
+ * never for a manager the page doesn't have. A load that fails is reported. Returns the `adapter`
+ * command, through which a loaded adapter connects, once: it throws ConsentError for an adapter
+ * that wasn't loaded or has connected already, so a page can't open a second channel for one.
+ */
+export function watchCmpAdapters(
+  win: CmpHost,
+  boundary: ErrorBoundary,
+  ladder: ConsentLadder,
+  load: (name: string) => Promise<void>,
+  adapters: readonly CmpAdapter[] = CMP_ADAPTERS,
+): Command {
+  /** Adapter name -> true while it is loaded and not yet connected. */
+  const awaited: { [name: string]: boolean } = {};
+  for (const adapter of adapters) {
+    let detected = false;
+    const detect = (): void => {
+      boundary.guard("consent", () => {
+        if (detected) return;
+        detected = true;
+        awaited[adapter.name] = true;
+        boundary.watch("consent", load(adapter.name));
+      });
+    };
+    if ((win as unknown as Record<string, unknown>)[adapter.global] !== undefined) detect();
+    else for (const type of adapter.events) win.addEventListener(type, detect);
+  }
+  return (name: unknown, connect: unknown) => {
+    if (typeof name !== "string" || awaited[name] !== true) {
+      throw new ConsentError(`amanda('adapter', ...): no adapter ${String(name)} awaits connecting`);
+    }
+    if (typeof connect !== "function") throw new ConsentError(`amanda('adapter', ...): adapter ${name} gave no function`);
+    awaited[name] = false;
+    const source = name as ConsentSource;
+    const caller = `the ${name} adapter's signal`;
+    boundary.guard("consent", () =>
+      (connect as AdapterConnect)({
+        signal: (signal) => {
+          ladder.signal(source, checkedSignal(signal, caller));
+        },
+        guard: (fn) => {
+          boundary.guard("consent", fn);
+        },
+      }),
+    );
+  };
 }

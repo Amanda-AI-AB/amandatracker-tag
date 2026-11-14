@@ -4,6 +4,8 @@
 // config that pins the site to another build hands off to it instead (canary.ts). Every step runs
 // inside the error boundary: a failure is reported, and the page never sees it.
 
+import { ADAPTER_COMMAND } from "./adapter-api";
+import { loadAdapter } from "./adapter-loader";
 import { attributionOf } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
 import { handOff, shouldHandOff } from "./canary";
@@ -13,7 +15,9 @@ import {
   createLadder,
   honorGpc,
   watchConsentMode,
+  watchCmpAdapters,
   watchTcf,
+  type CmpHost,
   type ConsentInput,
   type ConsentModeHost,
   type GpcHost,
@@ -26,12 +30,13 @@ import { ensureStub, installCommands, type AmandaHost, type Command } from "./qu
 import type { TagTarget } from "./telemetry";
 
 /** The browser globals the tag boots on: window, or a stand-in for it in tests. */
-export interface TagWindow extends AmandaHost, PageSource, RouteSource, ConsentModeHost, TcfHost, GpcHost, EngagementHost {
+export interface TagWindow extends AmandaHost, PageSource, RouteSource, ConsentModeHost, TcfHost, GpcHost, EngagementHost, CmpHost {
   readonly document: Document;
   readonly location: Location;
   readonly navigator: PageSource["navigator"] & GpcHost["navigator"];
   fetch: typeof fetch;
-  addEventListener(type: "popstate" | "pagehide" | "pageshow", listener: () => void): void;
+  /** popstate, pagehide and pageshow, and the events of the consent managers the tag has adapters for. */
+  addEventListener(type: string, listener: () => void): void;
 }
 
 export interface BootOptions {
@@ -48,7 +53,8 @@ export interface BootOptions {
   /**
    * The consent state machine for the booted site's config (createConsent, with the config's
    * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
-   * config honors it, the `consent` command, Google Consent Mode and TCF v2.2 (consent-sources.ts). Without
+   * config honors it, the `consent` command, Google Consent Mode, TCF v2.2 and the adapters of
+   * consent managers it detects, loaded from the endpoint (consent-sources.ts). Without
    * it, the tag follows no consent source.
    */
   readonly consent?: (config: SiteConfig) => ConsentInput;
@@ -125,7 +131,8 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
 /**
  * Runs the booted tag: Global Privacy Control, when the site honors it, so that nothing grants
  * before it denies; Consent Mode's state as the dataLayer has it so far, the TCF consent manager's
- * when the page has one, then the site's queued
+ * when the page has one, the adapter of a consent manager the page has or loads later (Cookiebot),
+ * which signals once it has loaded and connected through the `adapter` command, then the site's queued
  * commands (they may set what the pageview carries, such as consent), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
  * on each route change.
@@ -149,6 +156,10 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
     if (gpcHonored(tag.config)) boundary.guard("consent", () => honorGpc(win, ladder));
     boundary.guard("consent", () => watchConsentMode(win, boundary, ladder));
     boundary.guard("consent", () => watchTcf(win, boundary, ladder));
+    const adapter = boundary.guard("consent", () =>
+      watchCmpAdapters(win, boundary, ladder, (name) => loadAdapter(win.document, tag.endpoint, name, win.location.origin)),
+    );
+    if (adapter) commands[ADAPTER_COMMAND] = adapter;
     commands.consent = consentCommand(ladder);
   }
   installCommands(win, commands, boundary);

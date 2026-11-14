@@ -138,6 +138,23 @@ describe("browser target", () => {
     }
   });
 
+  it("runs the built Cookiebot adapter: it connects through amanda('adapter', ...) and signals Cookiebot's answer", async () => {
+    const { adapterFiles } = await build({ outdir: join(dir, "dist") });
+    const file = adapterFiles.find((f) => f.endsWith("cookiebot.js"))!;
+    const context = browserContext();
+    const calls: unknown[][] = [];
+    context.amanda = (...args: unknown[]) => calls.push(args);
+    context.Cookiebot = { hasResponse: true, consent: { necessary: true, preferences: false, statistics: true, marketing: false } };
+
+    runInContext(readFileSync(file, "utf8"), context, { filename: file });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.slice(0, 2)).toEqual(["adapter", "cookiebot"]);
+    const signals: unknown[] = [];
+    (calls[0]![2] as (api: unknown) => void)({ signal: (s: unknown) => signals.push(s), guard: (fn: () => void) => fn() });
+    expect(signals).toEqual([{ analytics: "granted", ads: "denied" }]);
+  });
+
   it("boots the built core: it fetches the site's config and installs window.amanda", async () => {
     const { coreFile } = await build({ outdir: join(dir, "dist") });
     const fetched: string[] = [];

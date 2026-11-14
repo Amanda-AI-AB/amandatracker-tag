@@ -223,14 +223,14 @@ export const CONSENT_REQUIRED = ["analytics", "ads"] as const;
 
 export const CONSENT_TYPES = { analytics: "string", ads: "string", source: "string", tc_string: "string" } as const;
 
-export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"], source: ["gpc", "manual", "gcm", "tcf"] } as const;
+export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"], source: ["gpc", "manual", "gcm", "tcf", "cookiebot"] } as const;
 
 export const CONSENT_PATTERN = { tc_string: "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*$" } as const;
 
 export const CONSENT_MAX_LENGTH = { tc_string: 8192 } as const;
 
-/** The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, tcf, the page's IAB TCF v2.2 consent manager (__tcfapi), or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved. */
-export type ConsentSource = "gpc" | "manual" | "gcm" | "tcf";
+/** The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, tcf, the page's IAB TCF v2.2 consent manager (__tcfapi), cookiebot, the page's Cookiebot consent manager read through its own API (window.Cookiebot), or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved. */
+export type ConsentSource = "gpc" | "manual" | "gcm" | "tcf" | "cookiebot";
 
 /** The IAB TCF v2.2 TC string the consent manager gave with the signal the snapshot holds: present only when source is tcf, and then whenever the consent manager gave one that fits. Personal data (CJEU C-604/22). The tag never cuts it, which would make another string of it: one over the cap, or not of base64url segments joined by dots, is left out. */
 export type TcString = string;

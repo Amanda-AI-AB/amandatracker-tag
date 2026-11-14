@@ -138,7 +138,9 @@ describe("reproduce", () => {
   it("rebuilds the release from its provenance, byte for byte", async () => {
     const provenance = await released();
 
-    await expect(reproduce(provenance)).resolves.toEqual({ version: "0.3.0", subjects: 1 });
+    // the core and each of the repo's adapters
+    expect(provenance.subject.map((s) => s.name)).toContain("adapters/0.3.0/cookiebot.js");
+    await expect(reproduce(provenance)).resolves.toEqual({ version: "0.3.0", subjects: provenance.subject.length });
   });
 
   it("names each file that came out differently", async () => {

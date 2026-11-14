@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { watchCookiebot } from "../src/cmp/cookiebot";
+import { connectAdapter } from "../src/core/adapter-api";
 import { boot, type TagWindow } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
 import { createConsent, type Consent } from "../src/core/consent";
@@ -529,6 +531,131 @@ describe("the consent sources", () => {
     listeners[0]!({ ...tcData("CQBBBBB", { 1: true, 8: true }), eventStatus: "useractioncomplete" }, true);
     expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "denied", source: "tcf", tc_string: "CQBBBBB" });
     expect(reports).toEqual([]);
+  });
+
+  describe("Cookiebot", () => {
+    interface InjectedScript {
+      src?: string;
+      integrity?: string;
+      crossOrigin?: string;
+      onload?: () => void;
+      onerror?: () => void;
+    }
+
+    /** Gives win's document createElement and a head, and returns the scripts appended to it. */
+    function injected(win: FakeWindow): InjectedScript[] {
+      const appended: InjectedScript[] = [];
+      Object.assign(win.document, {
+        createElement: () => ({}) as InjectedScript,
+        head: { appendChild: (script: InjectedScript) => appended.push(script) },
+      });
+      return appended;
+    }
+
+    /** window.Cookiebot: answered with these categories, or not answered yet. */
+    const cookiebot = (answer?: { statistics: boolean; marketing: boolean }) =>
+      answer
+        ? { hasResponse: true, consent: { necessary: true, preferences: false, ...answer } }
+        : { hasResponse: false, consent: { necessary: true, preferences: false, statistics: false, marketing: false } };
+
+    /** The browser runs the adapter's script: what src/adapters/cookiebot.ts does at its top level. */
+    function runAdapter(win: FakeWindow, script: InjectedScript): void {
+      connectAdapter(win, "cookiebot", (api) => watchCookiebot(win, api));
+      script.onload!();
+    }
+
+    it("loads the adapter only on a page with Cookiebot, pinned to this core's version", async () => {
+      const without = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      const none = injected(without);
+      await bootWithConsent(without).booted;
+      expect(none).toEqual([]);
+
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      win.Cookiebot = cookiebot();
+      const appended = injected(win);
+      await bootWithConsent(win).booted;
+      expect(appended).toHaveLength(1);
+      expect(appended[0]).toMatchObject({
+        src: `${DEFAULT_ENDPOINT}/adapters/0.0.0-test/cookiebot.js`,
+        integrity: "sha384-test-cookiebot",
+        crossOrigin: "anonymous",
+      });
+    });
+
+    it("drives the state machine across accept, reject and change, waiting while the visitor hasn't answered", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      win.Cookiebot = cookiebot();
+      const appended = injected(win);
+      const { snapshots, machine, reports, booted } = bootWithConsent(win);
+      await booted;
+      expect(snapshots).toEqual([{ analytics: "unknown", ads: "unknown" }]);
+
+      runAdapter(win, appended[0]!);
+      expect(machine.snapshot()).toEqual({ analytics: "unknown", ads: "unknown" });
+
+      win.Cookiebot = cookiebot({ statistics: true, marketing: true });
+      win.fire("CookiebotOnConsentReady");
+      expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "granted", source: "cookiebot" });
+      expect(machine.mode()).toBe("identified");
+
+      win.Cookiebot = cookiebot({ statistics: false, marketing: false });
+      win.fire("CookiebotOnConsentReady");
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "cookiebot" });
+      expect(machine.mode()).toBe("declined");
+
+      win.Cookiebot = cookiebot({ statistics: true, marketing: false });
+      win.fire("CookiebotOnConsentReady");
+      expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "denied", source: "cookiebot" });
+      expect(reports).toEqual([]);
+    });
+
+    it("loads the adapter for a Cookiebot loaded after the tag, and reads the answer it already had", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      const appended = injected(win);
+      const { machine, booted } = bootWithConsent(win);
+      await booted;
+      expect(appended).toEqual([]);
+
+      win.Cookiebot = cookiebot({ statistics: false, marketing: true });
+      win.fire("CookiebotOnLoad");
+      win.fire("CookiebotOnConsentReady");
+      expect(appended).toHaveLength(1);
+
+      runAdapter(win, appended[0]!);
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "granted", source: "cookiebot" });
+    });
+
+    it("leaves Cookiebot behind Consent Mode, on a Cookiebot set up with it", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      win.dataLayer = [["consent", "update", { analytics_storage: "denied", ad_storage: "denied", ad_user_data: "denied" }]];
+      win.Cookiebot = cookiebot({ statistics: true, marketing: true });
+      const appended = injected(win);
+      const { machine, booted } = bootWithConsent(win);
+      await booted;
+
+      runAdapter(win, appended[0]!);
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "gcm" });
+    });
+
+    it("reports an adapter that fails to load, and still follows the other sources", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      win.Cookiebot = cookiebot();
+      const appended = injected(win);
+      snippetStub(win)("consent", { analytics: "granted" });
+      const { machine, reports, booted } = bootWithConsent(win);
+      await booted;
+
+      appended[0]!.onerror!();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(reports).toEqual([
+        {
+          stage: "consent",
+          name: "Error",
+          message: `failed to load adapter cookiebot from ${DEFAULT_ENDPOINT}/adapters/0.0.0-test/cookiebot.js`,
+        },
+      ]);
+      expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "unknown", source: "manual" });
+    });
   });
 
   it("reports a refused amanda('consent', ...) and a dataLayer it can't follow, and still boots", async () => {

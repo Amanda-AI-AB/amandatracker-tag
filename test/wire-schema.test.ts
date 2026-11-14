@@ -40,11 +40,11 @@ describe("wire schema v1: event", () => {
     expect(validate({ ...EVENT, consent: { ...EVENT.consent, functional: "granted" } })).toBe(false);
   });
 
-  it("accepts the consent snapshot's source, gpc, manual or gcm, and no other", () => {
-    for (const source of ["gpc", "manual", "gcm"]) {
+  it("accepts the consent snapshot's source, gpc, manual, gcm, tcf or cookiebot, and no other", () => {
+    for (const source of ["gpc", "manual", "gcm", "tcf", "cookiebot"]) {
       expect(validate({ ...EVENT, consent: { ...EVENT.consent, source } })).toBe(true);
     }
-    expect(validate({ ...EVENT, consent: { ...EVENT.consent, source: "cookiebot" } })).toBe(false);
+    expect(validate({ ...EVENT, consent: { ...EVENT.consent, source: "unlisted-cmp" } })).toBe(false);
   });
 
   it("rejects another schema version, a non-semver tag version and a fractional timestamp", () => {

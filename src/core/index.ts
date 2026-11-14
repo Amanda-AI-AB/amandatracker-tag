@@ -12,7 +12,8 @@
 // becomes a ping, whose field list has no engagement time. Until then, a pageview and a page_exit
 // go nowhere. The
 // machine is to be handed to boot as its `consent` option, which makes the consent sources
-// (src/core/consent-sources.ts: GPC, the `consent` command, Google Consent Mode and TCF) drive it; until
+// (src/core/consent-sources.ts: GPC, the `consent` command, Google Consent Mode, TCF and the
+// adapters of the consent managers it detects, such as Cookiebot's) drive it; until
 // then the tag follows no consent source.
 import { boot, type TagWindow } from "./boot";
 import { ErrorBoundary, warn } from "./boundary";

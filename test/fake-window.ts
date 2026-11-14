@@ -40,8 +40,12 @@ export function jsonResponse(body: unknown, status = 200): FakeResponse {
 
 export interface FakeWindow extends TagWindow {
   readonly fetchMock: ReturnType<typeof vi.fn>;
+  /** The page's Cookiebot, when a test installs one. */
+  Cookiebot?: unknown;
   /** Moves location to url, as the back button does, and fires popstate. */
   back(url: string): void;
+  /** Fires the window event `type`, such as one a consent manager dispatches. */
+  fire(type: string): void;
 }
 
 /**
@@ -55,7 +59,7 @@ export function fakeWindow(
 ): FakeWindow {
   vi.stubGlobal("Document", FakeDocument);
   const location = { href, origin: new URL(href).origin } as Location;
-  const popstate: (() => void)[] = [];
+  const listeners: Record<string, (() => void)[]> = {};
   const move = (url?: string | URL | null): void => {
     if (url != null) (location as { href: string }).href = new URL(String(url), location.href).href;
   };
@@ -72,11 +76,14 @@ export function fakeWindow(
     fetch: fetchMock as unknown as typeof fetch,
     fetchMock,
     addEventListener: (type: string, listener: () => void) => {
-      if (type === "popstate") popstate.push(listener);
+      (listeners[type] = listeners[type] || []).push(listener);
     },
     back(url: string) {
       move(url);
-      for (const listener of popstate) listener();
+      this.fire("popstate");
+    },
+    fire(type: string) {
+      for (const listener of listeners[type] || []) listener();
     },
   };
   return win as unknown as FakeWindow;

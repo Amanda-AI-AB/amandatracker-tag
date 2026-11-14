@@ -62,11 +62,21 @@ The consent sources (`src/core/consent-sources.ts`) drive the machine once boot 
   apply, TCF signals nothing. The snapshot of a TCF signal carries the consent manager's TC string
   as `tc_string`, which is personal data (CJEU C-604/22); a TC string over 8192 characters, or not
   of base64url segments, is left out rather than cut.
+- **cookiebot**: a Cookiebot set up without Consent Mode or TCF, read through its own API by the
+  Cookiebot adapter (`dist/adapters/cookiebot.js`). The core loads the adapter only on a page that
+  has Cookiebot: `window.Cookiebot` is there at boot, or Cookiebot fires `CookiebotOnLoad` or
+  `CookiebotOnConsentReady` later; any other page never requests it. The adapter connects back
+  through `amanda('adapter', 'cookiebot', ...)`, reads Cookiebot's consent at once and again on each
+  `CookiebotOnConsentReady` (an answer read from its cookie, given, or changed). `analytics` follows
+  Cookiebot's `statistics` category and `ads` its `marketing` one. Until the visitor has answered
+  (`Cookiebot.hasResponse` is not `true`), it signals nothing. A Cookiebot set up with Consent Mode
+  or TCF is followed through those, which rank above it.
 
 The first source to grant or deny a category wins, and its later signals always apply. A higher
 source takes over from a lower one as soon as it signals (the manual API from Consent Mode, Consent
-Mode from TCF), and a lower one never takes over from a higher one. The snapshot every event carries
-names its `source` (`gpc`, `manual`, `gcm` or `tcf`), and only a `tcf` snapshot has a `tc_string`.
+Mode from TCF, TCF from Cookiebot), and a lower one never takes over from a higher one. The snapshot
+every event carries names its `source` (`gpc`, `manual`, `gcm`, `tcf` or `cookiebot`), and only a
+`tcf` snapshot has a `tc_string`.
 Nothing defaults to granted.
 
 The visitor's identity (`src/core/identity.ts`) is built, and driven by the consent machine, but not
@@ -131,7 +141,8 @@ Still to come:
 - pageviews fed through the consent state machine, made into events (with the identity's ids) or
   pings, and handed to the transport, with the machine handed to boot so the sources drive it
   (AAI-964, AAI-965);
-- the other consent sources: the no-CMP policy (AAI-94) and the consent-manager adapters (M2);
+- the other consent sources: the no-CMP policy (AAI-94) and the OneTrust and Usercentrics
+  adapters (AAI-164, AAI-165);
 - the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
 - `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).
 
@@ -165,8 +176,8 @@ truth for what the tag sends and what the collector accepts:
 
 - `event.json`: the event envelope. It carries the schema and tag versions, `site_id`, a UUIDv7
   `event_id`, `client_ts` in epoch milliseconds, the page fields, the visitor and session ids, and
-  the consent snapshot (each category's state, and the `source` that set it: `manual` or `gcm`,
-  absent when none has). The page load's first pageview carries the landing URL's `attribution`:
+  the consent snapshot (each category's state, and the `source` that set it: `gpc`, `manual`,
+  `gcm`, `tcf` or `cookiebot`, absent when none has). The page load's first pageview carries the landing URL's `attribution`:
   its `utm` set (`source`, `medium`, `campaign`, `term`, `content`, `id`, `source_platform`,
   `creative_format`, `marketing_tactic`), its `click_ids` (`gclid`, `gbraid`, `wbraid`, `fbclid`,
   `msclkid`) and the site's `custom` parameters, each verbatim. Its `props` are flat: at most 25 keys, none starting with `am_`, each value
@@ -211,8 +222,10 @@ checks its vendored copy against hashes it records itself (the monorepo's `share
 - `src/core/index.ts` builds to **`dist/a.js`**: a single minified IIFE, ES2018, with no runtime
   dependencies.
 - Each consent-manager adapter `src/adapters/<name>.ts` builds to its own IIFE,
-  `dist/adapters/<name>.js`, which the core is to load only for the sites whose config names it
-  (AAI-831; the config doesn't name one yet). A name is
+  `dist/adapters/<name>.js`, which the core loads only on a page where it detects that consent
+  manager (`CMP_ADAPTERS` in `src/core/consent-sources.ts`). The adapter's own code may live
+  outside `src/adapters/` (Cookiebot's is `src/cmp/cookiebot.ts`); the core never imports it. It
+  connects back through `amanda('adapter', <name>, connect)` (`src/core/adapter-api.ts`). A name is
   lowercase letters, digits and `-`; the build refuses any other, and fails when `src/adapters/` is
   missing.
 - The adapters build first. The core is built with its version (`.release-version`, which the
@@ -226,8 +239,9 @@ checks its vendored copy against hashes it records itself (the monorepo's `share
 
 The tag fetches `cfg/<SITE_PUBLIC_ID>.json` from one base, `https://eu.serversider.com` by default,
 or the one the script tag's `data-endpoint` attribute sets. Its transport posts to `v1/e` on the
-same base. Planned: it is to load `adapters/<version>/<name>.js` (AAI-831) from there too;
-`src/core/endpoint.ts` already builds those URLs and request options. It resolves `data-endpoint` this way:
+same base. Boot loads a detected consent manager's `adapters/<version>/<name>.js` from there too,
+once a.js hands it the consent machine (AAI-965); `src/core/endpoint.ts` builds those URLs and
+request options. It resolves `data-endpoint` this way:
 
 - a path, such as `data-endpoint="/amnda"`, is on the page's own origin: a
   [first-party reverse proxy](docs/first-party-proxy.md);
