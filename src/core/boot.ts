@@ -20,6 +20,8 @@ import {
   hasCmp,
   identifyEnabled,
   noCmpPolicy,
+  outboundClicksEnabled,
+  ownDomains,
   paused,
   type SiteConfig,
 } from "./config";
@@ -42,6 +44,7 @@ import { currentScript, endpointFromScript } from "./endpoint";
 import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
 import { IDENTIFY_COMMAND, identifyCommand, identifyInput, type IdentifyInput } from "./identify";
 import { followNoCmpPolicy, type NoCmpInput } from "./no-cmp";
+import { clickOutboundInput, watchOutboundClicks, type ClickOutboundInput } from "./outbound";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
 import { PRIVACY_COMMAND, privacyCommand, type PrivacyHost } from "./privacy";
 import { PURCHASE_COMMAND, purchaseCommand, purchaseInput, type PurchaseInput } from "./purchase";
@@ -99,6 +102,13 @@ export interface BootOptions {
    * click.
    */
   readonly onClickSpecial?: (input: ClickSpecialInput) => void;
+  /**
+   * Where each click_outbound goes (outbound.ts), as each pageview does. With it, the booted tag
+   * hands over a click_outbound, with the link's hostname alone, for each click or middle click on
+   * an http: or https: link that leaves the site's own domains, unless the site's config turns it
+   * off (features.outbound_clicks_enabled: false). Without it, the tag captures no such click.
+   */
+  readonly onClickOutbound?: (input: ClickOutboundInput) => void;
   /**
    * Where each scroll event goes (scroll.ts), as each pageview does. With it, the booted tag hands
    * over a scroll event the first time, in each pageview, the visitor scrolls to 25, 50, 75 and 90 %
@@ -223,7 +233,9 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * pseudonymous ref, identify.ts; `purchase` records an order, purchase.ts), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
  * on each route change, a form_submit for each form the page submits (forms.ts), a click_special
- * for each click on a tel: or mailto: link, with its scheme alone (special-clicks.ts), and, when it is
+ * for each click on a tel: or mailto: link, with its scheme alone (special-clicks.ts), a
+ * click_outbound for each click on a link that leaves the site's own domains, with its hostname alone,
+ * unless the site turns it off (outbound.ts), and, when it is
  * turned on, a scroll event for each depth threshold the visitor reaches in each pageview (scroll.ts)
  * and the GA4 e-commerce events of the dataLayer, mapped to the tag's (ecommerce.ts).
  */
@@ -286,6 +298,14 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   if (onClickSpecial) {
     boundary.guard("pageview", () =>
       watchSpecialClicks(win, boundary, (scheme) => onClickSpecial(clickSpecialInput(win, tag.site, tagVersion, scheme, now()))),
+    );
+  }
+  const { onClickOutbound } = options;
+  if (onClickOutbound && outboundClicksEnabled(tag.config)) {
+    boundary.guard("pageview", () =>
+      watchOutboundClicks(win, boundary, ownDomains(tag.config), (host) =>
+        onClickOutbound(clickOutboundInput(win, tag.site, tagVersion, host, now())),
+      ),
     );
   }
   const { onScrollDepth } = options;

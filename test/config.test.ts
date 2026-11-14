@@ -11,6 +11,8 @@ import {
   hasCmp,
   MAX_CUSTOM_PARAMS,
   noCmpPolicy,
+  outboundClicksEnabled,
+  ownDomains,
   parseConfig,
   paused,
   pingsIncludeClickIds,
@@ -62,6 +64,52 @@ describe("paused, the kill switch", () => {
   it("refuses a flag that isn't a boolean", () => {
     for (const value of [null, 0, 1, "true", "false", {}, []]) {
       expect(() => parseConfig({ ...CONFIG, paused: value }, "site_123")).toThrow(ConfigError);
+    }
+  });
+});
+
+describe("domains, the site's own (AAI-167)", () => {
+  const parse = (domains: unknown) => parseConfig({ ...CONFIG, domains }, "site_123");
+
+  it("is optional: none when the site sets none", () => {
+    expect(ownDomains(parseConfig(CONFIG, "site_123"))).toEqual([]);
+    expect(ownDomains(parse([]))).toEqual([]);
+  });
+
+  it("reads each as a browser reads a link's hostname: lower case, punycode, no trailing dot", () => {
+    expect(ownDomains(parse(["example.de", "Shop.Example.COM.", "bücher.de", "192.0.2.1"]))).toEqual([
+      "example.de",
+      "shop.example.com",
+      "xn--bcher-kva.de",
+      "192.0.2.1",
+    ]);
+  });
+
+  it("keeps the config's own value as the publisher wrote it", () => {
+    expect(parse(["Shop.Example.COM."]).domains).toEqual(["Shop.Example.COM."]);
+  });
+
+  it("refuses a list that isn't one, or a value that isn't a hostname", () => {
+    for (const domains of [null, "example.de", { a: "example.de" }]) expect(() => parse(domains)).toThrow("domains is not a list");
+    for (const domain of ["", " ", 1, null, "https://example.de", "example.de/shop", "example.de:8080", "user@example.de", "exa mple.de", "[::1]", "a..b", "odd$host.example"]) {
+      expect(() => parse([domain]), JSON.stringify(domain)).toThrow("not a hostname");
+    }
+  });
+});
+
+describe("features.outbound_clicks_enabled (AAI-167)", () => {
+  it("is on when the site sets none, and off only when it says false", () => {
+    expect(outboundClicksEnabled(parseConfig(CONFIG, "site_123"))).toBe(true);
+    expect(outboundClicksEnabled(parseConfig({ ...CONFIG, features: {} }, "site_123"))).toBe(true);
+    expect(outboundClicksEnabled(parseConfig({ ...CONFIG, features: { outbound_clicks_enabled: true } }, "site_123"))).toBe(true);
+    expect(outboundClicksEnabled(parseConfig({ ...CONFIG, features: { outbound_clicks_enabled: false } }, "site_123"))).toBe(false);
+  });
+
+  it("refuses a toggle that isn't a boolean", () => {
+    for (const value of [null, 0, 1, "false", {}]) {
+      expect(() => parseConfig({ ...CONFIG, features: { outbound_clicks_enabled: value } }, "site_123")).toThrow(
+        "features.outbound_clicks_enabled is not a boolean",
+      );
     }
   });
 });

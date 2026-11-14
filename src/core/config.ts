@@ -4,7 +4,8 @@
 // features, custom_params, paused, the kill switch (AAI-92; a paused tag sends nothing, AAI-797), telemetry, whose
 // error_sample_rate overrides the tag's ERROR_SAMPLE_RATE, and bundle_version, the canary pin
 // (AAI-149, canary.ts), and features, whose identify_enabled turns amanda('identify') on (AAI-786,
-// identify.ts). The tag checks what it reads
+// identify.ts) and outbound_clicks_enabled turns outbound link clicks off (AAI-167, outbound.ts),
+// and domains, the site's own, whose links aren't outbound. The tag checks what it reads
 // here; the tickets that use a section (consent AAI-84, ...) check that
 // section's fields.
 
@@ -62,7 +63,57 @@ export function parseConfig(json: unknown, site: string): SiteConfig {
   checkCustomParams(config.custom_params);
   checkBundleVersion(config.bundle_version);
   checkFeatures(config.features);
+  checkDomains(config.domains);
   return config as SiteConfig;
+}
+
+/** A hostname, as the wire schema's LinkHost has it: what a browser's URL parser makes of one. */
+const HOSTNAME_PATTERN = new RegExp(TRACKED_EVENT_PATTERN.link_host);
+
+/** What a domain in the config may not hold, before its hostname is read: a scheme, port, path, credentials or space. */
+const NOT_A_HOSTNAME = /[\s/\\?#@:[\]]/;
+
+/**
+ * The config's optional domains (AAI-91, the site's own domains): a list of hostnames, each of which
+ * owns its subdomains too (outbound.ts). Anything but a list of hostnames throws ConfigError, since
+ * guessing which hosts are the site's own could send the hosts of its internal links as outbound,
+ * or miss its outbound ones.
+ */
+function checkDomains(domains: unknown): void {
+  if (domains === undefined) return;
+  if (!Array.isArray(domains)) throw new ConfigError("the config's domains is not a list");
+  for (const domain of domains) {
+    const host = typeof domain === "string" && !NOT_A_HOSTNAME.test(domain) ? hostnameOf(domain) : undefined;
+    if (host === undefined) throw new ConfigError(`the config's domains holds a value that is not a hostname: ${String(domain)}`);
+  }
+}
+
+/** domain's hostname as a URL parser reads it, without a trailing dot; undefined when it reads none, or one LinkHost refuses. */
+function hostnameOf(domain: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(`https://${domain}/`);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    return undefined;
+  }
+  const host = trimDot(url.hostname);
+  return HOSTNAME_PATTERN.test(host) && host.length <= TRACKED_EVENT_MAX_LENGTH.link_host ? host : undefined;
+}
+
+/** hostname without the trailing dot of a fully qualified name, which names the same host. */
+export function trimDot(hostname: string): string {
+  return hostname.charAt(hostname.length - 1) === "." ? hostname.slice(0, -1) : hostname;
+}
+
+/**
+ * The site's own domains, the config's domains, as a browser's URL parser reads a link's hostname,
+ * so that the two compare: lower case, an internationalised name in punycode, without a trailing
+ * dot. None when the config sets none.
+ */
+export function ownDomains(config: SiteConfig): string[] {
+  // checkDomains has accepted each, so each has a hostname.
+  return ((config.domains as string[] | undefined) || []).map((domain) => hostnameOf(domain)!);
 }
 
 /**
@@ -86,7 +137,7 @@ export function paused(config: SiteConfig): boolean {
 
 /**
  * The config's optional features section, the site's feature toggles; this tag reads its
- * identify_enabled, a boolean (AAI-786). A section of another shape, or a toggle of another type,
+ * identify_enabled (AAI-786) and outbound_clicks_enabled (AAI-167), booleans. A section of another shape, or a toggle of another type,
  * throws ConfigError, since guessing a toggle could send what the site never turned on. Its other
  * toggles are the tickets' that use them.
  */
@@ -95,10 +146,21 @@ function checkFeatures(features: unknown): void {
   if (typeof features !== "object" || features === null || Array.isArray(features)) {
     throw new ConfigError("the config's features is not an object");
   }
-  const identify = (features as Record<string, unknown>).identify_enabled;
-  if (identify !== undefined && typeof identify !== "boolean") {
-    throw new ConfigError(`the config's features.identify_enabled is not a boolean: ${String(identify)}`);
+  for (const toggle of ["identify_enabled", "outbound_clicks_enabled"]) {
+    const value = (features as Record<string, unknown>)[toggle];
+    if (value !== undefined && typeof value !== "boolean") {
+      throw new ConfigError(`the config's features.${toggle} is not a boolean: ${String(value)}`);
+    }
   }
+}
+
+/**
+ * Whether the site captures outbound link clicks (outbound.ts): the config's
+ * features.outbound_clicks_enabled, on when it sets none (AAI-167, AAI-172).
+ */
+export function outboundClicksEnabled(config: SiteConfig): boolean {
+  const features = config.features as { outbound_clicks_enabled?: boolean } | undefined;
+  return !(features && features.outbound_clicks_enabled === false);
 }
 
 /**
