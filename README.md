@@ -57,15 +57,47 @@ The consent sources (`src/core/consent-sources.ts`) drive the machine once boot 
 The first source to grant or deny a category wins, and its later signals always apply. The manual
 API takes over from Consent Mode as soon as the site calls it, and Consent Mode never takes over
 from it. The snapshot every event carries names its `source` (`gpc`, `manual` or `gcm`). Nothing
-defaults to granted. Still to come:
+defaults to granted.
+
+The visitor's identity (`src/core/identity.ts`) is built, and driven by the consent machine, but not
+yet wired into `a.js` (AAI-964). It is two strictly first-party cookies on the site's own registrable
+domain, never on the collection domain:
+
+| Cookie       | Value                                       | Lifetime                          |
+| ------------ | ------------------------------------------- | --------------------------------- |
+| `_amnda_id`  | `v1.<visitor UUIDv7>`                       | 13 months (395 days), rolling     |
+| `_amnda_ses` | `v1.<session UUIDv7>.<last activity, ms>`   | 30 minutes without an event       |
+
+Both are `Domain=.<etld+1>; Path=/; SameSite=Lax; Secure`. The tag finds the registrable domain
+without a public-suffix list: it writes a probe cookie on each parent domain, shortest first, and
+keeps the first one the browser accepts (a browser refuses a cookie on a public suffix such as
+`co.uk`). On an IP address or `localhost` the cookies are host-only; where the browser keeps none (an
+`http:` page, cookies blocked), the ids last for the page alone, with a console warning.
+
+- **Only under granted analytics consent.** Nothing is written while consent is unknown or denied;
+  every event under a grant renews both cookies' lifetimes, and a session idle for 30 minutes starts
+  a new one.
+- **Random.** The ids are random UUIDv7s, never derived from personal data, the IP address or the
+  device, and each site keeps its own on its own domain.
+- **Withdrawal deletes both at once**, on every domain they may be on, those the collector re-issued
+  through a first-party proxy included. A grant after a denial mints fresh ids, so the anonymous
+  pings sent meanwhile are never linked to the visitor.
+- **Safari's limit, accepted.** Safari's Intelligent Tracking Prevention caps cookies a script
+  writes at 7 days, or 24 hours when the visitor arrived from a link with tracking decoration, so a
+  Safari visitor returning after that counts as new. The tag does not work around it. The way to keep
+  the cookies their full lifetime is a [first-party reverse proxy](docs/first-party-proxy.md) that
+  the customer runs, through which the collector re-issues them (AAI-827, AAI-831); Amanda does not
+  host one.
+
+Still to come:
 
 - the collector accepting `POST /v1/t` and the event debugger showing tag errors (amandatracker);
-- pageviews fed through the consent state machine, made into events (with the ids below) or pings,
-  and handed to the transport, with the machine handed to boot so the sources drive it (AAI-964);
+- pageviews fed through the consent state machine, made into events (with the identity's ids) or
+  pings, and handed to the transport, with the machine handed to boot so the sources drive it
+  (AAI-964, AAI-965);
 - the other consent sources: the no-CMP policy (AAI-94), TCF and the consent-manager
   adapters (M2);
 - the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
-- the `_amnda_id` and `_amnda_ses` cookies (AAI-98);
 - `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).
 
 Where this README or a guide describes what the tag does at runtime, it describes the design these

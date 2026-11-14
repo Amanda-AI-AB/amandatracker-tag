@@ -3,7 +3,8 @@
 // sampled reports go to the collector as tag errors (src/core/telemetry.ts).
 //
 // Still to come: a pageview goes through the consent state machine (src/core/consent.ts,
-// createConsent), which makes it an event with the visitor and session ids (AAI-98) and the
+// createConsent), which makes it an event with the visitor and session ids (src/core/identity.ts,
+// createIdentity: its ids() in the sink's identified path, itself as the machine's identity) and the
 // consent snapshot, or a ping in declined mode `pings` (src/core/ping.ts, pingOf); then it goes to the transport
 // (src/core/transport.ts, createTransport) (AAI-964), whose withdrawEvents is the machine sink's
 // withdraw, so that nothing goes after a decline (AAI-86; test/declined-off.test.ts wires them all
