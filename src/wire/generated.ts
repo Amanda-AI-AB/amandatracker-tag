@@ -9,13 +9,17 @@ export interface EventBatch {
   seq: number;
   /** The batch's events, 1 to 10. */
   e: [WireEvent, ...WireEvent[]];
+  /** Sent, as true, when the browser reports navigator.webdriver === true: it is driven by automation (WebDriver, Puppeteer, Playwright and the like). It feeds the collector's bot marking (03 §5, AAI-76) and names the browser, never the visitor. Absent otherwise: the tag never sends false. It belongs to the browser, so it goes once per batch rather than on each event. A ping batch never carries it: pings leave the browsers of visitors who declined, and their field list is frozen. */
+  webdriver?: true;
 }
 
-export const EVENT_BATCH_FIELDS = ["seq", "e"] as const;
+export const EVENT_BATCH_FIELDS = ["seq", "e", "webdriver"] as const;
 
 export const EVENT_BATCH_REQUIRED = ["seq", "e"] as const;
 
-export const EVENT_BATCH_TYPES = { seq: "integer", e: "array" } as const;
+export const EVENT_BATCH_TYPES = { seq: "integer", e: "array", webdriver: "boolean" } as const;
+
+export const EVENT_BATCH_VALUES = { webdriver: [true] } as const;
 
 export const EVENT_BATCH_MINIMUM = { seq: 1 } as const;
 
@@ -28,6 +32,7 @@ export interface PingBatch {
   /** The batch's pings, 1 to 10. */
   e: [WirePing, ...WirePing[]];
   seq?: never;
+  webdriver?: never;
 }
 
 export const PING_BATCH_FIELDS = ["e"] as const;

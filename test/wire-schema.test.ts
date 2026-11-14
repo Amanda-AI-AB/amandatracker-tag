@@ -392,6 +392,20 @@ describe("wire schema v1: batch (the body of POST /v1/e)", () => {
     expect(validate({ seq: 1.5, e: [EVENT] })).toBe(false);
   });
 
+  it("accepts webdriver: true on a batch of events, for the collector's bot marking (AAI-796)", () => {
+    expect(validate({ seq: 1, e: [EVENT], webdriver: true }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a webdriver other than true: the tag leaves it out instead", () => {
+    expect(validate({ seq: 1, e: [EVENT], webdriver: false })).toBe(false);
+    expect(validate({ seq: 1, e: [EVENT], webdriver: "true" })).toBe(false);
+    expect(validate({ seq: 1, e: [EVENT], webdriver: 1 })).toBe(false);
+  });
+
+  it("rejects webdriver on a batch of pings, whose field list is frozen", () => {
+    expect(validate({ e: [PING], webdriver: true })).toBe(false);
+  });
+
   it("rejects a key the schema doesn't list", () => {
     expect(validate({ seq: 1, e: [EVENT], site_id: "site_123" })).toBe(false);
     expect(validate({ e: [PING], v: 1 })).toBe(false);
