@@ -27,6 +27,7 @@ import { pageExitInput, watchEngagement, type EngagementHost, type PageExitInput
 import { currentScript, endpointFromScript } from "./endpoint";
 import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
+import { PRIVACY_COMMAND, privacyCommand, type PrivacyHost } from "./privacy";
 import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
 import { scrollDepthInput, watchScroll, type ScrollDepthInput, type ScrollHost, type ScrollReset } from "./scroll";
 import type { TagTarget } from "./telemetry";
@@ -42,10 +43,11 @@ export interface TagWindow
     EngagementHost,
     FormHost,
     ScrollHost,
-    CmpHost {
+    CmpHost,
+    PrivacyHost {
   readonly document: Document;
   readonly location: Location;
-  readonly navigator: PageSource["navigator"] & GpcHost["navigator"];
+  readonly navigator: PageSource["navigator"] & GpcHost["navigator"] & PrivacyHost["navigator"];
   fetch: typeof fetch;
   /** popstate, pagehide, pageshow and scroll, and the events of the consent managers the tag has adapters for. */
   addEventListener(type: string, listener: () => void): void;
@@ -157,7 +159,8 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * before it denies; Consent Mode's state as the dataLayer has it so far, the TCF consent manager's
  * when the page has one, the adapter of a consent manager the page has or loads later (Cookiebot, OneTrust, Usercentrics),
  * which signals once it has loaded and connected through the `adapter` command, then the site's queued
- * commands (they may set what the pageview carries, such as consent), then the first pageview,
+ * commands (they may set what the pageview carries, such as consent; `privacy` shows the visitor
+ * their ID, privacy.ts), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
  * on each route change, a form_submit for each form the page submits (forms.ts), and, when it is
  * turned on, a scroll event for each depth threshold the visitor reaches in each pageview (scroll.ts).
@@ -179,7 +182,8 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
       onPageview(attribution === undefined ? input : { ...input, attribution });
     });
   };
-  const commands: Record<string, Command> = { pageview };
+  // The privacy helper is there in every consent state: it only reads the visitor's ID (privacy.ts).
+  const commands: Record<string, Command> = { pageview, [PRIVACY_COMMAND]: privacyCommand(win, boundary) };
   if (options.consent) {
     const ladder = createLadder(options.consent(tag.config));
     if (gpcHonored(tag.config)) boundary.guard("consent", () => honorGpc(win, ladder));

@@ -130,6 +130,15 @@ keeps the first one the browser accepts (a browser refuses a cookie on a public 
   the cookies their full lifetime is a [first-party reverse proxy](docs/first-party-proxy.md) that
   the customer runs, through which the collector re-issues them (AAI-827, AAI-831); Amanda does not
   host one.
+- **The visitor can read their own ID.** `amanda('privacy')` (`src/core/privacy.ts`) opens a dialog
+  over the page that shows the visitor the visitor ID of their `_amnda_id` cookie (the UUID, without
+  the cookie's `v1.` prefix), with a button that copies it. A site links it from its privacy policy,
+  for example `<a href="#" onclick="amanda('privacy'); return false">Show my visitor ID</a>`, and the
+  visitor gives the ID to the site, which finds them by it in the DSAR tool. Without the cookie (no
+  analytics consent, or it was withdrawn) the dialog says that no ID exists without consent. The
+  helper only reads the cookie: it never mints an ID or writes one. Where the browser refuses the
+  copy, or has no Clipboard API, it selects the ID and asks the visitor to copy it themselves. Its
+  texts are in English.
 
 Attribution (`src/core/attribution.ts`) is captured on each landing, the page load's first
 pageview, from the landing URL's query string: the UTM set (`utm_source`, `utm_medium`,
