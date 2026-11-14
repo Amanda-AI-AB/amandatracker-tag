@@ -13,7 +13,9 @@
 //
 // Pending items go when the state is decided: with ids on a grant, per the declined mode on a
 // denial, and per the declined mode on pagehide while still pending, so an `off` site drops them.
-// Entering declined forgets the visitor (its cookies go at once), and a grant after a denial
+// Entering declined forgets the visitor (its cookies go at once) and withdraws the identified items
+// the transport hasn't sent yet, so that under `off` a visitor who declined sends nothing at all
+// from then on, not even what was collected before (AAI-86). A grant after a denial
 // renews the ids, so the pings sent meanwhile are never linked to the visitor afterwards.
 //
 // The machine has no entry points of its own: its callers (the consent sources, AAI-85; the
@@ -54,6 +56,12 @@ export interface ConsentSink<T> {
   identified(item: T, consent: Consent): void;
   /** Collect item as an anonymous ping: declined mode `pings` only. */
   anonymous(item: T): void;
+  /**
+   * Analytics was just denied: the identified items handed over but not sent yet never go
+   * (Transport.withdrawEvents). Sent after the denial, they would be collection requests from a
+   * visitor who declined, and their responses would set the cookies identity.forget() deleted.
+   */
+  withdraw(): void;
 }
 
 /** The visitor's identity (AAI-98), as the machine drives it. */
@@ -157,6 +165,7 @@ export function createConsent<T>(options: ConsentOptions<T>): ConsentMachine<T> 
     if (to === "declined" && from !== "declined") {
       declinedBefore = true;
       identity.forget();
+      sink.withdraw();
     }
     if (to === "identified" && from !== "identified" && declinedBefore) identity.renew();
     if (to === "identified") drain((item) => sink.identified(item, { ...consent }));

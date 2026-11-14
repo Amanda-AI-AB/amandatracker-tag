@@ -3,6 +3,7 @@
 // at once for a pageview. A batch that meets a network error or a 5xx is retried twice, with
 // backoff, and then dropped. On pagehide every buffered item and every batch awaiting a retry
 // goes with sendBeacon, or a keepalive fetch where the browser has no sendBeacon or refuses it.
+// When the visitor declines, the events not sent yet are dropped instead (withdrawEvents, AAI-86).
 //
 // Everything lives in memory: no cookie, localStorage or IndexedDB, so a visitor who declined
 // accrues no storage, and what the page hasn't sent when it dies is lost. Loss is measured
@@ -41,6 +42,12 @@ export interface Transport {
   event(event: WireEvent): void;
   /** Buffers a built ping, as event buffers an event; pings go in batches of their own. */
   ping(ping: WirePing): void;
+  /**
+   * The visitor declined: drops the buffered events and the event batches awaiting a retry, so
+   * that none goes after the decline, with a warning saying how many. Pings, and a batch whose
+   * request is already in flight, are left as they are.
+   */
+  withdrawEvents(): void;
 }
 
 /** One batch as sent: its body keeps its seq through every retry. */
@@ -195,6 +202,17 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     },
     ping(ping) {
       buffered("pings", ping.type, buffers.pings.push(ping));
+    },
+    withdrawEvents() {
+      stopTimer("events");
+      const items = buffers.events.splice(0);
+      if (items.length > 0) warn(`amanda: dropped ${items.length} buffered events: the visitor declined`);
+      for (const batch of awaitingRetry) {
+        if (batch.kind !== "events") continue;
+        win.clearTimeout(batch.timer);
+        awaitingRetry.delete(batch);
+        dropped(batch, "the visitor declined");
+      }
     },
   };
 }

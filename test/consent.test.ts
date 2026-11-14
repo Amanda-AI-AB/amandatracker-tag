@@ -13,7 +13,7 @@ import {
 } from "../src/core/consent";
 
 /** What the machine handed over, in order, and what it did to the visitor's identity. */
-type Out = ["identified", number, Consent] | ["anonymous", number] | ["forget"] | ["renew"];
+type Out = ["identified", number, Consent] | ["anonymous", number] | ["withdraw"] | ["forget"] | ["renew"];
 
 interface Harness {
   machine: ConsentMachine<number>;
@@ -27,6 +27,7 @@ function harness(declinedMode: DeclinedMode): Harness {
     sink: {
       identified: (item, consent) => out.push(["identified", item, consent]),
       anonymous: (item) => out.push(["anonymous", item]),
+      withdraw: () => out.push(["withdraw"]),
     },
     identity: {
       forget: () => out.push(["forget"]),
@@ -122,7 +123,7 @@ describe("denied", () => {
     machine.update({ analytics: "denied", ads: "denied" });
     machine.collect(1);
     expect(machine.mode()).toBe("declined");
-    expect(out).toEqual([["forget"], ["anonymous", 1]]);
+    expect(out).toEqual([["forget"], ["withdraw"], ["anonymous", 1]]);
   });
 
   it("sends nothing in declined mode off", () => {
@@ -130,15 +131,15 @@ describe("denied", () => {
     machine.update({ analytics: "denied" });
     machine.collect(1);
     machine.collect(2);
-    expect(out).toEqual([["forget"]]);
+    expect(out).toEqual([["forget"], ["withdraw"]]);
     expect(machine.pendingCount()).toBe(0);
   });
 
-  it("forgets the visitor once on entering, not on each signal", () => {
+  it("forgets the visitor and withdraws unsent events once on entering, not on each signal", () => {
     const { machine, out } = harness("off");
     machine.update({ analytics: "denied" });
     machine.update({ analytics: "denied", ads: "granted" });
-    expect(out).toEqual([["forget"]]);
+    expect(out).toEqual([["forget"], ["withdraw"]]);
   });
 });
 
@@ -166,7 +167,7 @@ describe("unknown: the pending buffer", () => {
     machine.collect(1);
     machine.collect(2);
     machine.update({ analytics: "denied" });
-    expect(out).toEqual([["forget"], ["anonymous", 1], ["anonymous", 2]]);
+    expect(out).toEqual([["forget"], ["withdraw"], ["anonymous", 1], ["anonymous", 2]]);
     expect(machine.pendingCount()).toBe(0);
   });
 
@@ -175,7 +176,7 @@ describe("unknown: the pending buffer", () => {
     machine.collect(1);
     machine.update({ analytics: "denied" });
     machine.update({ analytics: "granted" });
-    expect(out).toEqual([["forget"], ["renew"]]);
+    expect(out).toEqual([["forget"], ["withdraw"], ["renew"]]);
     expect(machine.pendingCount()).toBe(0);
   });
 
@@ -252,7 +253,7 @@ describe("mid-session changes", () => {
     machine.collect(1);
     machine.update({ analytics: "granted" });
     machine.collect(2);
-    expect(out).toEqual([["forget"], ["anonymous", 1], ["renew"], ["identified", 2, { analytics: "granted", ads: "unknown" }]]);
+    expect(out).toEqual([["forget"], ["withdraw"], ["anonymous", 1], ["renew"], ["identified", 2, { analytics: "granted", ads: "unknown" }]]);
   });
 
   it("grant -> deny forgets the visitor at once and switches to the declined mode", () => {
@@ -261,15 +262,15 @@ describe("mid-session changes", () => {
     machine.collect(1);
     machine.update({ analytics: "denied" });
     machine.collect(2);
-    expect(out).toEqual([["identified", 1, GRANTED], ["forget"], ["anonymous", 2]]);
+    expect(out).toEqual([["identified", 1, GRANTED], ["forget"], ["withdraw"], ["anonymous", 2]]);
   });
 
-  it("grant -> deny in declined mode off sends nothing more", () => {
+  it("grant -> deny in declined mode off withdraws the events not sent yet, and sends nothing more", () => {
     const { machine, out } = harness("off");
     machine.update(GRANTED);
     machine.update({ analytics: "denied" });
     machine.collect(1);
-    expect(out).toEqual([["forget"]]);
+    expect(out).toEqual([["forget"], ["withdraw"]]);
   });
 
   it("renews the ids on every grant that follows a denial", () => {
@@ -279,7 +280,7 @@ describe("mid-session changes", () => {
     machine.update({ analytics: "granted" });
     machine.update({ analytics: "denied" });
     machine.update({ analytics: "granted" });
-    expect(out).toEqual([["forget"], ["renew"], ["forget"], ["renew"]]);
+    expect(out).toEqual([["forget"], ["withdraw"], ["renew"], ["forget"], ["withdraw"], ["renew"]]);
   });
 
   it("deny -> unknown buffers again, and a grant then renews the ids", () => {
@@ -289,7 +290,7 @@ describe("mid-session changes", () => {
     machine.collect(1);
     expect(machine.pendingCount()).toBe(1);
     machine.update({ analytics: "granted" });
-    expect(out).toEqual([["forget"], ["renew"], ["identified", 1, { analytics: "granted", ads: "unknown" }]]);
+    expect(out).toEqual([["forget"], ["withdraw"], ["renew"], ["identified", 1, { analytics: "granted", ads: "unknown" }]]);
   });
 
   it("grant -> unknown buffers, and keeps the ids", () => {
@@ -330,7 +331,7 @@ describe("no_cmp", () => {
     machine.collect(1);
     machine.resolveNoCmp("denied");
     machine.collect(2);
-    expect(out).toEqual([["forget"], ["anonymous", 1], ["anonymous", 2]]);
+    expect(out).toEqual([["forget"], ["withdraw"], ["anonymous", 1], ["anonymous", 2]]);
   });
 
   it("drops the buffer on pagehide in declined mode off while the policy hasn't answered", () => {
@@ -356,7 +357,7 @@ describe("no_cmp", () => {
     machine.resolveNoCmp("granted");
     machine.update({ analytics: "denied" });
     expect(machine.mode()).toBe("declined");
-    expect(out).toEqual([["forget"]]);
+    expect(out).toEqual([["forget"], ["withdraw"]]);
   });
 
   it("refuses a decision other than granted or denied", () => {

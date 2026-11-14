@@ -322,6 +322,53 @@ describe("pagehide", () => {
   });
 });
 
+describe("withdrawEvents", () => {
+  it("drops the buffered events and stops their timer, with a warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness();
+    t.transport.event(click(1));
+    t.transport.event(click(2));
+    t.transport.withdrawEvents();
+    await vi.advanceTimersByTimeAsync(60_000);
+    t.pagehide();
+    expect(t.fetchMock).not.toHaveBeenCalled();
+    expect(t.beacon).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith("amanda: dropped 2 buffered events: the visitor declined");
+  });
+
+  it("drops an event batch awaiting its retry: it is neither retried nor sent on pagehide", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness([{ ok: false, status: 503 }]);
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(0);
+    t.transport.withdrawEvents();
+    await vi.advanceTimersByTimeAsync(60_000);
+    t.pagehide();
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+    expect(t.beacon).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(`amanda: dropped a batch of 1 events to ${URL_E}: the visitor declined`);
+    expect(t.reports).toEqual([]);
+  });
+
+  it("keeps pings, buffered or awaiting a retry, and the events that come after", async () => {
+    const t = harness([{ ok: false, status: 503 }]);
+    t.transport.ping(pingOf("pageview"));
+    await vi.advanceTimersByTimeAsync(0);
+    t.transport.ping(pingOf("click"));
+    t.transport.withdrawEvents();
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.posted().map((batch) => batch.e.map((item) => item.type))).toEqual([["pageview"], ["pageview"], ["pageview"], ["click"]]);
+    expect(t.posted()[1]).toMatchObject({ seq: 1 });
+  });
+
+  it("warns about nothing when nothing waits", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    harness().transport.withdrawEvents();
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
 describe("storage", () => {
   it("never touches localStorage, IndexedDB or cookies", () => {
     const touched: string[] = [];

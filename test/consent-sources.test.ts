@@ -30,7 +30,7 @@ function harness(): Harness {
   const identified: Consent[] = [];
   const machine = createConsent<number>({
     declinedMode: "off",
-    sink: { identified: (_item, consent) => identified.push(consent), anonymous: () => undefined },
+    sink: { identified: (_item, consent) => identified.push(consent), anonymous: () => undefined, withdraw: () => undefined },
     identity: { forget: () => undefined, renew: () => undefined },
   });
   return { machine, ladder: createLadder(machine), identified };

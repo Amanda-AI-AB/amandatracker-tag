@@ -297,7 +297,7 @@ describe("the consent sources", () => {
     const configs: unknown[] = [];
     const machine = createConsent<PageviewInput>({
       declinedMode: "off",
-      sink: { identified: () => undefined, anonymous: () => undefined },
+      sink: { identified: () => undefined, anonymous: () => undefined, withdraw: () => undefined },
       identity: { forget: () => undefined, renew: () => undefined },
     });
     const snapshots: Consent[] = [];
