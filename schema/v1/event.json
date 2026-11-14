@@ -216,12 +216,22 @@
         },
         "source": {
           "$ref": "#/$defs/ConsentSource"
+        },
+        "tc_string": {
+          "$ref": "#/$defs/TcString"
         }
       }
     },
     "ConsentSource": {
-      "description": "The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved.",
-      "enum": ["gpc", "manual", "gcm"]
+      "description": "The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, tcf, the page's IAB TCF v2.2 consent manager (__tcfapi), or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved.",
+      "enum": ["gpc", "manual", "gcm", "tcf"]
+    },
+    "TcString": {
+      "description": "The IAB TCF v2.2 TC string the consent manager gave with the signal the snapshot holds: present only when source is tcf, and then whenever the consent manager gave one that fits. Personal data (CJEU C-604/22). The tag never cuts it, which would make another string of it: one over the cap, or not of base64url segments joined by dots, is left out.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*$"
     },
     "Attribution": {
       "description": "The landing's attribution (01 §5): the parameters of the landing page's query string, those present and not empty, read on the page load's first pageview and on no other event. Each value is verbatim, as URLSearchParams decodes it: never case-normalised, so that Summer and summer stay distinct, and never classified, which the processor does (AAI-102). The collector caps each value at 200 characters (03 §5); the 2048 here is the page URL's own cap. Click IDs go only while ads consent isn't denied: under denied ads the tag leaves out click_ids, and drops the click-ID parameters from url and referrer too, while the UTMs and custom parameters, campaign labels rather than identifiers, still go.",

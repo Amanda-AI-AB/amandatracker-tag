@@ -364,7 +364,28 @@ describe("buildEvent nested consent", () => {
     expect(event.consent.source).toBe("gcm");
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
     const consent = { ...input.consent, source: "cookiebot" } as unknown as EventInput["consent"];
-    expect(() => buildEvent({ ...input, consent })).toThrow(new WirePayloadError("event.consent.source", "is not one of gpc, manual, gcm"));
+    expect(() => buildEvent({ ...input, consent })).toThrow(
+      new WirePayloadError("event.consent.source", "is not one of gpc, manual, gcm, tcf"),
+    );
+  });
+
+  const TC_STRING = "CPXxRfAPXxRfAAfKABENB-CgAAAAAAAAAAYgAAAAAAAA.YAAAAAAAAAAA";
+
+  it("carries a TCF snapshot's TC string", () => {
+    const input = eventInput();
+    const event = buildEvent({ ...input, consent: { ...input.consent, source: "tcf", tc_string: TC_STRING } });
+    expect(event.consent).toEqual({ ...input.consent, source: "tcf", tc_string: TC_STRING });
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it.each([
+    ["over its cap", `${TC_STRING}${"A".repeat(8192)}`],
+    ["not of base64url segments", "CPX xRf+/=="],
+  ])("leaves out a TC string %s, rather than send another string of it", (_name, tcString) => {
+    const input = eventInput();
+    const event = buildEvent({ ...input, consent: { ...input.consent, source: "tcf", tc_string: tcString } });
+    expect(event.consent).toEqual({ ...input.consent, source: "tcf" });
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
   });
 });
 

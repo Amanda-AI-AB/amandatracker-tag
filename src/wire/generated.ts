@@ -214,18 +214,26 @@ export interface Consent {
   analytics: ConsentState;
   ads: ConsentState;
   source?: ConsentSource;
+  tc_string?: TcString;
 }
 
-export const CONSENT_FIELDS = ["analytics", "ads", "source"] as const;
+export const CONSENT_FIELDS = ["analytics", "ads", "source", "tc_string"] as const;
 
 export const CONSENT_REQUIRED = ["analytics", "ads"] as const;
 
-export const CONSENT_TYPES = { analytics: "string", ads: "string", source: "string" } as const;
+export const CONSENT_TYPES = { analytics: "string", ads: "string", source: "string", tc_string: "string" } as const;
 
-export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"], source: ["gpc", "manual", "gcm"] } as const;
+export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"], source: ["gpc", "manual", "gcm", "tcf"] } as const;
 
-/** The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved. */
-export type ConsentSource = "gpc" | "manual" | "gcm";
+export const CONSENT_PATTERN = { tc_string: "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*$" } as const;
+
+export const CONSENT_MAX_LENGTH = { tc_string: 8192 } as const;
+
+/** The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, tcf, the page's IAB TCF v2.2 consent manager (__tcfapi), or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved. */
+export type ConsentSource = "gpc" | "manual" | "gcm" | "tcf";
+
+/** The IAB TCF v2.2 TC string the consent manager gave with the signal the snapshot holds: present only when source is tcf, and then whenever the consent manager gave one that fits. Personal data (CJEU C-604/22). The tag never cuts it, which would make another string of it: one over the cap, or not of base64url segments joined by dots, is left out. */
+export type TcString = string;
 
 /** The landing's attribution (01 §5): the parameters of the landing page's query string, those present and not empty, read on the page load's first pageview and on no other event. Each value is verbatim, as URLSearchParams decodes it: never case-normalised, so that Summer and summer stay distinct, and never classified, which the processor does (AAI-102). The collector caps each value at 200 characters (03 §5); the 2048 here is the page URL's own cap. Click IDs go only while ads consent isn't denied: under denied ads the tag leaves out click_ids, and drops the click-ID parameters from url and referrer too, while the UTMs and custom parameters, campaign labels rather than identifiers, still go. */
 export interface Attribution {
@@ -489,7 +497,7 @@ export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_R
 
 export const PING_BATCH_SHAPE = { fields: PING_BATCH_FIELDS, required: PING_BATCH_REQUIRED, types: PING_BATCH_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: {}, minItems: PING_BATCH_MIN_ITEMS, maxItems: PING_BATCH_MAX_ITEMS, nested: {}, items: { e: WIRE_PING_SHAPE }, maps: {} } as const;
 
-export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, types: CONSENT_TYPES, values: CONSENT_VALUES, minimum: {}, pattern: {}, maxLength: {}, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, types: CONSENT_TYPES, values: CONSENT_VALUES, minimum: {}, pattern: CONSENT_PATTERN, maxLength: CONSENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const ATTRIBUTION_UTM_SHAPE = { fields: ATTRIBUTION_UTM_FIELDS, required: ATTRIBUTION_UTM_REQUIRED, types: ATTRIBUTION_UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: ATTRIBUTION_UTM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 

@@ -139,6 +139,8 @@ export const OVERFLOW: Readonly<Record<string, "cut" | "subtags" | "drop">> = {
   ...overflowCuts("event.attribution.click_ids", CLICK_IDS_FIELDS),
   "event.attribution.custom.*": "cut",
   "event.purchase.items[].name": "cut",
+  // A cut TC string would be another, malformed one: one over the cap is left out.
+  "event.consent.tc_string": "drop",
   "ping.path": "cut",
   "ping.referrer_host": "drop",
   "ping.utm.source": "cut",
