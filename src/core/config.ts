@@ -6,7 +6,7 @@
 // here; the tickets that use a section (consent AAI-84, kill switch AAI-797, ...) check that
 // section's fields.
 
-import type { DeclinedMode } from "./consent";
+import type { DeclinedMode, NoCmpPolicy } from "./consent";
 import { configRequestInit, configUrl } from "./endpoint";
 
 /** The config layout this tag reads. */
@@ -62,10 +62,18 @@ export function parseConfig(json: unknown, site: string): SiteConfig {
 const DECLINED_MODES: readonly DeclinedMode[] = ["off", "pings"];
 
 /**
- * The config's optional consent section; this tag reads its declined_mode, `off` or `pings`, and
- * its gpc_honored, a boolean. A section of another shape, or another value, throws ConfigError:
- * guessing a mode could send pings from a site that chose to send nothing, and guessing the GPC
- * toggle could ignore a visitor's opt-out. Its other fields are the tickets' that use them.
+ * The no-CMP policies a site can choose (02 §4), named as site_settings.no_cmp_policy (AAI-90):
+ * `geo`, the default, asks GET /v1/policy; `assume_denied` always denies; `assume_granted` always
+ * grants, a badged setting the control plane lets through only with its legal acceptance.
+ */
+const NO_CMP_POLICIES: readonly NoCmpPolicy[] = ["geo", "assume_denied", "assume_granted"];
+
+/**
+ * The config's optional consent section; this tag reads its declined_mode, `off` or `pings`, its
+ * gpc_honored, a boolean, and its no_cmp_policy (NO_CMP_POLICIES). A section of another shape, or
+ * another value, throws ConfigError: guessing a mode could send pings from a site that chose to
+ * send nothing, guessing the GPC toggle could ignore a visitor's opt-out, and guessing a no-CMP
+ * policy could grant what the site chose to deny. Its other fields are the tickets' that use them.
  */
 function checkConsent(consent: unknown): void {
   if (consent === undefined) return;
@@ -81,6 +89,16 @@ function checkConsent(consent: unknown): void {
   if (gpc !== undefined && typeof gpc !== "boolean") {
     throw new ConfigError(`the config's consent.gpc_honored is not a boolean: ${String(gpc)}`);
   }
+  const policy = section.no_cmp_policy;
+  if (policy !== undefined && NO_CMP_POLICIES.indexOf(policy as NoCmpPolicy) < 0) {
+    throw new ConfigError(`the config's consent.no_cmp_policy is not one of ${NO_CMP_POLICIES.join(", ")}: ${String(policy)}`);
+  }
+}
+
+/** The site's no-CMP policy: the config's consent.no_cmp_policy, or `geo` when it sets none. */
+export function noCmpPolicy(config: SiteConfig): NoCmpPolicy {
+  const consent = config.consent as { no_cmp_policy?: NoCmpPolicy } | undefined;
+  return (consent && consent.no_cmp_policy) || "geo";
 }
 
 /** The site's declined mode: the config's consent.declined_mode, or `off` when it sets none. */

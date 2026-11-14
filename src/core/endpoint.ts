@@ -116,6 +116,11 @@ export function tagErrorsUrl(endpoint: string): string {
   return `${endpoint}/v1/t`;
 }
 
+/** The collector's anonymous jurisdiction hint for the no-CMP `geo` policy (AAI-93, no-cmp.ts). */
+export function policyUrl(endpoint: string): string {
+  return `${endpoint}/v1/policy`;
+}
+
 export { ADAPTER_NAME };
 
 /**
@@ -168,6 +173,15 @@ export const REFERRER_POLICY: ReferrerPolicy = "strict-origin";
 
 /** The fetch options for the site's config from configUrl. It sends no cookie, to any host. */
 export function configRequestInit(): RequestInit {
+  return { credentials: "omit", referrerPolicy: REFERRER_POLICY };
+}
+
+/**
+ * The fetch options for the jurisdiction hint from policyUrl. It is asked before the visitor's
+ * consent is known, so it never carries the site's cookies; the browser may cache its answer, as
+ * the collector's Cache-Control says.
+ */
+export function policyRequestInit(): RequestInit {
   return { credentials: "omit", referrerPolicy: REFERRER_POLICY };
 }
 

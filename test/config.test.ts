@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { checkSiteId, ConfigError, declinedMode, errorSampleRate, fetchConfig, gpcHonored, parseConfig } from "../src/core/config";
+import {
+  checkSiteId,
+  ConfigError,
+  declinedMode,
+  errorSampleRate,
+  fetchConfig,
+  gpcHonored,
+  noCmpPolicy,
+  parseConfig,
+} from "../src/core/config";
 import { configRequestInit } from "../src/core/endpoint";
 
 const CONFIG = { schema_version: 1, site: "site_123", config_version: 3, paused: false };
@@ -71,6 +80,20 @@ describe("the consent section", () => {
   it("refuses a GPC toggle that isn't a boolean", () => {
     for (const gpc_honored of [null, 0, 1, "false", "true", {}]) {
       expect(() => parseConfig({ ...CONFIG, consent: { gpc_honored } }, "site_123")).toThrow(ConfigError);
+    }
+  });
+
+  it("reads the no-CMP policy, geo when the site sets none", () => {
+    expect(noCmpPolicy(parseConfig(CONFIG, "site_123"))).toBe("geo");
+    expect(noCmpPolicy(parseConfig({ ...CONFIG, consent: {} }, "site_123"))).toBe("geo");
+    for (const no_cmp_policy of ["geo", "assume_denied", "assume_granted"] as const) {
+      expect(noCmpPolicy(parseConfig({ ...CONFIG, consent: { no_cmp_policy } }, "site_123"))).toBe(no_cmp_policy);
+    }
+  });
+
+  it("refuses a no-CMP policy off the list", () => {
+    for (const no_cmp_policy of [null, "", "assume-granted", "granted", "GEO", 1, {}]) {
+      expect(() => parseConfig({ ...CONFIG, consent: { no_cmp_policy } }, "site_123")).toThrow(ConfigError);
     }
   });
 

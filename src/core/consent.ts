@@ -40,6 +40,9 @@ export type DeclinedMode = "off" | "pings";
 /** How the tag collects in the current state. */
 export type CollectionMode = "identified" | "declined" | "pending";
 
+/** A site's no-CMP policy (02 §4; config.ts, noCmpPolicy; resolved by no-cmp.ts). */
+export type NoCmpPolicy = "geo" | "assume_denied" | "assume_granted";
+
 /** What the site's no-CMP policy resolved to (AAI-94). Never assumed: an unresolved no_cmp waits. */
 export type NoCmpDecision = "granted" | "denied";
 
