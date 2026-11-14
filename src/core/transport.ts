@@ -5,8 +5,10 @@
 // page is hidden, every buffered item and every batch awaiting a retry goes with sendBeacon, or a
 // keepalive fetch where the browser has no sendBeacon or refuses it. Both count against the
 // browser's 64 KiB keepalive quota, so that flush is split into bodies that stay within
-// KEEPALIVE_BODY_LIMIT together; what doesn't fit is dropped (AAI-893). An ordinary batch goes
-// without keepalive, whatever its size.
+// KEEPALIVE_BODY_LIMIT together; what doesn't fit is dropped (AAI-893). The quota is shared with
+// the page's other scripts, so a pagehide fetch within it can still be rejected: its events are
+// sent once more in two smaller bodies, and a body rejected again once more without keepalive
+// (AAI-951). An ordinary batch goes without keepalive, whatever its size.
 // When the visitor declines, the events not sent yet are dropped instead (withdrawEvents, AAI-86).
 //
 // Everything lives in memory: no cookie, localStorage or IndexedDB, so a visitor who declined
@@ -61,11 +63,18 @@ export interface Transport {
 
 type Item = WireEvent | WirePing;
 
+/**
+ * A pagehide fetch's step: the first, with keepalive; a half of a rejected batch, with keepalive;
+ * or the last, without it.
+ */
+type UnloadStep = "keepalive" | "split" | "plain";
+
 /** One batch as sent: its body keeps its seq through every retry. */
 interface Batch {
   readonly kind: BatchKind;
   readonly body: string;
-  readonly size: number;
+  /** The items in body, which a rejected pagehide fetch splits into smaller batches. */
+  readonly items: readonly Item[];
   /** The tries made so far. */
   tries: number;
   /** The pending retry's timer, while the batch awaits one. */
@@ -98,10 +107,17 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     return JSON.stringify(batch);
   };
 
+  /** A new batch of `items`; an event batch takes the next seq. */
+  const newBatch = (kind: BatchKind, items: readonly Item[]): Batch => ({
+    kind,
+    body: bodyOf(kind, items, kind === "events" ? ++seq : 0),
+    items,
+    tries: 0,
+  });
+
   const batchOf = (kind: BatchKind): Batch | undefined => {
     const items: Item[] = buffers[kind].splice(0);
-    if (items.length === 0) return undefined;
-    return { kind, body: bodyOf(kind, items, kind === "events" ? ++seq : 0), size: items.length, tries: 0 };
+    return items.length === 0 ? undefined : newBatch(kind, items);
   };
 
   /**
@@ -121,7 +137,7 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     const close = (): void => {
       if (chunk.length === 0) return;
       if (kind === "events") seq++;
-      batches.push({ kind, body, size: chunk.length, tries: 0 });
+      batches.push({ kind, body, items: chunk, tries: 0 });
       budget.left -= bodyBytes(body);
       chunk = [];
     };
@@ -155,11 +171,11 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
   };
 
   const dropped = (batch: Batch, why: string, error?: unknown): void => {
-    warn(`amanda: dropped a batch of ${batch.size} ${batch.kind} to ${url}: ${why}`, ...(error === undefined ? [] : [error]));
+    warn(`amanda: dropped a batch of ${batch.items.length} ${batch.kind} to ${url}: ${why}`, ...(error === undefined ? [] : [error]));
   };
 
   const refused = (batch: Batch, status: number): never => {
-    throw new CollectorRefusedError(`POST ${url}: HTTP ${status}, ${batch.size} ${batch.kind} dropped`);
+    throw new CollectorRefusedError(`POST ${url}: HTTP ${status}, ${batch.items.length} ${batch.kind} dropped`);
   };
 
   const retryOrDrop = (batch: Batch, why: string, error?: unknown): void => {
@@ -196,15 +212,24 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
   };
 
   /**
-   * Sends one batch as the page goes: no retry can follow, since the page may not outlive it, and
-   * a fetch rejected there, for the keepalive quota or the network, is dropped and never resent.
+   * Sends one batch as the page goes, with sendBeacon, or a keepalive fetch where the browser has
+   * no sendBeacon or refuses it. No timed retry can follow, since the page may not outlive it.
    */
   const postOnUnload = (batch: Batch): void => {
     // sendBeacon always sends the endpoint's cookies, which a ping must never carry (batchRequestInit).
     const beacon = win.navigator.sendBeacon;
     if (batch.kind === "events" && typeof beacon === "function" && beacon.call(win.navigator, url, batch.body)) return;
-    const init = batchRequestInit(batch.body, batch.kind, true);
-    const bytes = bodyBytes(batch.body);
+    sendOnUnload(batch, "keepalive");
+  };
+
+  /**
+   * One pagehide fetch of `batch`, at `step` of its recovery (recoverOnUnload). A 5xx is dropped,
+   * not retried, and a refusal is reported, at every step.
+   */
+  const sendOnUnload = (batch: Batch, step: UnloadStep): void => {
+    const keepalive = step !== "plain";
+    const init = batchRequestInit(batch.body, batch.kind, keepalive);
+    const bytes = keepalive ? bodyBytes(batch.body) : 0;
     keepaliveInFlight += bytes;
     const sent = win.fetch(url, init).then(
       (response) => {
@@ -215,11 +240,31 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
       },
       (error: unknown) => {
         keepaliveInFlight -= bytes;
+        // fetch rejects with a TypeError for the keepalive quota and for a network error alike.
         if (!(error instanceof TypeError)) throw error;
-        dropped(batch, "network error on pagehide", error);
+        recoverOnUnload(batch, step, error);
       },
     );
     boundary.watch("transport", sent);
+  };
+
+  /**
+   * A pagehide fetch of `batch` was rejected with `error`, most likely because the page's other
+   * scripts had used the keepalive quota (KEEPALIVE_BODY_LIMIT), which fetch can't tell apart from
+   * a network error. Its events go once more, in two smaller bodies, each a new batch with a seq of
+   * its own, which leaves the rejected body's seq as a gap; a body rejected again, or a batch of
+   * one item that can't be split, goes once more without keepalive, at best effort, as the page may
+   * not outlive it. A body rejected without keepalive is dropped. The same body is never sent with
+   * keepalive twice (AAI-893): each step is smaller than the last, or doesn't count against the quota.
+   */
+  const recoverOnUnload = (batch: Batch, step: UnloadStep, error: TypeError): void => {
+    if (step === "plain") return dropped(batch, "network error on pagehide, without keepalive", error);
+    if (step === "split" || batch.items.length === 1) return sendOnUnload(batch, "plain");
+    const half = Math.ceil(batch.items.length / 2);
+    for (const items of [batch.items.slice(0, half), batch.items.slice(half)]) {
+      // Each half on its own: one that fails is reported, and the other still goes.
+      boundary.guard("transport", () => sendOnUnload(newBatch(batch.kind, items), "split"));
+    }
   };
 
   const stopTimer = (kind: BatchKind): void => {

@@ -199,7 +199,6 @@ Still to come:
   pings, and handed to the transport, with the machine handed to boot so the sources drive it
   (AAI-964, AAI-965);
 - the other consent source: the no-CMP policy (AAI-94);
-- recovering a pagehide request refused because other scripts used the keepalive quota (AAI-951);
 - the per-site toggle that turns the GA4 e-commerce auto-map on in a.js.
 
 Where this README or a guide describes what the tag does at runtime, it describes the design these
@@ -339,7 +338,12 @@ batch with its own `seq`; the events that don't fit are dropped with a console w
 of a page's keepalive requests in flight would pass 64 KiB, and that quota is shared with
 `sendBeacon` and with every other script's beacons on the page (analytics and ad tags firing on the
 same pagehide). The 4 KiB left over is a margin, not a reservation: a pagehide request can still be
-refused when other tags use more of the quota.
+refused when other tags use more of the quota. When a pagehide keepalive fetch is rejected (fetch
+can't say whether for the quota or the network), its events go once more in two smaller bodies,
+each a new batch with its own `seq`, and a body rejected again goes once more without `keepalive`,
+at best effort, since the page may not outlive it. What is still rejected is dropped with a console
+warning, and its `seq` gap shows the loss; the rejected body's own `seq` is a gap too, even when its
+events arrive in the halves (AAI-951).
 
 ## The size budget
 

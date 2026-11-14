@@ -327,17 +327,21 @@ describe("pagehide", () => {
     expect(t.posted()[0]).toMatchObject({ seq: 1 });
   });
 
-  it("drops a pagehide fetch that fails without retrying it, and reports a refused one", async () => {
+  it("drops a pagehide fetch that fails with and without keepalive, without a timed retry, and reports a refused one", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const t = harness([new TypeError("Failed to fetch"), { ok: false, status: 413 }], { beacon: false });
+    const t = harness(
+      [new TypeError("Failed to fetch"), { ok: false, status: 413 }, new TypeError("Failed to fetch")],
+      { beacon: false },
+    );
     t.transport.event(click(1));
     t.pagehide();
     t.transport.ping(pingOf("click"));
     t.pagehide();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(t.fetchMock).toHaveBeenCalledTimes(2);
+    expect(t.fetchMock).toHaveBeenCalledTimes(3);
+    expect(t.inits()[2]).not.toHaveProperty("keepalive");
     expect(warn).toHaveBeenCalledWith(
-      `amanda: dropped a batch of 1 events to ${URL_E}: network error on pagehide`,
+      `amanda: dropped a batch of 1 events to ${URL_E}: network error on pagehide, without keepalive`,
       expect.any(TypeError),
     );
     expect(t.reports).toEqual([
@@ -460,15 +464,23 @@ describe("pagehide split by size (AAI-893)", () => {
     expect(t.reports).toEqual([]);
   });
 
-  it("never resends a pagehide body that fetch rejected, for its size or the network", async () => {
+  it("never resends a pagehide body that fetch rejected with keepalive, for its size or the network", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const t = harness([new TypeError("keepalive quota exceeded")], { beacon: false });
+    const quota = new TypeError("keepalive quota exceeded");
+    const t = harness([quota, quota], { beacon: false });
+    t.transport.event(big());
     t.transport.event(big());
     t.pagehide();
     await vi.advanceTimersByTimeAsync(60_000);
     t.pagehide();
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+    // The rejected body of 2 events, then its halves: the first rejected too, and resent once without keepalive.
+    expect(t.inits().map((init) => [JSON.parse(init.body as string).e.length, init.keepalive])).toEqual([
+      [2, true],
+      [1, true],
+      [1, true],
+      [1, undefined],
+    ]);
   });
 
   it("never retries an ordinary batch the collector refused for its size", async () => {
@@ -481,6 +493,151 @@ describe("pagehide split by size (AAI-893)", () => {
     expect(t.reports).toEqual([
       { stage: "transport", name: "CollectorRefusedError", message: `POST ${URL_E}: HTTP 413, 10 events dropped` },
     ]);
+  });
+});
+
+describe("pagehide recovery from the shared keepalive quota (AAI-951)", () => {
+  /** The Fetch spec's keepalive quota: every in-flight keepalive body of the document together. */
+  const QUOTA = 64 * 1024;
+  /** A third-party tag's beacon, already in flight when the page is hidden. */
+  const THIRD_PARTY_BYTES = 8 * 1024;
+
+  interface Sent {
+    via: "beacon" | "fetch";
+    keepalive: boolean;
+    body: { seq?: number; e: unknown[] };
+  }
+
+  /**
+   * A transport on a stand-in window whose sendBeacon and keepalive fetch share one 64 KiB quota
+   * with a pending 8 KiB third-party request: one that would go over is refused (sendBeacon) or
+   * rejected with a TypeError before sending (fetch), and one within it stays in flight. A fetch
+   * without keepalive always gets a 204. `sent` lists what was sent, not what was refused.
+   */
+  function quotaHarness(options: { beacon?: boolean; reject?: (init: RequestInit) => Error | undefined } = {}) {
+    let inFlight = THIRD_PARTY_BYTES;
+    const sent: Sent[] = [];
+    const take = (body: string): boolean => {
+      const bytes = bodyBytes(body);
+      if (inFlight + bytes > QUOTA) return false;
+      inFlight += bytes;
+      return true;
+    };
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const error = options.reject?.(init);
+      if (error !== undefined) throw error;
+      const body = init.body as string;
+      if (init.keepalive === true) {
+        if (!take(body)) throw new TypeError("Failed to fetch: keepalive quota exceeded");
+        sent.push({ via: "fetch", keepalive: true, body: JSON.parse(body) });
+        return new Promise<never>(() => undefined);
+      }
+      sent.push({ via: "fetch", keepalive: false, body: JSON.parse(body) });
+      return { ok: true, status: 204 };
+    });
+    const beacon = vi.fn((_url: string, body: string) => {
+      if (!take(body)) return false;
+      sent.push({ via: "beacon", keepalive: true, body: JSON.parse(body) });
+      return true;
+    });
+    const listeners: (() => void)[] = [];
+    const win: TransportWindow = {
+      fetch: fetchMock as unknown as typeof fetch,
+      navigator: options.beacon === false ? {} : { sendBeacon: beacon as unknown as (url: string) => boolean },
+      setTimeout: (handler, timeout) => setTimeout(handler, timeout),
+      clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+      addEventListener: (_type, listener) => listeners.push(listener),
+    };
+    const reports: ErrorReport[] = [];
+    const boundary = new ErrorBoundary((report) => reports.push(report), 1, () => 0);
+    const transport = createTransport(win, ENDPOINT, boundary);
+    return { transport, fetchMock, sent, reports, pagehide: () => listeners.forEach((listener) => listener()) };
+  }
+
+  /** 6 events of about 9.6 KiB: a body within KEEPALIVE_BODY_LIMIT, but not beside the third party's 8 KiB. */
+  const sixBigEvents = Array.from(
+    { length: 6 },
+    (_, n) => ({ ...EVENT, type: "click", props: { n, text: "x".repeat(9 * 1024) } }) as unknown as WireEvent,
+  );
+  const sixBig = (transport: Transport): void => sixBigEvents.forEach((event) => transport.event(event));
+
+  it("is set up as the ticket says: the tag's body is within its limit, but not with the third party's", () => {
+    const bytes = bodyBytes(JSON.stringify({ seq: 1, e: sixBigEvents }));
+    expect(bytes).toBeLessThanOrEqual(KEEPALIVE_BODY_LIMIT);
+    expect(bytes + THIRD_PARTY_BYTES).toBeGreaterThan(QUOTA);
+  });
+  const delivered = (sent: Sent[]): number[] =>
+    sent.flatMap((s) => s.body.e.map((e) => (e as { props: { n: number } }).props.n)).sort();
+
+  it("delivers a keepalive fetch's events in halves, and the half still rejected without keepalive", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = quotaHarness({ beacon: false });
+    sixBig(t.transport);
+    expect(() => t.pagehide()).not.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(delivered(t.sent)).toEqual([0, 1, 2, 3, 4, 5]);
+    // The 58 KiB body (seq 1) was rejected; its first half fits beside the third party, the second
+    // doesn't, and goes without keepalive.
+    expect(t.sent.map((s) => [s.body.seq, s.body.e.length, s.keepalive])).toEqual([
+      [2, 3, true],
+      [3, 3, false],
+    ]);
+    expect(t.reports).toEqual([]);
+  });
+
+  it("recovers a batch that sendBeacon refused and the keepalive fetch rejected", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = quotaHarness();
+    sixBig(t.transport);
+    t.pagehide();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(delivered(t.sent)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(t.sent.map((s) => [s.via, s.keepalive])).toEqual([
+      ["fetch", true],
+      ["fetch", false],
+    ]);
+  });
+
+  it("recovers pings the same way, without seq and without credentials", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const bigPing = { ...PING, type: "click", page_path: `/${"p".repeat(19 * 1024)}` } as unknown as WirePing;
+    const t = quotaHarness();
+    for (let n = 0; n < 3; n++) t.transport.ping(bigPing);
+    t.pagehide();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.sent.map((s) => s.body.e.length).reduce((a, b) => a + b, 0)).toBe(3);
+    for (const s of t.sent) expect(s.body).not.toHaveProperty("seq");
+    for (const init of t.fetchMock.mock.calls.map((call) => call[1])) expect(init.credentials).toBe("omit");
+  });
+
+  it("drops what is still rejected without keepalive, with a warning, and leaves its seq as a gap", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = quotaHarness({
+      beacon: false,
+      reject: (init) => (init.keepalive === true ? undefined : new TypeError("Failed to fetch")),
+    });
+    sixBig(t.transport);
+    expect(() => t.pagehide()).not.toThrow();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.sent.map((s) => s.body.seq)).toEqual([2]);
+    expect(warn).toHaveBeenCalledWith(
+      `amanda: dropped a batch of 3 events to ${URL_E}: network error on pagehide, without keepalive`,
+      expect.any(TypeError),
+    );
+    expect(t.reports).toEqual([]);
+    // Back from the bfcache, the next batch takes seq 4: seq 1 and 3 are the collector's gaps.
+    t.transport.event(pageview());
+    expect(JSON.parse(t.fetchMock.mock.calls.at(-1)![1].body as string)).toMatchObject({ seq: 4 });
+  });
+
+  it("reports a rejection that isn't a TypeError, and doesn't recover it", async () => {
+    const t = quotaHarness({ beacon: false, reject: () => new RangeError("not a network error") });
+    sixBig(t.transport);
+    expect(() => t.pagehide()).not.toThrow();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+    expect(t.reports).toEqual([{ stage: "transport", name: "RangeError", message: "not a network error" }]);
   });
 });
 
