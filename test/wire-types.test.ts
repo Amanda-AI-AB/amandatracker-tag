@@ -3,7 +3,7 @@
 // each test checks that the schema refuses the same value.
 import { describe, expect, it } from "vitest";
 import type { WireBatch, WireEvent, WirePing } from "../src/wire/generated";
-import { EVENT, PAGE_EXIT, PING, PURCHASE, validator } from "./wire-validator";
+import { CLICK_SPECIAL, EVENT, PAGE_EXIT, PING, PURCHASE, validator } from "./wire-validator";
 
 const batch = validator("batch.json");
 const event = validator("event.json");
@@ -60,5 +60,18 @@ describe("WireEvent and WirePing", () => {
     expect(event(PAGE_EXIT)).toBe(true);
     expect(event(tracked)).toBe(false);
     expect(ping(pinged)).toBe(false);
+  });
+
+  it("refuses a link's scheme on an event of any other type, on a ping, and any scheme but tel and mailto (AAI-169)", () => {
+    // @ts-expect-error only a ClickSpecialEvent carries link_scheme, and its type is click_special
+    const tracked: WireEvent = { ...EVENT, link_scheme: CLICK_SPECIAL.link_scheme };
+    // @ts-expect-error a ping carries no link's scheme
+    const pinged: WirePing = { ...PING, link_scheme: CLICK_SPECIAL.link_scheme };
+    // @ts-expect-error a link's scheme is tel or mailto, never its address
+    const address: WireEvent = { ...CLICK_SPECIAL, link_scheme: "tel:+46701234567" };
+    expect(event(CLICK_SPECIAL)).toBe(true);
+    expect(event(tracked)).toBe(false);
+    expect(ping(pinged)).toBe(false);
+    expect(event(address)).toBe(false);
   });
 });

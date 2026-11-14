@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
+import { CLICK_SPECIAL, EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
 
 describe("wire schema v1: event", () => {
   const validate = validator("event.json");
@@ -245,6 +245,66 @@ describe("wire schema v1: page_exit (AAI-105)", () => {
   it("rides in a batch and a Pub/Sub message", () => {
     expect(validator("batch.json")({ seq: 1, e: [EVENT, PAGE_EXIT] })).toBe(true);
     const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: PAGE_EXIT };
+    expect(validator("pubsub-message.json")(message)).toBe(true);
+  });
+});
+
+describe("wire schema v1: click_special (AAI-169)", () => {
+  const validate = validator("event.json");
+
+  it.each(["tel", "mailto"])("accepts a click_special on a %s: link", (scheme) => {
+    expect(validate({ ...CLICK_SPECIAL, link_scheme: scheme }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it.each([
+    ["the link's address", "tel:+46701234567"],
+    ["an email address", "visitor@example.com"],
+    ["a scheme with its colon", "mailto:"],
+    ["another scheme", "sms"],
+    ["an upper-case scheme", "TEL"],
+    ["an empty scheme", ""],
+  ])("rejects %s as the link's scheme", (_, scheme) => {
+    expect(validate({ ...CLICK_SPECIAL, link_scheme: scheme })).toBe(false);
+  });
+
+  it("rejects a click_special without its scheme, which no other event may be", () => {
+    const { link_scheme, ...rest } = CLICK_SPECIAL;
+    expect(validate(rest)).toBe(false);
+    expect(validate({ ...EVENT, type: "click_special" })).toBe(false);
+  });
+
+  it("rejects a link's scheme on another type of event, a purchase and a page_exit included", () => {
+    expect(validate({ ...CLICK_SPECIAL, type: "click" })).toBe(false);
+    expect(validate({ ...PURCHASE, link_scheme: "tel" })).toBe(false);
+    expect(validate({ ...PAGE_EXIT, link_scheme: "tel" })).toBe(false);
+  });
+
+  it.each(["c", "cl", "click", "click_", "click_specia", "click_specials", "click_outbound", "Click_special", "xclick_special", "click_special\n", "clack", "custom"])(
+    "takes %j as the type of an ordinary event",
+    (type) => {
+      expect(validate({ ...EVENT, type }), JSON.stringify(validate.errors)).toBe(true);
+    },
+  );
+
+  it("still refuses purchase and page_exit as an ordinary event's type", () => {
+    expect(validate({ ...EVENT, type: "purchase" })).toBe(false);
+    expect(validate({ ...EVENT, type: "page_exit" })).toBe(false);
+  });
+
+  it("gives a click_special the same envelope as every other event", () => {
+    const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, unknown>; required: string[] }>;
+    const tracked = defs.TrackedEvent!;
+    const click = defs.ClickSpecialEvent!;
+    const { type: trackedType, ...trackedRest } = tracked.properties;
+    const { type: clickType, link_scheme: scheme, ...clickRest } = click.properties;
+    expect(clickRest).toEqual(trackedRest);
+    expect(clickType).toMatchObject({ const: "click_special" });
+    expect(click.required).toEqual([...tracked.required, "link_scheme"]);
+  });
+
+  it("rides in a batch and a Pub/Sub message", () => {
+    expect(validator("batch.json")({ seq: 1, e: [EVENT, CLICK_SPECIAL] })).toBe(true);
+    const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: CLICK_SPECIAL };
     expect(validator("pubsub-message.json")(message)).toBe(true);
   });
 });

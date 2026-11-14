@@ -14,6 +14,7 @@ import {
   UPPER_CASE,
   uuidv7,
   WirePayloadError,
+  type ClickSpecialEventInput,
   type EventInput,
   type PageExitEventInput,
   type PurchaseEventInput,
@@ -21,7 +22,7 @@ import {
   type PingInput,
   type TrackedEventInput,
 } from "../src/wire/payload";
-import { EVENT, PAGE_EXIT, PING, PURCHASE, validator } from "./wire-validator";
+import { CLICK_SPECIAL, EVENT, PAGE_EXIT, PING, PURCHASE, validator } from "./wire-validator";
 
 type Items = NonNullable<PurchaseEventInput["purchase"]["items"]>;
 
@@ -504,6 +505,36 @@ describe("buildEvent page_exit (AAI-105)", () => {
     expect(() => buildEvent({ ...pageExitInput(), engagement_ms: engagement })).toThrow(
       new WirePayloadError("event.engagement_ms", problem),
     );
+  });
+});
+
+describe("buildEvent click_special (AAI-169)", () => {
+  const validate = validator("event.json");
+
+  function clickSpecialInput(): ClickSpecialEventInput {
+    const { schema_version, event_id, ...input } = CLICK_SPECIAL;
+    return { ...input, consent: { ...input.consent }, props: { ...input.props } };
+  }
+
+  it.each(["tel", "mailto"] as const)("builds a valid click_special on a %s: link", (scheme) => {
+    const event = buildEvent({ ...clickSpecialInput(), link_scheme: scheme });
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    expect(event).toMatchObject({ type: "click_special", link_scheme: scheme });
+  });
+
+  it.each(["tel:+46701234567", "visitor@example.com", "mailto:", "sms", "TEL"])("throws on %j as the link's scheme", (scheme) => {
+    const input = { ...clickSpecialInput(), link_scheme: scheme } as unknown as EventInput;
+    expect(() => buildEvent(input)).toThrow(new WirePayloadError("event.link_scheme", "is not one of tel, mailto"));
+  });
+
+  it("throws when the link's scheme is on another type of event", () => {
+    const input = { ...clickSpecialInput(), type: "click" } as unknown as EventInput;
+    expect(() => buildEvent(input)).toThrow(new WirePayloadError("event.type", 'is not "click_special" on an event with a link_scheme'));
+  });
+
+  it("throws on an event of type click_special without its scheme", () => {
+    const { link_scheme, ...rest } = clickSpecialInput();
+    expect(() => buildEvent(rest as unknown as EventInput)).toThrow(new WirePayloadError("event.link_scheme"));
   });
 });
 

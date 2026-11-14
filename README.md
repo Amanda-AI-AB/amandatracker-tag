@@ -267,6 +267,10 @@ truth for what the tag sends and what the collector accepts:
   captured, and there is no allowlist or setting that could capture them. Scroll depth, off by
   default, is a `scroll` whose `props` hold `percent_scrolled`, 25, 50, 75 or 90: the tag sends one
   the first time in each pageview the visitor scrolls to that share of the page's height.
+  A click (or middle click) on a `tel:` or `mailto:` link is a `ClickSpecialEvent`:
+  `type: "click_special"` and `link_scheme`, `tel` or `mailto`. The scheme is all the tag reads of
+  the link: never its address, so neither a phone number nor an email address leaves the browser.
+  No other event carries `link_scheme`.
   GA4 e-commerce auto-map (`src/core/ecommerce.ts`), off unless configured, reads a GA4-tagged
   shop's `view_item`, `add_to_cart`, `begin_checkout` and `purchase` from `window.dataLayer`, both
   as Google Tag Manager pushes them (`{event, ecommerce}`) and as `gtag('event', ...)` does, and

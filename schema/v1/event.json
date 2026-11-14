@@ -2,11 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/event.json",
   "title": "WireEvent",
-  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; a page exit is a PageExitEvent, which carries its engagement time in engagement_ms; every other event is a TrackedEvent, which carries neither, and whose type is never purchase or page_exit. They are told apart by purchase and engagement_ms: each is required by one branch and listed by no other.",
-  "oneOf": [{ "$ref": "#/$defs/TrackedEvent" }, { "$ref": "#/$defs/PurchaseEvent" }, { "$ref": "#/$defs/PageExitEvent" }],
+  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; a page exit is a PageExitEvent, which carries its engagement time in engagement_ms; a click on a tel: or mailto: link is a ClickSpecialEvent, which carries the link's scheme in link_scheme; every other event is a TrackedEvent, which carries none of them, and whose type is never purchase, page_exit or click_special. They are told apart by purchase, engagement_ms and link_scheme: each is required by one branch and listed by no other.",
+  "oneOf": [
+    { "$ref": "#/$defs/TrackedEvent" },
+    { "$ref": "#/$defs/PurchaseEvent" },
+    { "$ref": "#/$defs/PageExitEvent" },
+    { "$ref": "#/$defs/ClickSpecialEvent" }
+  ],
   "$defs": {
     "TrackedEvent": {
-      "description": "An event that is neither a purchase nor a page exit, such as a pageview or a custom event.",
+      "description": "An event that is neither a purchase, a page exit nor a click_special, such as a pageview or a custom event.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -120,6 +125,50 @@
         "engagement_ms": { "$ref": "#/$defs/EngagementMs" }
       }
     },
+    "ClickSpecialEvent": {
+      "description": "A click on a tel: or mailto: link (01 §4; 08 I4): the envelope every event carries, type click_special, and in link_scheme the link's scheme. The scheme is all the tag reads of the link: never its address, so neither a phone number nor an email address ever leaves the browser. The tag sends one, as autocapture, for each click or middle click on such a link.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "tag_version",
+        "site_id",
+        "event_id",
+        "type",
+        "client_ts",
+        "url",
+        "visitor_id",
+        "session_id",
+        "consent",
+        "link_scheme"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "tag_version": { "$ref": "#/$defs/TagVersion" },
+        "site_id": { "$ref": "#/$defs/SiteId" },
+        "event_id": { "$ref": "#/$defs/EventId" },
+        "type": {
+          "description": "Always click_special.",
+          "const": "click_special"
+        },
+        "client_ts": { "$ref": "#/$defs/ClientTs" },
+        "url": { "$ref": "#/$defs/Url" },
+        "referrer": { "$ref": "#/$defs/Referrer" },
+        "page_title": { "$ref": "#/$defs/PageTitle" },
+        "language": { "$ref": "#/$defs/Language" },
+        "visitor_id": { "$ref": "#/$defs/VisitorId" },
+        "session_id": { "$ref": "#/$defs/SessionId" },
+        "consent": { "$ref": "#/$defs/Consent" },
+        "attribution": { "$ref": "#/$defs/Attribution" },
+        "props": { "$ref": "#/$defs/Props" },
+        "user_ref": { "$ref": "#/$defs/UserRef" },
+        "link_scheme": { "$ref": "#/$defs/LinkScheme" }
+      }
+    },
+    "LinkScheme": {
+      "description": "The scheme of a clicked tel: or mailto: link, without its colon: tel or mailto, and nothing else. A closed list, so that no part of the link's address (a phone number, an email address, a subject) can be sent in its place.",
+      "enum": ["tel", "mailto"]
+    },
     "UserRef": {
       "description": "The site's own pseudonymous reference for the logged-in visitor, such as a hashed customer number, as the site gave it to amanda('identify', ref) (01 §3): it links the visitor to the site's user for logged-in stitching. The tag sends it on the identify event alone, only when the site's config turns identify on, and only on the identified path (granted analytics), never in a ping. Never a raw email address: a value holding an @, the shape of every email address, is refused here, by the tag before it leaves the browser, and by the collector (AAI-197). An identifier, never cut: one over the cap is refused.",
       "type": "string",
@@ -202,11 +251,11 @@
       "maxLength": 64
     },
     "TrackedEventType": {
-      "description": "A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order, and page_exit, which only a PageExitEvent carries, with its engagement time. The pattern refuses exactly those two, and has no lookahead, so that every regex engine the schema is read with takes it alike.",
+      "description": "A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order, page_exit, which only a PageExitEvent carries, with its engagement time, and click_special, which only a ClickSpecialEvent carries, with its link's scheme. The pattern refuses exactly those three, and has no lookahead, so that every regex engine the schema is read with takes it alike.",
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "pattern": "^(?:[^p]|p(?:[^ua]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S]|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^_]|$)|page_(?:[^e]|$)|page_e(?:[^x]|$)|page_ex(?:[^i]|$)|page_exi(?:[^t]|$)|page_exit[\\s\\S])"
+      "pattern": "^(?:[^pc]|p(?:[^ua]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S]|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^_]|$)|page_(?:[^e]|$)|page_e(?:[^x]|$)|page_ex(?:[^i]|$)|page_exi(?:[^t]|$)|page_exit[\\s\\S]|c(?:[^l]|$)|cl(?:[^i]|$)|cli(?:[^c]|$)|clic(?:[^k]|$)|click(?:[^_]|$)|click_(?:[^s]|$)|click_s(?:[^p]|$)|click_sp(?:[^e]|$)|click_spe(?:[^c]|$)|click_spec(?:[^i]|$)|click_speci(?:[^a]|$)|click_specia(?:[^l]|$)|click_special[\\s\\S])"
     },
     "ConsentState": {
       "description": "One category's consent: granted, denied, unknown (not yet decided) or no_cmp (the site has no consent manager).",

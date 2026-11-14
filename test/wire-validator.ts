@@ -55,6 +55,13 @@ export const PAGE_EXIT = {
   engagement_ms: 42_500,
 } as const;
 
+/** A valid click_special with every field. */
+export const CLICK_SPECIAL = {
+  ...EVENT,
+  type: "click_special",
+  link_scheme: "tel",
+} as const;
+
 /** A valid ping with every field. */
 export const PING = {
   schema_version: SCHEMA_VERSION,

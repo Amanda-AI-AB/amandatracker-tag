@@ -50,7 +50,7 @@ export type WireBatch = EventBatch | PingBatch;
 
 // event.json
 
-/** An event that is neither a purchase nor a page exit, such as a pageview or a custom event. */
+/** An event that is neither a purchase, a page exit nor a click_special, such as a pageview or a custom event. */
 export interface TrackedEvent {
   schema_version: SchemaVersion;
   tag_version: TagVersion;
@@ -70,6 +70,7 @@ export interface TrackedEvent {
   user_ref?: UserRef;
   purchase?: never;
   engagement_ms?: never;
+  link_scheme?: never;
   path?: never;
   referrer_host?: never;
   utm?: never;
@@ -85,7 +86,7 @@ export const TRACKED_EVENT_VALUES = { schema_version: [1] } as const;
 
 export const TRACKED_EVENT_MINIMUM = { client_ts: 0 } as const;
 
-export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", type: "^(?:[^p]|p(?:[^ua]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S]|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^_]|$)|page_(?:[^e]|$)|page_e(?:[^x]|$)|page_ex(?:[^i]|$)|page_exi(?:[^t]|$)|page_exit[\\s\\S])", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", user_ref: "^[^@]+$" } as const;
+export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", type: "^(?:[^pc]|p(?:[^ua]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S]|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^_]|$)|page_(?:[^e]|$)|page_e(?:[^x]|$)|page_ex(?:[^i]|$)|page_exi(?:[^t]|$)|page_exit[\\s\\S]|c(?:[^l]|$)|cl(?:[^i]|$)|cli(?:[^c]|$)|clic(?:[^k]|$)|click(?:[^_]|$)|click_(?:[^s]|$)|click_s(?:[^p]|$)|click_sp(?:[^e]|$)|click_spe(?:[^c]|$)|click_spec(?:[^i]|$)|click_speci(?:[^a]|$)|click_specia(?:[^l]|$)|click_special[\\s\\S])", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", user_ref: "^[^@]+$" } as const;
 
 export const TRACKED_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35, user_ref: 128 } as const;
 
@@ -110,6 +111,7 @@ export interface PurchaseEvent {
   user_ref?: UserRef;
   purchase: Purchase;
   engagement_ms?: never;
+  link_scheme?: never;
   path?: never;
   referrer_host?: never;
   utm?: never;
@@ -150,6 +152,7 @@ export interface PageExitEvent {
   user_ref?: UserRef;
   engagement_ms: EngagementMs;
   purchase?: never;
+  link_scheme?: never;
   path?: never;
   referrer_host?: never;
   utm?: never;
@@ -168,6 +171,50 @@ export const PAGE_EXIT_EVENT_MINIMUM = { client_ts: 0, engagement_ms: 0 } as con
 export const PAGE_EXIT_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", user_ref: "^[^@]+$" } as const;
 
 export const PAGE_EXIT_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35, user_ref: 128 } as const;
+
+/** A click on a tel: or mailto: link (01 §4; 08 I4): the envelope every event carries, type click_special, and in link_scheme the link's scheme. The scheme is all the tag reads of the link: never its address, so neither a phone number nor an email address ever leaves the browser. The tag sends one, as autocapture, for each click or middle click on such a link. */
+export interface ClickSpecialEvent {
+  schema_version: SchemaVersion;
+  tag_version: TagVersion;
+  site_id: SiteId;
+  event_id: EventId;
+  /** Always click_special. */
+  type: "click_special";
+  client_ts: ClientTs;
+  url: Url;
+  referrer?: Referrer;
+  page_title?: PageTitle;
+  language?: Language;
+  visitor_id: VisitorId;
+  session_id: SessionId;
+  consent: Consent;
+  attribution?: Attribution;
+  props?: Props;
+  user_ref?: UserRef;
+  link_scheme: LinkScheme;
+  purchase?: never;
+  engagement_ms?: never;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
+}
+
+export const CLICK_SPECIAL_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "link_scheme"] as const;
+
+export const CLICK_SPECIAL_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent", "link_scheme"] as const;
+
+export const CLICK_SPECIAL_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", attribution: "object", props: "object", user_ref: "string", link_scheme: "string" } as const;
+
+export const CLICK_SPECIAL_EVENT_VALUES = { schema_version: [1], type: ["click_special"], link_scheme: ["tel", "mailto"] } as const;
+
+export const CLICK_SPECIAL_EVENT_MINIMUM = { client_ts: 0 } as const;
+
+export const CLICK_SPECIAL_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", user_ref: "^[^@]+$" } as const;
+
+export const CLICK_SPECIAL_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35, user_ref: 128 } as const;
+
+/** The scheme of a clicked tel: or mailto: link, without its colon: tel or mailto, and nothing else. A closed list, so that no part of the link's address (a phone number, an email address, a subject) can be sent in its place. */
+export type LinkScheme = "tel" | "mailto";
 
 /** The site's own pseudonymous reference for the logged-in visitor, such as a hashed customer number, as the site gave it to amanda('identify', ref) (01 §3): it links the visitor to the site's user for logged-in stitching. The tag sends it on the identify event alone, only when the site's config turns identify on, and only on the identified path (granted analytics), never in a ping. Never a raw email address: a value holding an @, the shape of every email address, is refused here, by the tag before it leaves the browser, and by the collector (AAI-197). An identifier, never cut: one over the cap is refused. */
 export type UserRef = string;
@@ -214,7 +261,7 @@ export type SiteId = string;
 /** The event's name, such as pageview. */
 export type EventType = string;
 
-/** A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order, and page_exit, which only a PageExitEvent carries, with its engagement time. The pattern refuses exactly those two, and has no lookahead, so that every regex engine the schema is read with takes it alike. */
+/** A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order, page_exit, which only a PageExitEvent carries, with its engagement time, and click_special, which only a ClickSpecialEvent carries, with its link's scheme. The pattern refuses exactly those three, and has no lookahead, so that every regex engine the schema is read with takes it alike. */
 export type TrackedEventType = string;
 
 /** One category's consent: granted, denied, unknown (not yet decided) or no_cmp (the site has no consent manager). */
@@ -363,8 +410,8 @@ export const PURCHASE_ITEM_MINIMUM = { qty: 1, price: 0 } as const;
 
 export const PURCHASE_ITEM_MAX_LENGTH = { sku: 128, name: 200 } as const;
 
-/** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; a page exit is a PageExitEvent, which carries its engagement time in engagement_ms; every other event is a TrackedEvent, which carries neither, and whose type is never purchase or page_exit. They are told apart by purchase and engagement_ms: each is required by one branch and listed by no other. */
-export type WireEvent = TrackedEvent | PurchaseEvent | PageExitEvent;
+/** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; a page exit is a PageExitEvent, which carries its engagement time in engagement_ms; a click on a tel: or mailto: link is a ClickSpecialEvent, which carries the link's scheme in link_scheme; every other event is a TrackedEvent, which carries none of them, and whose type is never purchase, page_exit or click_special. They are told apart by purchase, engagement_ms and link_scheme: each is required by one branch and listed by no other. */
+export type WireEvent = TrackedEvent | PurchaseEvent | PageExitEvent | ClickSpecialEvent;
 
 // ping.json
 
@@ -412,6 +459,7 @@ export interface WirePing {
   user_ref?: never;
   purchase?: never;
   engagement_ms?: never;
+  link_scheme?: never;
 }
 
 export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm"] as const;
@@ -526,6 +574,8 @@ export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQU
 export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
 export const PAGE_EXIT_EVENT_SHAPE = { fields: PAGE_EXIT_EVENT_FIELDS, required: PAGE_EXIT_EVENT_REQUIRED, types: PAGE_EXIT_EVENT_TYPES, values: PAGE_EXIT_EVENT_VALUES, minimum: PAGE_EXIT_EVENT_MINIMUM, pattern: PAGE_EXIT_EVENT_PATTERN, maxLength: PAGE_EXIT_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+
+export const CLICK_SPECIAL_EVENT_SHAPE = { fields: CLICK_SPECIAL_EVENT_FIELDS, required: CLICK_SPECIAL_EVENT_REQUIRED, types: CLICK_SPECIAL_EVENT_TYPES, values: CLICK_SPECIAL_EVENT_VALUES, minimum: CLICK_SPECIAL_EVENT_MINIMUM, pattern: CLICK_SPECIAL_EVENT_PATTERN, maxLength: CLICK_SPECIAL_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
 export const WIRE_TAG_ERROR_SHAPE = { fields: WIRE_TAG_ERROR_FIELDS, required: WIRE_TAG_ERROR_REQUIRED, types: WIRE_TAG_ERROR_TYPES, values: WIRE_TAG_ERROR_VALUES, minimum: {}, pattern: WIRE_TAG_ERROR_PATTERN, maxLength: WIRE_TAG_ERROR_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 

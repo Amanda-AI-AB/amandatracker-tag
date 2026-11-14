@@ -4,6 +4,7 @@
 import {
   ATTRIBUTION_UTM_FIELDS,
   CLICK_IDS_FIELDS,
+  CLICK_SPECIAL_EVENT_SHAPE,
   PAGE_EXIT_EVENT_SHAPE,
   PURCHASE_EVENT_SHAPE,
   PURCHASE_SHAPE,
@@ -11,6 +12,7 @@ import {
   TRACKED_EVENT_SHAPE,
   WIRE_PING_SHAPE,
   WIRE_TAG_ERROR_SHAPE,
+  type ClickSpecialEvent,
   type PageExitEvent,
   type Purchase,
   type PurchaseEvent,
@@ -23,7 +25,8 @@ import {
 export type TrackedEventInput = Omit<TrackedEvent, "schema_version" | "event_id">;
 export type PurchaseEventInput = Omit<PurchaseEvent, "schema_version" | "event_id">;
 export type PageExitEventInput = Omit<PageExitEvent, "schema_version" | "event_id">;
-export type EventInput = TrackedEventInput | PurchaseEventInput | PageExitEventInput;
+export type ClickSpecialEventInput = Omit<ClickSpecialEvent, "schema_version" | "event_id">;
+export type EventInput = TrackedEventInput | PurchaseEventInput | PageExitEventInput | ClickSpecialEventInput;
 export type PingInput = Omit<WirePing, "schema_version" | "event_id">;
 export type TagErrorInput = Omit<WireTagError, "schema_version" | "event_id">;
 
@@ -423,11 +426,13 @@ function shape<T extends object>(input: T, spec: Shape, path: string): T {
 
 /**
  * Builds an event: a purchase when the input carries a purchase, which then needs type purchase;
- * a page exit when it carries engagement_ms, which then needs type page_exit; and any other event
- * otherwise, whose type is neither. Throws WirePayloadError when a required field is missing or
- * empty (an event of type purchase without its purchase, or of type page_exit without its
- * engagement_ms, included), the purchase isn't an object (null included), or a value breaks a rule
- * the tag can't keep for it (shape).
+ * a page exit when it carries engagement_ms, which then needs type page_exit; a click_special when
+ * it carries link_scheme, which then needs type click_special; and any other event otherwise, whose
+ * type is none of them. Throws WirePayloadError when a required field is missing or empty (an event
+ * of type purchase without its purchase, of type page_exit without its engagement_ms, or of type
+ * click_special without its link_scheme, included), the purchase isn't an object (null included),
+ * or a value breaks a rule the tag can't keep for it (shape: a link_scheme other than tel or mailto
+ * included).
  */
 export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireEvent {
   if ("purchase" in input && input.purchase !== undefined) {
@@ -441,8 +446,14 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
     const event: PageExitEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
     return shape(event, PAGE_EXIT_EVENT_SHAPE, "event");
   }
+  if ("link_scheme" in input && input.link_scheme !== undefined) {
+    if (input.type !== "click_special") throw new WirePayloadError("event.type", 'is not "click_special" on an event with a link_scheme');
+    const event: ClickSpecialEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
+    return shape(event, CLICK_SPECIAL_EVENT_SHAPE, "event");
+  }
   if (input.type === "purchase") throw new WirePayloadError("event.purchase");
   if (input.type === "page_exit") throw new WirePayloadError("event.engagement_ms");
+  if (input.type === "click_special") throw new WirePayloadError("event.link_scheme");
   const event: TrackedEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
   return shape(event, TRACKED_EVENT_SHAPE, "event");
 }
