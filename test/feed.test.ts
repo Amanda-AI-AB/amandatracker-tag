@@ -5,7 +5,9 @@
 // sources drive the machine (AAI-965): the `consent` command and Consent Mode's dataLayer commands,
 // whose updates mid-session change the next event's snapshot. A page_exit (AAI-968) leaves by
 // beacon as an event for a granted visitor, and never for a declined one, not even as a ping. So
-// does a custom event (AAI-979), which goes in the next batch rather than by beacon.
+// does a custom event (AAI-979), which goes in the next batch rather than by beacon. The GA4
+// e-commerce auto-map's events (AAI-974), on a site whose config turns it on, go as a granted
+// visitor's events; a declined one's purchase goes as a count-only ping, and the others not at all.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
@@ -52,8 +54,14 @@ function gtag(..._args: unknown[]): IArguments {
  * A page on LANDING whose config sets declinedMode (and any other consent settings), and whose
  * dataLayer starts as layer, if given, and the tag booted on it as a.js boots it.
  */
-function page(declinedMode: "off" | "pings", queued: unknown[][] = [], consent: Record<string, unknown> = {}, layer?: unknown[]) {
-  const config = { schema_version: 1, site: "site_123", config_version: 7, consent: { declined_mode: declinedMode, ...consent } };
+function page(
+  declinedMode: "off" | "pings",
+  queued: unknown[][] = [],
+  consent: Record<string, unknown> = {},
+  layer?: unknown[],
+  features: Record<string, unknown> = {},
+) {
+  const config = { schema_version: 1, site: "site_123", config_version: 7, consent: { declined_mode: declinedMode, ...consent }, features };
   const jar = new CookieJar("shop.example.com", () => Date.now());
   const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(null, 404), LANDING);
   if (layer !== undefined) win.dataLayer = layer;
@@ -97,6 +105,7 @@ function page(declinedMode: "off" | "pings", queued: unknown[][] = [], consent: 
     onPageview: feed.pageview,
     onPageExit: feed.pageExit,
     onEvent: feed.event,
+    onEcommerce: feed.ecommerce,
     consent: feed.consent,
   });
 
@@ -482,6 +491,97 @@ describe("the custom event feed (AAI-979)", () => {
     expect(p.reports).toEqual([
       { stage: "command", name: "CommandError", message: "amanda('event', name, props) refuses props.user: not a string, a finite number or a boolean" },
     ]);
+  });
+});
+
+describe("the GA4 e-commerce feed (AAI-974)", () => {
+  const ON = { ga4_ecommerce_enabled: true };
+  const SHIRT = { item_id: "SKU_1", item_name: "Tee", price: 10, quantity: 2 };
+  const ORDER = { transaction_id: "T_1", value: 20, currency: "SEK", items: [SHIRT] };
+  /** The shop's funnel, as GTM pushes it to the dataLayer. */
+  const funnel = (p: ReturnType<typeof page>): void => {
+    const push = (event: string, ecommerce: unknown) => (p.win.dataLayer as unknown[]).push({ event, ecommerce });
+    push("view_item", { currency: "SEK", value: 10, items: [SHIRT] });
+    push("add_to_cart", { currency: "SEK", value: 20, items: [SHIRT] });
+    push("begin_checkout", { currency: "SEK", value: 20, items: [SHIRT] });
+    push("purchase", ORDER);
+  };
+  const sent = (p: ReturnType<typeof page>): Record<string, unknown>[] =>
+    [...p.batches(), ...p.beacons()].flatMap((batch) => batch.e as Record<string, unknown>[]);
+
+  it("on, granted: the funnel leaves as events valid against the schema, with the pageview's ids", async () => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]], {}, [], ON);
+    await p.booted;
+    funnel(p);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const batches = p.batches();
+    for (const batch of batches) expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
+    const [view, ...shop] = batches.flatMap((batch) => batch.e as Record<string, unknown>[]);
+    expect(shop.map((item) => item.type)).toEqual(["view_item", "add_to_cart", "begin_checkout", "purchase"]);
+    for (const item of shop) expect(item).toMatchObject({ visitor_id: view!.visitor_id, session_id: view!.session_id });
+    expect(shop[0]).toMatchObject({ props: { currency: "SEK", value: 10, item_count: 1, item_id: "SKU_1" } });
+    expect(shop[3]).toMatchObject({
+      purchase: { order_id: "T_1", revenue: 20, currency: "SEK", items: [{ sku: "SKU_1", name: "Tee", qty: 2, price: 10 }] },
+    });
+    expect(p.reports).toEqual([]);
+  });
+
+  it("on, unknown, then granted: the pending e-commerce events leave once consent comes", async () => {
+    const p = page("off", [], {}, [], ON);
+    await p.booted;
+    funnel(p);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(p.requests()).toEqual([CONFIG_URL]);
+
+    p.win.amanda!("consent", { analytics: "granted", ads: "granted" });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(sent(p).map((item) => item.type)).toEqual(["pageview", "view_item", "add_to_cart", "begin_checkout", "purchase"]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("on, declined in mode pings: the purchase goes as a count-only ping, the rest not at all", async () => {
+    const p = page("pings", [["consent", { analytics: "denied", ads: "denied" }]], {}, [], ON);
+    await p.booted;
+    funnel(p);
+    await p.leave();
+
+    const batches = p.batches();
+    for (const batch of batches) expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
+    const pings = sent(p);
+    expect(pings.map((ping) => [ping.type, ping.path])).toEqual([
+      ["pageview", "/products"],
+      ["purchase", "/products"],
+    ]);
+    expect(pings[1]).not.toHaveProperty("purchase");
+    expect(JSON.stringify(pings)).not.toMatch(/T_1|SKU_1|SEK|item_count/);
+    expect(p.jar.writes).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("on, declined in mode off: nothing goes but the config fetch", async () => {
+    const p = page("off", [["consent", { analytics: "denied", ads: "denied" }]], {}, [], ON);
+    await p.booted;
+    funnel(p);
+    await p.leave();
+
+    expect(p.requests()).toEqual([CONFIG_URL]);
+    expect(p.beacons()).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it.each([
+    ["absent", {}],
+    ["false", { ga4_ecommerce_enabled: false }],
+  ])("%s, granted: the dataLayer's e-commerce events send nothing", async (_, features) => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]], {}, [], features);
+    await p.booted;
+    funnel(p);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(sent(p).map((item) => item.type)).toEqual(["pageview"]);
+    expect(p.reports).toEqual([]);
   });
 });
 

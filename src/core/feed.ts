@@ -1,5 +1,6 @@
 // The pageview feed (AAI-964): where a.js sends each pageview the boot hands over, each
-// page_exit (engagement.ts, AAI-968) and each custom event (custom-event.ts, AAI-979). For the booted site's config it makes one consent state
+// page_exit (engagement.ts, AAI-968), each custom event (custom-event.ts, AAI-979) and each GA4
+// e-commerce event the auto-map makes (ecommerce.ts, AAI-974). For the booted site's config it makes one consent state
 // machine (consent.ts, with the config's declined mode), the visitor's identity (identity.ts) and
 // one transport to the booted tag's endpoint (transport.ts), and feeds each item through the machine:
 //
@@ -10,7 +11,11 @@
 //                 page's click IDs only when the config's consent.pings_include_click_ids is on,
 //                 sent with transport.ping; in mode `off`, nothing. A page_exit never becomes a ping,
 //                 whose frozen field list has no engagement time, and neither does a custom event
-//                 (custom-event.ts, AAI-979), whose list has no props: each is dropped in either mode;
+//                 (custom-event.ts, AAI-979), whose list has no props: each is dropped in either mode.
+//                 Of the e-commerce events, a purchase becomes a count-only ping, as a pageview
+//                 does (pingOf reads its type and page, never its order); a view_item, an
+//                 add_to_cart and a begin_checkout, whose props the list has no room for, are
+//                 dropped, as a custom event is;
 //   pending    -> held by the machine until consent is decided, or the page goes: on pagehide a
 //                 pending page_exit or custom event goes as a declined one does, which is nowhere.
 //
@@ -26,6 +31,7 @@ import type { ErrorBoundary } from "./boundary";
 import { declinedMode, pingsIncludeClickIds, purgeOnWithdrawal, type SiteConfig } from "./config";
 import { createConsent, type ConsentMachine } from "./consent";
 import type { CustomEventInput } from "./custom-event";
+import type { EcommerceInput } from "./ecommerce";
 import type { PageExitInput } from "./engagement";
 import { createIdentity, type IdentityHost } from "./identity";
 import type { PageviewInput } from "./pageview";
@@ -38,7 +44,7 @@ import { withdrawalSender } from "./withdrawal";
 export interface FeedWindow extends TransportWindow, IdentityHost {}
 
 /** What goes through the feed's machine. */
-export type FeedItem = PageviewInput | PageExitInput | CustomEventInput;
+export type FeedItem = PageviewInput | PageExitInput | CustomEventInput | EcommerceInput;
 
 export interface Feed {
   /**
@@ -52,6 +58,11 @@ export interface Feed {
   pageExit(input: PageExitInput): void;
   /** Feeds a custom event through the machine, as an event only: boot's `onEvent` option. */
   event(input: CustomEventInput): void;
+  /**
+   * Feeds a mapped GA4 e-commerce event through the machine: a purchase as a pageview goes, an
+   * event or a count-only ping; the others as events only. Boot's `onEcommerce` option.
+   */
+  ecommerce(input: EcommerceInput): void;
 }
 
 /**
@@ -86,10 +97,12 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
             transport.event(buildEvent({ ...gateClickIds(input, consent), visitor_id: visitorId, session_id: sessionId, consent }));
           },
           anonymous: (input) => {
-            // Only a pageview becomes a ping. A page_exit and a custom event are events only: the
-            // ping's frozen field list has no engagement time and no props, and a custom event's
-            // type, never a pageview's (TAG_EVENT_TYPES), is the site's own free text.
-            if (input.type !== "pageview") return;
+            // Only a pageview and a purchase become pings, the purchase count-only: pingOf reads
+            // its type and page, never its order. A page_exit, a custom event and the other
+            // e-commerce events are events only: the ping's frozen field list has no engagement
+            // time and no props, and a custom event's type, never a pageview's or a purchase's
+            // (TAG_EVENT_TYPES), is the site's own free text.
+            if (input.type !== "pageview" && input.type !== "purchase") return;
             transport.ping(pingOf(input, pingId(), pingOptions));
           },
           withdraw: () => transport.withdrawEvents(),
@@ -101,5 +114,6 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
     pageview: collect,
     pageExit: collect,
     event: collect,
+    ecommerce: collect,
   };
 }

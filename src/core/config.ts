@@ -4,9 +4,9 @@
 // features, custom_params, paused, the kill switch (AAI-92; a paused tag sends nothing, AAI-797), telemetry, whose
 // error_sample_rate overrides the tag's ERROR_SAMPLE_RATE, and bundle_version, the canary pin
 // (AAI-149, canary.ts), and features, whose identify_enabled turns amanda('identify') on (AAI-786,
-// identify.ts) and outbound_clicks_enabled turns outbound link clicks off (AAI-167, outbound.ts),
-// and domains, the site's own, whose links aren't outbound. The tag checks what it reads
-// here; the tickets that use a section (consent AAI-84, ...) check that
+// identify.ts), outbound_clicks_enabled turns outbound link clicks off (AAI-167, outbound.ts) and
+// ga4_ecommerce_enabled turns the GA4 e-commerce auto-map on (AAI-974, ecommerce.ts), and domains,
+// the site's own, whose links aren't outbound. The tag checks what it reads here; the tickets that use a section (consent AAI-84, ...) check that
 // section's fields.
 
 import { CUSTOM_PARAMS_MAP, TRACKED_EVENT_MAX_LENGTH, TRACKED_EVENT_PATTERN } from "../wire/generated";
@@ -139,7 +139,7 @@ export function paused(config: SiteConfig): boolean {
 
 /**
  * The config's optional features section, the site's feature toggles; this tag reads its
- * identify_enabled (AAI-786) and outbound_clicks_enabled (AAI-167), booleans. A section of another shape, or a toggle of another type,
+ * identify_enabled (AAI-786), outbound_clicks_enabled (AAI-167) and ga4_ecommerce_enabled (AAI-974), booleans. A section of another shape, or a toggle of another type,
  * throws ConfigError, since guessing a toggle could send what the site never turned on. Its other
  * toggles are the tickets' that use them.
  */
@@ -148,7 +148,7 @@ function checkFeatures(features: unknown): void {
   if (typeof features !== "object" || features === null || Array.isArray(features)) {
     throw new ConfigError("the config's features is not an object");
   }
-  for (const toggle of ["identify_enabled", "outbound_clicks_enabled"]) {
+  for (const toggle of ["identify_enabled", "outbound_clicks_enabled", "ga4_ecommerce_enabled"]) {
     const value = (features as Record<string, unknown>)[toggle];
     if (value !== undefined && typeof value !== "boolean") {
       throw new ConfigError(`the config's features.${toggle} is not a boolean: ${String(value)}`);
@@ -172,6 +172,15 @@ export function outboundClicksEnabled(config: SiteConfig): boolean {
 export function identifyEnabled(config: SiteConfig): boolean {
   const features = config.features as { identify_enabled?: boolean } | undefined;
   return !!features && features.identify_enabled === true;
+}
+
+/**
+ * Whether the site turned the GA4 e-commerce auto-map on (ecommerce.ts): the config's
+ * features.ga4_ecommerce_enabled, off when it sets none (AAI-974).
+ */
+export function ga4EcommerceEnabled(config: SiteConfig): boolean {
+  const features = config.features as { ga4_ecommerce_enabled?: boolean } | undefined;
+  return !!features && features.ga4_ecommerce_enabled === true;
 }
 
 /** A tag version, as the wire schema's TagVersion has it: semver, at most 64 characters. */

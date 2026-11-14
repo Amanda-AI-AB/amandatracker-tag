@@ -1,7 +1,8 @@
 // GA4 e-commerce auto-map (01 §4, AAI-195): on a shop already tagged for GA4, the tag reads GA4's
 // e-commerce events from window.dataLayer and maps them to its own, so the shop needs no more
 // tagging. It is off unless configured: the tag reads nothing of them unless its boot is handed
-// onEcommerce. a.js doesn't hand it over yet: the per-site toggle that turns it on is a follow-up.
+// onEcommerce, as the tag (tag.ts) does, with the feed, and the site's config turns it on
+// (features.ga4_ecommerce_enabled: true, AAI-974).
 //
 // The mapping is explicit, never a guess. Only these four GA4 events are read, each to an event of
 // the same name:

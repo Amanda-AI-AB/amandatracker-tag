@@ -6,7 +6,9 @@ import { buildEvent, type EventInput } from "../src/wire/payload";
 import { fakeWindow, jsonResponse, PAGE, scriptTag } from "./fake-window";
 import { validator } from "./wire-validator";
 
-const CONFIG = { schema_version: 1, site: "site_123", config_version: 7 };
+const BASE = { schema_version: 1, site: "site_123", config_version: 7 };
+/** A site that turned the auto-map on (AAI-974). */
+const CONFIG = { ...BASE, features: { ga4_ecommerce_enabled: true } };
 const SNIPPET = { src: "https://eu.serversider.com/a.js", "data-site": "site_123" };
 const START = 1_731_400_000_000;
 
@@ -38,8 +40,8 @@ function wireEvent(input: EcommerceInput) {
 }
 
 /** A booted tag with onEcommerce on a page whose dataLayer starts as layer. */
-function shop(layer?: unknown, onEcommerce: boolean | ((input: EcommerceInput) => void) = true) {
-  const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+function shop(layer?: unknown, onEcommerce: boolean | ((input: EcommerceInput) => void) = true, config: object = CONFIG) {
+  const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(config));
   if (layer !== undefined) win.dataLayer = layer;
   const reports: ErrorReport[] = [];
   const events: EcommerceInput[] = [];
@@ -143,6 +145,32 @@ describe("GA4 e-commerce auto-map (AAI-195)", () => {
     await booted;
 
     expect(layer.push).toBe(push);
+  });
+
+  it.each([
+    ["no features section", BASE],
+    ["no ga4_ecommerce_enabled", { ...BASE, features: {} }],
+    ["ga4_ecommerce_enabled false", { ...BASE, features: { ga4_ecommerce_enabled: false } }],
+  ])("is off unless the site's config turns it on (AAI-974): with %s, the dataLayer is neither read nor wrapped", async (_, config) => {
+    const layer: unknown[] = [gtm("purchase", PURCHASE_PARAMS)];
+    const push = layer.push;
+    const { booted, events, reports } = shop(layer, true, config);
+    await booted;
+
+    layer.push(gtm("view_item", { items: [SHIRT] }));
+
+    expect(layer.push).toBe(push);
+    expect(events).toEqual([]);
+    expect(reports).toEqual([]);
+  });
+
+  it("refuses to boot on a ga4_ecommerce_enabled that isn't a boolean (AAI-974)", async () => {
+    const layer: unknown[] = [gtm("purchase", PURCHASE_PARAMS)];
+    const { booted, events, reports } = shop(layer, true, { ...BASE, features: { ga4_ecommerce_enabled: "true" } });
+
+    expect(await booted).toBeUndefined();
+    expect(events).toEqual([]);
+    expect(reports.map((r) => r.stage)).toEqual(["config"]);
   });
 
   it("reads nothing until the tag has booted", () => {

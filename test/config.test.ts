@@ -7,6 +7,7 @@ import {
   declinedMode,
   errorSampleRate,
   fetchConfig,
+  ga4EcommerceEnabled,
   gpcHonored,
   hasCmp,
   MAX_CUSTOM_PARAMS,
@@ -110,6 +111,23 @@ describe("features.outbound_clicks_enabled (AAI-167)", () => {
     for (const value of [null, 0, 1, "false", {}]) {
       expect(() => parseConfig({ ...CONFIG, features: { outbound_clicks_enabled: value } }, "site_123")).toThrow(
         "features.outbound_clicks_enabled is not a boolean",
+      );
+    }
+  });
+});
+
+describe("features.ga4_ecommerce_enabled (AAI-974)", () => {
+  it("is off when the site sets none, and on only when it says true", () => {
+    expect(ga4EcommerceEnabled(parseConfig(CONFIG, "site_123"))).toBe(false);
+    expect(ga4EcommerceEnabled(parseConfig({ ...CONFIG, features: {} }, "site_123"))).toBe(false);
+    expect(ga4EcommerceEnabled(parseConfig({ ...CONFIG, features: { ga4_ecommerce_enabled: false } }, "site_123"))).toBe(false);
+    expect(ga4EcommerceEnabled(parseConfig({ ...CONFIG, features: { ga4_ecommerce_enabled: true } }, "site_123"))).toBe(true);
+  });
+
+  it("refuses a toggle that isn't a boolean", () => {
+    for (const value of [null, 0, 1, "true", {}]) {
+      expect(() => parseConfig({ ...CONFIG, features: { ga4_ecommerce_enabled: value } }, "site_123")).toThrow(
+        new ConfigError(`the config's features.ga4_ecommerce_enabled is not a boolean: ${String(value)}`),
       );
     }
   });

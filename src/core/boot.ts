@@ -17,6 +17,7 @@ import {
   customParams,
   errorSampleRate,
   fetchConfig,
+  ga4EcommerceEnabled,
   gpcHonored,
   hasCmp,
   identifyEnabled,
@@ -123,7 +124,9 @@ export interface BootOptions {
    * Where each mapped GA4 e-commerce event goes (ecommerce.ts), as each pageview does. With it, the
    * booted tag reads view_item, add_to_cart, begin_checkout and purchase from window.dataLayer,
    * those already there and those pushed later, and hands over each as the event its explicit
-   * mapping makes of it. Without it, the default, the tag reads none of them.
+   * mapping makes of it, but only when the site's config turns it on
+   * (features.ga4_ecommerce_enabled: true, AAI-974). Without it, the default, or with the toggle
+   * off or absent, the tag reads none of them.
    */
   readonly onEcommerce?: (input: EcommerceInput) => void;
   /**
@@ -373,7 +376,7 @@ function start(win: TagWindow, tag: Tag, options: BootOptions, engagement: Engag
     );
   }
   const { onEcommerce } = options;
-  if (onEcommerce) {
+  if (onEcommerce && ga4EcommerceEnabled(tag.config)) {
     boundary.guard("pageview", () =>
       watchEcommerce(win, boundary, (mapping) => onEcommerce(ecommerceInput(win, tag.site, tagVersion, mapping, now()))),
     );

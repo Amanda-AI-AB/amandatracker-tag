@@ -240,7 +240,8 @@ Still to come:
   (AAI-964, AAI-965);
 - the config publisher writing `consent.has_cmp` (amandatracker, AAI-94's follow-up): until it
   does, every site counts as having a consent manager and the no-CMP policy is never followed;
-- the per-site toggle that turns the GA4 e-commerce auto-map on in a.js.
+- the config publisher writing `features.ga4_ecommerce_enabled`, and its portal toggle
+  (amandatracker): until it does, the GA4 e-commerce auto-map stays off on every site.
 
 Where this README or a guide describes what the tag does at runtime, it describes the design these
 tickets build, and says so.
@@ -374,7 +375,11 @@ truth for what the tag sends and what the collector accepts:
   left out) and `price` its `sku`, `name`, `qty` and `price`. Nothing is guessed: a purchase
   without a transaction ID, a value and a currency code isn't sent, and one whose items don't all
   map, or are over 50, goes without them, each with a console warning. Any other GA4 event is
-  ignored. a.js doesn't turn it on yet: the per-site toggle is to come.
+  ignored. A site turns it on with `features.ga4_ecommerce_enabled: true` in its config; absent or
+  `false`, the tag neither reads nor wraps the dataLayer, and any other value is a config error. The
+  mapped events go through the consent machine as a pageview does: under granted analytics each is
+  an event; in declined mode `pings` a `purchase` becomes a count-only ping (its type and page,
+  never its order), and the other three send nothing.
   An `identify` event carries `user_ref`, the site's own pseudonymous reference for its logged-in
   user (see identify() below): at most 128 characters, and never one holding an `@`, so never an
   email address. Only the identify event carries it.

@@ -13,7 +13,10 @@
 // (AAI-965). A page_exit (engagement.ts) goes through the feed too, as an event only: it never
 // becomes a ping, whose field list has no engagement time (AAI-968). So does the site's own custom
 // event, amanda('event', name, props) (custom-event.ts, AAI-979), whose props the ping's field list
-// has no room for either.
+// has no room for either. So do the GA4 e-commerce events the auto-map reads from the dataLayer
+// (ecommerce.ts), on a site whose config turns it on (features.ga4_ecommerce_enabled, AAI-974): a
+// purchase as a pageview goes, an event or a count-only ping; a view_item, an add_to_cart and a
+// begin_checkout as events only.
 //
 // Still to come: a form_submit (forms.ts) goes as a page_exit does, an event only, and so do a
 // click_special (special-clicks.ts), a click_outbound (outbound.ts) and an identify event
@@ -58,6 +61,7 @@ export function startTag(install?: Install): Promise<Tag | undefined> | undefine
       consent: feed.consent,
       onPageExit: feed.pageExit,
       onEvent: feed.event,
+      onEcommerce: feed.ecommerce,
       onFormSubmit: () => undefined,
       onClickSpecial: () => undefined,
       onClickOutbound: () => undefined,
