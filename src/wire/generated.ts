@@ -176,10 +176,10 @@ export const CONSENT_REQUIRED = ["analytics", "ads"] as const;
 
 export const CONSENT_TYPES = { analytics: "string", ads: "string", source: "string" } as const;
 
-export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"], source: ["manual", "gcm"] } as const;
+export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"], source: ["gpc", "manual", "gcm"] } as const;
 
-/** The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, or gcm, Google Consent Mode v2. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved. */
-export type ConsentSource = "manual" | "gcm";
+/** The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved. */
+export type ConsentSource = "gpc" | "manual" | "gcm";
 
 /** The event's own properties (01 §4): a flat object of at most 25 keys, each value a string of at most 200 characters (03 §5), a number or a boolean. Keys starting with am_ are reserved for the tag and refused. 01 §4 also caps props at 8 KB in total, which JSON Schema can't express: the collector's payload cap is its backstop (AAI-65). */
 export type Props = Record<string, PropValue>;

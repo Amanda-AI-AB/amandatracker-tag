@@ -40,8 +40,8 @@ describe("wire schema v1: event", () => {
     expect(validate({ ...EVENT, consent: { ...EVENT.consent, functional: "granted" } })).toBe(false);
   });
 
-  it("accepts the consent snapshot's source, manual or gcm, and no other", () => {
-    for (const source of ["manual", "gcm"]) {
+  it("accepts the consent snapshot's source, gpc, manual or gcm, and no other", () => {
+    for (const source of ["gpc", "manual", "gcm"]) {
       expect(validate({ ...EVENT, consent: { ...EVENT.consent, source } })).toBe(true);
     }
     expect(validate({ ...EVENT, consent: { ...EVENT.consent, source: "cookiebot" } })).toBe(false);

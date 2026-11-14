@@ -363,7 +363,7 @@ describe("buildEvent nested consent", () => {
     expect(event.consent.source).toBe("gcm");
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
     const consent = { ...input.consent, source: "cookiebot" } as unknown as EventInput["consent"];
-    expect(() => buildEvent({ ...input, consent })).toThrow(new WirePayloadError("event.consent.source", "is not one of manual, gcm"));
+    expect(() => buildEvent({ ...input, consent })).toThrow(new WirePayloadError("event.consent.source", "is not one of gpc, manual, gcm"));
   });
 });
 
