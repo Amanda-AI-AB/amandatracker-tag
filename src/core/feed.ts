@@ -5,18 +5,19 @@
 //
 //   identified -> an event: the visitor and session ids, the consent snapshot, and its click IDs
 //                 dropped under denied ads (attribution.ts, gateClickIds), sent with transport.event;
-//   declined   -> in declined mode `pings`, the anonymous ping (ping.ts, pingOf), sent with
-//                 transport.ping; in mode `off`, nothing;
+//   declined   -> in declined mode `pings`, the anonymous ping (ping.ts, pingOf), with the page's
+//                 click IDs only when the config's consent.pings_include_click_ids is on, sent
+//                 with transport.ping; in mode `off`, nothing;
 //   pending    -> held by the machine until consent is decided, or the page goes.
 //
 // The machine's withdraw is the transport's withdrawEvents, so that nothing goes after a decline
 // (AAI-86), and its pagehide is registered before the transport's, so that the pings it hands over
 // as the page goes leave with the transport's own pagehide flush (consent.ts).
 
-import { buildEvent } from "../wire/payload";
+import { buildEvent, pingId } from "../wire/payload";
 import { gateClickIds } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
-import { declinedMode, type SiteConfig } from "./config";
+import { declinedMode, pingsIncludeClickIds, type SiteConfig } from "./config";
 import { createConsent, type ConsentMachine } from "./consent";
 import { createIdentity, type IdentityHost } from "./identity";
 import type { PageviewInput } from "./pageview";
@@ -50,6 +51,7 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
       // Before createTransport, which registers the transport's own pagehide flush.
       win.addEventListener("pagehide", () => boundary.guard("consent", () => machine!.pagehide()));
       const transport = createTransport(win, target.endpoint, boundary);
+      const pingOptions = { clickIds: pingsIncludeClickIds(config) };
       machine = createConsent<PageviewInput>({
         declinedMode: declinedMode(config),
         sink: {
@@ -57,7 +59,7 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
             const { visitorId, sessionId } = identity.ids();
             transport.event(buildEvent({ ...gateClickIds(input, consent), visitor_id: visitorId, session_id: sessionId, consent }));
           },
-          anonymous: (input) => transport.ping(pingOf(input)),
+          anonymous: (input) => transport.ping(pingOf(input, pingId(), pingOptions)),
           withdraw: () => transport.withdrawEvents(),
         },
         identity,

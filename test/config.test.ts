@@ -13,6 +13,7 @@ import {
   noCmpPolicy,
   parseConfig,
   paused,
+  pingsIncludeClickIds,
 } from "../src/core/config";
 import { configRequestInit } from "../src/core/endpoint";
 
@@ -126,6 +127,19 @@ describe("the consent section", () => {
   it("refuses a no-CMP policy off the list", () => {
     for (const no_cmp_policy of [null, "", "assume-granted", "granted", "GEO", 1, {}]) {
       expect(() => parseConfig({ ...CONFIG, consent: { no_cmp_policy } }, "site_123")).toThrow(ConfigError);
+    }
+  });
+
+  it("leaves click IDs out of pings unless the site turns pings_include_click_ids on", () => {
+    expect(pingsIncludeClickIds(parseConfig(CONFIG, "site_123"))).toBe(false);
+    expect(pingsIncludeClickIds(parseConfig({ ...CONFIG, consent: {} }, "site_123"))).toBe(false);
+    expect(pingsIncludeClickIds(parseConfig({ ...CONFIG, consent: { pings_include_click_ids: false } }, "site_123"))).toBe(false);
+    expect(pingsIncludeClickIds(parseConfig({ ...CONFIG, consent: { pings_include_click_ids: true } }, "site_123"))).toBe(true);
+  });
+
+  it("refuses a pings_include_click_ids that isn't a boolean", () => {
+    for (const pings_include_click_ids of [null, 0, 1, "true", "false", {}]) {
+      expect(() => parseConfig({ ...CONFIG, consent: { pings_include_click_ids } }, "site_123")).toThrow(ConfigError);
     }
   });
 

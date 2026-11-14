@@ -39,9 +39,12 @@ function snippetStub(win: FakeWindow): AmandaFunction {
   return stub;
 }
 
-/** A page on LANDING whose config sets declinedMode, and the tag booted on it as a.js boots it. */
-function page(declinedMode: "off" | "pings", queued: unknown[][] = []) {
-  const config = { schema_version: 1, site: "site_123", config_version: 7, consent: { declined_mode: declinedMode } };
+/**
+ * A page on LANDING whose config sets declinedMode (and any other consent settings), and the tag
+ * booted on it as a.js boots it.
+ */
+function page(declinedMode: "off" | "pings", queued: unknown[][] = [], consent: Record<string, unknown> = {}) {
+  const config = { schema_version: 1, site: "site_123", config_version: 7, consent: { declined_mode: declinedMode, ...consent } };
   const jar = new CookieJar("shop.example.com", () => Date.now());
   const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(null, 404), LANDING);
   win.fetchMock.mockImplementation(async (url: string) => (url === CONFIG_URL ? jsonResponse(config) : jsonResponse(null, 204)));
@@ -159,6 +162,31 @@ describe("the pageview feed", () => {
       ["pageview", "/cart"],
     ]);
     expect(pings.every((ping) => ping.visitor_id === undefined && ping.consent === undefined)).toBe(true);
+    expect(p.jar.writes).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("declined in mode pings, by default: the ping carries no click ID", async () => {
+    const p = page("pings", [["consent", { analytics: "denied", ads: "denied" }]]);
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const [ping] = p.batches()[0].e;
+    expect(ping).toMatchObject({ path: "/products", utm: { source: "news" } });
+    expect(ping).not.toHaveProperty("click_ids");
+    expect(JSON.stringify(ping)).not.toContain("G1");
+    expect(p.reports).toEqual([]);
+  });
+
+  it("declined in mode pings, with pings_include_click_ids on: the ping carries the page's click IDs", async () => {
+    const p = page("pings", [["consent", { analytics: "denied", ads: "denied" }]], { pings_include_click_ids: true });
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const [batch] = p.batches();
+    expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
+    expect(batch.e[0]).toMatchObject({ path: "/products", utm: { source: "news" }, click_ids: { gclid: "G1" } });
+    expect(batch.e[0].visitor_id).toBeUndefined();
     expect(p.jar.writes).toEqual([]);
     expect(p.reports).toEqual([]);
   });

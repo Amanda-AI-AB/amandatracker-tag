@@ -8,7 +8,8 @@ import { declinedMode } from "../src/core/config";
 import { createConsent, type ConsentMachine } from "../src/core/consent";
 import { DEFAULT_ENDPOINT } from "../src/core/endpoint";
 import { pageviewInput, type PageviewInput } from "../src/core/pageview";
-import { pingInput, pingOf, pingPath, referrerHost, UTM_FIELDS, utmOf } from "../src/core/ping";
+import { CLICK_ID_PARAMS } from "../src/core/attribution";
+import { clickIdsOf, pingInput, pingOf, pingPath, referrerHost, UTM_FIELDS, utmOf } from "../src/core/ping";
 import type { AmandaFunction } from "../src/core/queue";
 import { createTransport } from "../src/core/transport";
 import { WIRE_PING_SHAPE } from "../src/wire/generated";
@@ -19,8 +20,11 @@ import { UUID7, validator } from "./wire-validator";
 const validatePing = validator("ping.json");
 const validateBatch = validator("batch.json");
 
-/** The frozen field list (08 G2): what a ping may carry, and all it may. */
+/** The frozen field list (08 G2): what a ping may carry under the default config, and all it may. */
 const FROZEN = ["event_id", "path", "referrer_host", "schema_version", "site_id", "type", "utm"];
+
+/** The field a ping carries beside FROZEN only on a site that turned pings_include_click_ids on (AAI-801). */
+const CLICK_IDS_FIELD = "click_ids";
 
 const LANDING =
   "https://shop.example/products/shoes?utm_source=newsletter&utm_medium=email&utm_campaign=nov&utm_term=red&utm_content=hero" +
@@ -50,14 +54,15 @@ function everything(): PageviewInput {
 }
 
 describe("the ping field list", () => {
-  it("is ping.json's, frozen: the generated shape lists exactly these fields", () => {
-    expect([...WIRE_PING_SHAPE.fields].sort()).toEqual(FROZEN);
+  it("is ping.json's, frozen: the generated shape lists exactly these fields, and the toggled click_ids", () => {
+    expect([...WIRE_PING_SHAPE.fields].sort()).toEqual([...FROZEN, CLICK_IDS_FIELD].sort());
     expect([...WIRE_PING_SHAPE.nested.utm!.fields].sort()).toEqual([...UTM_FIELDS].sort());
+    expect([...WIRE_PING_SHAPE.nested.click_ids!.fields].sort()).toEqual([...CLICK_ID_PARAMS].sort());
   });
 
-  it("has no field for seq, ids, client time, language, props, click ids, order_id or revenue", () => {
+  it("has no field for seq, ids, client time, language, props, bare click ids, order_id or revenue", () => {
     const linkable = ["seq", "visitor_id", "session_id", "client_ts", "tag_version", "language", "url", "referrer"];
-    const extra = ["page_title", "props", "consent", "gclid", "fbclid", "msclkid", "click_ids", "purchase", "order_id", "revenue"];
+    const extra = ["page_title", "props", "consent", "gclid", "fbclid", "msclkid", "purchase", "order_id", "revenue"];
     for (const field of [...linkable, ...extra]) expect(WIRE_PING_SHAPE.fields).not.toContain(field);
   });
 });
@@ -177,6 +182,46 @@ describe("utmOf", () => {
     expect(input.utm!.campaign).toHaveLength(300);
     const ping = pingOf({ type: "pageview", site_id: "s", url: `https://a.example/?utm_campaign=${"c".repeat(300)}` });
     expect(ping.utm!.campaign).toHaveLength(256);
+  });
+});
+
+describe("click IDs in pings (AAI-801)", () => {
+  it("are left out by default, and when the site's toggle is off", () => {
+    for (const ping of [pingOf(everything(), UUID7), pingOf(everything(), UUID7, {}), pingOf(everything(), UUID7, { clickIds: false })]) {
+      expect(ping).not.toHaveProperty(CLICK_IDS_FIELD);
+      expect(JSON.stringify(ping)).not.toMatch(/abc|def|ghi/);
+    }
+  });
+
+  it("go with the toggle on: the page URL's click IDs, and nothing else of the query", () => {
+    const ping = pingOf(everything(), UUID7, { clickIds: true });
+    expect(Object.keys(ping).sort()).toEqual([...FROZEN, CLICK_IDS_FIELD].sort());
+    expect(ping.click_ids).toEqual({ gclid: "abc", fbclid: "def", msclkid: "ghi" });
+    expect(ping.path).toBe("/products/shoes");
+    expect(JSON.stringify(ping)).not.toMatch(/jane|section|1001|249\.9/);
+    expect(validatePing(ping), JSON.stringify(validatePing.errors)).toBe(true);
+  });
+
+  it("read the URL, never the item's own attribution", () => {
+    const item = { ...everything(), url: "https://shop.example/", attribution: { click_ids: { gclid: "from-attribution" } } };
+    expect(pingOf(item, UUID7, { clickIds: true })).not.toHaveProperty(CLICK_IDS_FIELD);
+  });
+
+  it("are left out with the toggle on when the URL has none", () => {
+    const ping = pingOf({ type: "pageview", site_id: "site_123", url: "https://shop.example/?utm_source=x" }, UUID7, { clickIds: true });
+    expect(ping).not.toHaveProperty(CLICK_IDS_FIELD);
+  });
+
+  it("are read by clickIdsOf: the five click-ID parameters, decoded, those not empty", () => {
+    const url = new URL("https://a.example/?gclid=a%20b&gbraid=&wbraid=w&fbclid=f&msclkid=m&GCLID=x&dclid=d&utm_source=s");
+    expect(clickIdsOf(url)).toEqual({ gclid: "a b", wbraid: "w", fbclid: "f", msclkid: "m" });
+    expect(clickIdsOf(new URL("https://a.example/?utm_source=s"))).toBeUndefined();
+  });
+
+  it("are cut, not refused, when one is over its cap", () => {
+    const ping = pingOf({ type: "pageview", site_id: "s", url: `https://a.example/?gclid=${"g".repeat(3000)}` }, UUID7, { clickIds: true });
+    expect(ping.click_ids!.gclid).toHaveLength(2048);
+    expect(validatePing(ping), JSON.stringify(validatePing.errors)).toBe(true);
   });
 });
 

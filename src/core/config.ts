@@ -170,10 +170,12 @@ const NO_CMP_POLICIES: readonly NoCmpPolicy[] = ["geo", "assume_denied", "assume
 
 /**
  * The config's optional consent section; this tag reads its declined_mode, `off` or `pings`, its
- * gpc_honored and has_cmp, booleans, and its no_cmp_policy (NO_CMP_POLICIES). A section of another shape, or
- * another value, throws ConfigError: guessing a mode could send pings from a site that chose to
- * send nothing, guessing the GPC toggle could ignore a visitor's opt-out, and guessing a no-CMP
- * policy could grant what the site chose to deny. Its other fields are the tickets' that use them.
+ * gpc_honored, has_cmp and pings_include_click_ids, booleans, and its no_cmp_policy
+ * (NO_CMP_POLICIES). A section of another shape, or another value, throws ConfigError: guessing a
+ * mode could send pings from a site that chose to send nothing, guessing the GPC toggle could
+ * ignore a visitor's opt-out, guessing a no-CMP policy could grant what the site chose to deny,
+ * and guessing the click-ID toggle could make a ping click-linkable on a site that never accepted
+ * it. Its other fields are the tickets' that use them.
  */
 function checkConsent(consent: unknown): void {
   if (consent === undefined) return;
@@ -197,6 +199,20 @@ function checkConsent(consent: unknown): void {
   if (cmp !== undefined && typeof cmp !== "boolean") {
     throw new ConfigError(`the config's consent.has_cmp is not a boolean: ${String(cmp)}`);
   }
+  const clickIds = section.pings_include_click_ids;
+  if (clickIds !== undefined && typeof clickIds !== "boolean") {
+    throw new ConfigError(`the config's consent.pings_include_click_ids is not a boolean: ${String(clickIds)}`);
+  }
+}
+
+/**
+ * Whether the site's anonymous pings carry the landing URL's click IDs: the config's
+ * consent.pings_include_click_ids, off when it sets none (AAI-801, AAI-88). A click ID makes a ping
+ * click-linkable, so only a site whose owner accepted that turns it on (a legal-badged setting).
+ */
+export function pingsIncludeClickIds(config: SiteConfig): boolean {
+  const consent = config.consent as { pings_include_click_ids?: boolean } | undefined;
+  return !!consent && consent.pings_include_click_ids === true;
 }
 
 /**
