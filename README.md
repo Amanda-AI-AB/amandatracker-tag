@@ -13,10 +13,20 @@ queued, then makes a pageview on load and on each route change of a single-page 
 page). Every step runs inside an error boundary (`src/core/boundary.ts`): a failure never reaches the
 host page. It is reported instead (`src/core/telemetry.ts`), as a tag error posted to `v1/t`
 without cookies, from 10 % of page loads (the config's `telemetry.error_sample_rate` sets another
-share) and at most 5 per page. Still to come:
+share) and at most 5 per page.
+
+The transport (`src/core/transport.ts`) is built but not yet fed: it posts events and pings to
+`v1/e` in batches of up to 10, sent 2 s after the first is buffered, at the 10th, or at once for a
+pageview. A batch that meets a network error or a 5xx is retried twice (after 1 s, then 3 s) and
+then dropped; one the collector refuses otherwise is dropped and reported as a tag error. On
+`pagehide` it sends what is buffered or awaiting a retry with `sendBeacon` (pings, which must not
+carry cookies, and any batch `sendBeacon` refuses go with a `keepalive` fetch instead). Each event
+batch carries `seq`, the page's batch counter from 1, whose gaps show lost batches. Its queues live
+in memory only: no cookie, `localStorage` or IndexedDB. Still to come:
 
 - the collector accepting `POST /v1/t` and the event debugger showing tag errors (amandatracker);
-- the transport, which posts batches, pageviews included (AAI-68);
+- pageviews made into events (with the ids and consent below) or pings, and handed to the transport;
+- the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
 - the `_amnda_id` and `_amnda_ses` cookies (AAI-98);
 - `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).
 
@@ -97,9 +107,9 @@ checks its vendored copy against hashes it records itself (the monorepo's `share
 ## The endpoint
 
 The tag fetches `cfg/<SITE_PUBLIC_ID>.json` from one base, `https://eu.serversider.com` by default,
-or the one the script tag's `data-endpoint` attribute sets. Planned: it is to post to `v1/e` (AAI-68)
-and load `adapters/<version>/<name>.js` (AAI-831) from the same base; `src/core/endpoint.ts` already
-builds those URLs and request options. It resolves `data-endpoint` this way:
+or the one the script tag's `data-endpoint` attribute sets. Its transport posts to `v1/e` on the
+same base. Planned: it is to load `adapters/<version>/<name>.js` (AAI-831) from there too;
+`src/core/endpoint.ts` already builds those URLs and request options. It resolves `data-endpoint` this way:
 
 - a path, such as `data-endpoint="/amnda"`, is on the page's own origin: a
   [first-party reverse proxy](docs/first-party-proxy.md);
@@ -113,7 +123,7 @@ config fetch, with `credentials: "omit"`: they never carry the site's cookies. E
 scripts included, sends the page's origin alone as `Referer` (`referrerPolicy: "strict-origin"`),
 never its path or query. Only the pagehide flush adds `keepalive`, and `batchRequestInit` refuses a
 keepalive body over 60 KiB; keeping the flush's bodies within 60 KiB together is the transport's job
-(AAI-68). Browsers refuse a keepalive request once the bodies of all
+(AAI-893; until then a larger pagehide batch is reported and lost). Browsers refuse a keepalive request once the bodies of all
 of a page's keepalive requests in flight would pass 64 KiB, and that quota is shared with
 `sendBeacon` and with every other script's beacons on the page (analytics and ad tags firing on the
 same pagehide). The 4 KiB left over is a margin, not a reservation: a pagehide request can still be

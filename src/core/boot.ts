@@ -19,7 +19,7 @@ export interface TagWindow extends AmandaHost, PageSource, RouteSource {
 export interface BootOptions {
   readonly tagVersion: string;
   readonly boundary: ErrorBoundary;
-  /** Where each pageview goes: the transport, once AAI-68 adds it. */
+  /** Where each pageview goes: the transport (createTransport), once identity and consent make it an event. */
   readonly onPageview: (input: PageviewInput) => void;
   /** Filled in as the boot resolves the endpoint and the site, for the tag errors' sink. */
   readonly target?: TagTarget;
