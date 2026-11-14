@@ -89,6 +89,19 @@ keeps the first one the browser accepts (a browser refuses a cookie on a public 
   the customer runs, through which the collector re-issues them (AAI-827, AAI-831); Amanda does not
   host one.
 
+Attribution (`src/core/attribution.ts`) is captured on each landing, the page load's first
+pageview, from the landing URL's query string: the UTM set (`utm_source`, `utm_medium`,
+`utm_campaign`, `utm_term`, `utm_content`, `utm_id`, `utm_source_platform`, `utm_creative_format`,
+`utm_marketing_tactic`), the click IDs `gclid`, `gbraid`, `wbraid`, `fbclid` and `msclkid`, and the
+parameters the site's config names in `custom_params` (a list of up to 25 names). The pageview
+carries them as its `attribution`; a route change of a single-page app is no landing and carries
+none. Values are sent verbatim, never case-normalised (`Summer` and `summer` stay distinct) and
+never classified: the collector caps each at 200 characters, and the processor classifies them.
+Click IDs are identifiers: while `ads` is denied, an event carries none, neither in its
+`attribution` nor in the `url` and `referrer` it sends, while its UTMs and custom parameters, which
+are campaign labels, still go (`gateClickIds`, to be applied on the identified path by AAI-964). An
+anonymous ping never carries any of it but its five frozen UTM fields.
+
 Still to come:
 
 - the collector accepting `POST /v1/t` and the event debugger showing tag errors (amandatracker);
@@ -128,7 +141,10 @@ truth for what the tag sends and what the collector accepts:
 - `event.json`: the event envelope. It carries the schema and tag versions, `site_id`, a UUIDv7
   `event_id`, `client_ts` in epoch milliseconds, the page fields, the visitor and session ids, and
   the consent snapshot (each category's state, and the `source` that set it: `manual` or `gcm`,
-  absent when none has). Its `props` are flat: at most 25 keys, none starting with `am_`, each value
+  absent when none has). The page load's first pageview carries the landing URL's `attribution`:
+  its `utm` set (`source`, `medium`, `campaign`, `term`, `content`, `id`, `source_platform`,
+  `creative_format`, `marketing_tactic`), its `click_ids` (`gclid`, `gbraid`, `wbraid`, `fbclid`,
+  `msclkid`) and the site's `custom` parameters, each verbatim. Its `props` are flat: at most 25 keys, none starting with `am_`, each value
   a string of at most 200 characters, a number or a boolean. A purchase is a `PurchaseEvent`:
   `type: "purchase"` and a `purchase` object (`order_id`, `revenue`, `currency`, and up to 50
   `items` of `sku`, `name`, `qty` and `price`). No other event carries `purchase`.

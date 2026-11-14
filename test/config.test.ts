@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   checkSiteId,
   ConfigError,
+  customParams,
   declinedMode,
   errorSampleRate,
   fetchConfig,
   gpcHonored,
+  MAX_CUSTOM_PARAMS,
   noCmpPolicy,
   parseConfig,
 } from "../src/core/config";
@@ -105,6 +107,23 @@ describe("the consent section", () => {
   it("refuses a section or a declined mode of another shape", () => {
     for (const consent of [null, [], "pings", { declined_mode: "on" }, { declined_mode: "" }, { declined_mode: null }, { declined_mode: 1 }]) {
       expect(() => parseConfig({ ...CONFIG, consent }, "site_123")).toThrow(ConfigError);
+    }
+  });
+});
+
+describe("custom_params", () => {
+  it("is optional, and names the site's own attribution parameters", () => {
+    expect(customParams(parseConfig(CONFIG, "site_123"))).toEqual([]);
+    expect(customParams(parseConfig({ ...CONFIG, custom_params: [] }, "site_123"))).toEqual([]);
+    expect(customParams(parseConfig({ ...CONFIG, custom_params: ["ref", "Partner ID"] }, "site_123"))).toEqual(["ref", "Partner ID"]);
+    const most = Array.from({ length: MAX_CUSTOM_PARAMS }, (_, i) => `p${i}`);
+    expect(customParams(parseConfig({ ...CONFIG, custom_params: most }, "site_123"))).toEqual(most);
+  });
+
+  it("refuses what isn't a list of names, or more names than an event can carry", () => {
+    const tooMany = Array.from({ length: MAX_CUSTOM_PARAMS + 1 }, (_, i) => `p${i}`);
+    for (const custom_params of [null, "ref", { ref: true }, [""], ["ref", 1], [null], tooMany]) {
+      expect(() => parseConfig({ ...CONFIG, custom_params }, "site_123")).toThrow(ConfigError);
     }
   });
 });

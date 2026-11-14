@@ -2,8 +2,9 @@
 // command queue, send the first pageview and follow the single-page app's route changes. Every
 // step runs inside the error boundary: a failure is reported, and the page never sees it.
 
+import { attributionOf } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
-import { checkSiteId, errorSampleRate, fetchConfig, gpcHonored, type SiteConfig } from "./config";
+import { checkSiteId, customParams, errorSampleRate, fetchConfig, gpcHonored, type SiteConfig } from "./config";
 import {
   consentCommand,
   createLadder,
@@ -87,7 +88,8 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * Runs the booted tag: Global Privacy Control, when the site honors it, so that nothing grants
  * before it denies; Consent Mode's state as the dataLayer has it so far, then the site's queued
  * commands (they may set what the pageview carries, such as consent), then the first pageview,
- * then a pageview on each route change.
+ * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
+ * on each route change.
  */
 function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   const { boundary, tagVersion, onPageview } = options;
@@ -95,9 +97,11 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   let lastUrl: string | undefined;
   const pageview = (): void => {
     boundary.guard("pageview", () => {
+      const landing = lastUrl === undefined;
       const input = pageviewInput(win, tag.site, tagVersion, lastUrl === undefined ? win.document.referrer : lastUrl, now());
       lastUrl = input.url;
-      onPageview(input);
+      const attribution = landing ? attributionOf(input.url, customParams(tag.config)) : undefined;
+      onPageview(attribution === undefined ? input : { ...input, attribution });
     });
   };
   const commands: Record<string, Command> = { pageview };

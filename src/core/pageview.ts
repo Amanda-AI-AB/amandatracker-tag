@@ -3,6 +3,7 @@
 // A route change is a change of the URL without its fragment: the event's url drops the fragment
 // anyway (src/wire/payload.ts), so a hash-only change would send the same page twice.
 
+import type { Attribution } from "../wire/generated";
 import { stripFrom } from "../wire/payload";
 import type { ErrorBoundary } from "./boundary";
 
@@ -20,6 +21,8 @@ export interface PageviewInput {
   readonly referrer?: string;
   readonly page_title?: string;
   readonly language?: string;
+  /** The landing's attribution, on the page load's first pageview alone (attribution.ts). */
+  readonly attribution?: Attribution;
 }
 
 /** What a pageview reads from the page. */

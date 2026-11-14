@@ -6,6 +6,7 @@
 // here; the tickets that use a section (consent AAI-84, kill switch AAI-797, ...) check that
 // section's fields.
 
+import { CUSTOM_PARAMS_MAP } from "../wire/generated";
 import type { DeclinedMode, NoCmpPolicy } from "./consent";
 import { configRequestInit, configUrl } from "./endpoint";
 
@@ -55,7 +56,36 @@ export function parseConfig(json: unknown, site: string): SiteConfig {
   }
   checkTelemetry(config.telemetry);
   checkConsent(config.consent);
+  checkCustomParams(config.custom_params);
   return config as SiteConfig;
+}
+
+/** The most custom attribution parameters a site may name: the wire's CustomParams cap. */
+export const MAX_CUSTOM_PARAMS = CUSTOM_PARAMS_MAP.maxProperties;
+
+/**
+ * The config's optional custom_params (site_settings.custom_params, AAI-90): the names of the
+ * site's own attribution parameters, which the tag reads from the landing URL beside the UTMs and
+ * click IDs (attribution.ts). A list of non-empty strings, at most MAX_CUSTOM_PARAMS of them;
+ * anything else throws ConfigError, since guessing which parameters the site meant would send what
+ * it never asked for, or lose what it did.
+ */
+function checkCustomParams(params: unknown): void {
+  if (params === undefined) return;
+  if (!Array.isArray(params)) throw new ConfigError("the config's custom_params is not a list");
+  if (params.length > MAX_CUSTOM_PARAMS) {
+    throw new ConfigError(`the config's custom_params names more than ${MAX_CUSTOM_PARAMS} parameters`);
+  }
+  for (const name of params) {
+    if (typeof name !== "string" || name === "") {
+      throw new ConfigError(`the config's custom_params holds a name that is not a non-empty string: ${String(name)}`);
+    }
+  }
+}
+
+/** The site's custom attribution parameters: the config's custom_params, none when it sets none. */
+export function customParams(config: SiteConfig): readonly string[] {
+  return (config.custom_params as readonly string[] | undefined) || [];
 }
 
 /** The declined modes a site can choose (02 §2); `off` is the default for a site that sets none. */
