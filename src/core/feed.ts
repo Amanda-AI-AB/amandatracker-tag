@@ -15,13 +15,15 @@
 //                 pending page_exit or custom event goes as a declined one does, which is nowhere.
 //
 // The machine's withdraw is the transport's withdrawEvents, so that nothing goes after a decline
-// (AAI-86), and its pagehide is registered before the transport's, so that the pings it hands over
+// (AAI-86), with one exception the site opts into: with the config's consent.purge_on_withdrawal on,
+// forgetting a visitor first posts the withdrawal signal with their visitor id (withdrawal.ts,
+// AAI-785), so that their stored data is erased, and only then deletes their cookies. Its pagehide is registered before the transport's, so that the pings it hands over
 // as the page goes leave with the transport's own pagehide flush (consent.ts).
 
 import { buildEvent, pingId } from "../wire/payload";
 import { gateClickIds } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
-import { declinedMode, pingsIncludeClickIds, type SiteConfig } from "./config";
+import { declinedMode, pingsIncludeClickIds, purgeOnWithdrawal, type SiteConfig } from "./config";
 import { createConsent, type ConsentMachine } from "./consent";
 import type { CustomEventInput } from "./custom-event";
 import type { PageExitInput } from "./engagement";
@@ -30,6 +32,7 @@ import type { PageviewInput } from "./pageview";
 import { pingOf } from "./ping";
 import type { TagTarget } from "./telemetry";
 import { createTransport, type TransportWindow } from "./transport";
+import { withdrawalSender } from "./withdrawal";
 
 /** The browser globals the feed uses: window, or a stand-in for it in tests. */
 export interface FeedWindow extends TransportWindow, IdentityHost {}
@@ -55,7 +58,7 @@ export interface Feed {
  * The feed of the tag on win. target is the boot's (TagTarget): the transport goes to the endpoint
  * the boot resolved, read when the booted tag starts.
  */
-export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: TagTarget): Feed {
+export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: TagTarget, tagVersion: string): Feed {
   let machine: ConsentMachine<FeedItem> | undefined;
   const collect = (item: FeedItem): void => {
     // The boot makes the machine (consent) before it hands over its first item.
@@ -65,7 +68,12 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
   return {
     consent(config) {
       if (machine) throw new Error("amanda: the pageview feed's consent machine was made already");
-      const identity = createIdentity(win);
+      const identity = createIdentity(
+        win,
+        purgeOnWithdrawal(config)
+          ? { beforeForget: withdrawalSender(win.fetch.bind(win), { endpoint: target.endpoint, site: config.site, tagVersion }, boundary) }
+          : {},
+      );
       // Before createTransport, which registers the transport's own pagehide flush.
       win.addEventListener("pagehide", () => boundary.guard("consent", () => machine!.pagehide()));
       const transport = createTransport(win, target.endpoint, boundary);

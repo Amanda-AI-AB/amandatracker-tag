@@ -11,7 +11,7 @@ import { boot } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
 import { DEFAULT_ENDPOINT } from "../src/core/endpoint";
 import { createFeed } from "../src/core/feed";
-import { SESSION_COOKIE, VISITOR_COOKIE } from "../src/core/identity";
+import { readCookie, SESSION_COOKIE, VISITOR_COOKIE } from "../src/core/identity";
 import type { AmandaFunction } from "../src/core/queue";
 import { defaultTarget } from "../src/core/telemetry";
 import { CookieJar } from "./cookie-jar";
@@ -89,7 +89,7 @@ function page(declinedMode: "off" | "pings", queued: unknown[][] = [], consent: 
   const reports: ErrorReport[] = [];
   const boundary = new ErrorBoundary((report) => reports.push(report), 1);
   const target = defaultTarget();
-  const feed = createFeed(win, boundary, target);
+  const feed = createFeed(win, boundary, target, "0.2.0");
   const booted = boot(win, {
     tagVersion: "0.2.0",
     boundary,
@@ -482,5 +482,94 @@ describe("the custom event feed (AAI-979)", () => {
     expect(p.reports).toEqual([
       { stage: "command", name: "CommandError", message: "amanda('event', name, props) refuses props.user: not a string, a finite number or a boolean" },
     ]);
+  });
+});
+
+describe("purge on withdrawal (AAI-785)", () => {
+  const WITHDRAWAL_URL = `${DEFAULT_ENDPOINT}/v1/w`;
+  const validateWithdrawal = validator("withdrawal.json");
+
+  /**
+   * A granted visitor's page whose config sets purge_on_withdrawal to purge, if given; each POST
+   * /v1/w is recorded with the cookies live as it is sent.
+   */
+  async function grantedPage(declinedMode: "off" | "pings", purge?: boolean) {
+    const p = page(declinedMode, [["consent", { analytics: "granted", ads: "granted" }]], purge === undefined ? {} : { purge_on_withdrawal: purge });
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(0);
+    const withdrawals: { body: Record<string, unknown>; init: RequestInit; cookies: string[] }[] = [];
+    const answer = p.win.fetchMock.getMockImplementation()!;
+    p.win.fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      if (url === WITHDRAWAL_URL) {
+        withdrawals.push({ body: JSON.parse(init.body as string), init, cookies: p.jar.live().map((c) => c.name) });
+      }
+      return answer(url, init);
+    });
+    const visitorId = p.batches()[0].e[0].visitor_id as string;
+    return { ...p, withdrawals, visitorId };
+  }
+
+  it("on: a withdrawal posts the signal with the visitor id while the cookies are there, then deletes them", async () => {
+    const p = await grantedPage("off", true);
+    expect(p.jar.live().map((c) => c.name)).toEqual([VISITOR_COOKIE, SESSION_COOKIE]);
+
+    p.win.amanda!("consent", { analytics: "denied" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(p.withdrawals).toHaveLength(1);
+    const [signal] = p.withdrawals;
+    expect(validateWithdrawal(signal!.body), JSON.stringify(validateWithdrawal.errors)).toBe(true);
+    expect(signal!.body).toMatchObject({ site_id: "site_123", tag_version: "0.2.0", visitor_id: p.visitorId });
+    expect(signal!.cookies).toEqual([VISITOR_COOKIE, SESSION_COOKIE]);
+    expect(signal!.init).toMatchObject({ credentials: "omit", keepalive: true });
+    expect(p.jar.live()).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("on: the signal is the only request a declined-mode off site sends after the withdrawal", async () => {
+    const p = await grantedPage("off", true);
+    const before = p.requests().length;
+
+    p.win.amanda!("consent", { analytics: "denied" });
+    p.win.history.pushState(null, "", "/cart");
+    await p.leave();
+
+    expect(p.requests().slice(before)).toEqual([WITHDRAWAL_URL]);
+  });
+
+  it("on: one signal per withdrawal, each with the id the visitor had then", async () => {
+    const p = await grantedPage("pings", true);
+    p.win.amanda!("consent", { analytics: "denied" });
+    p.win.amanda!("consent", { analytics: "denied" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(p.withdrawals.map((w) => w.body.visitor_id)).toEqual([p.visitorId]);
+
+    // A grant after the denial mints a fresh visitor id; withdrawing again erases that one.
+    p.win.amanda!("consent", { analytics: "granted" });
+    const renewed = readCookie(p.jar.cookie, VISITOR_COOKIE)!.slice("v1.".length);
+    expect(renewed).not.toBe(p.visitorId);
+    p.win.amanda!("consent", { analytics: "denied" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(p.withdrawals.map((w) => w.body.visitor_id)).toEqual([p.visitorId, renewed]);
+  });
+
+  it("on: a visitor who never granted sends no signal when they decline", async () => {
+    const p = page("off", [["consent", { analytics: "denied", ads: "denied" }]], { purge_on_withdrawal: true });
+    await p.booted;
+    await p.leave();
+    expect(p.requests()).toEqual([CONFIG_URL]);
+  });
+
+  it.each([
+    ["off by default", undefined],
+    ["turned off", false],
+  ] as const)("%s: a withdrawal only deletes the cookies", async (_, purge) => {
+    const p = await grantedPage("off", purge);
+    p.win.amanda!("consent", { analytics: "denied" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(p.withdrawals).toEqual([]);
+    expect(p.requests()).not.toContain(WITHDRAWAL_URL);
+    expect(p.jar.live()).toEqual([]);
   });
 });

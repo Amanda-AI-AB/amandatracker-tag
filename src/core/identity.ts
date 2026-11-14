@@ -18,7 +18,8 @@
 // under granted analytics) calls ids(), which mints what is missing, rolls the session and
 // refreshes both cookies; nothing else here writes a cookie but renew(), which the machine calls
 // only on a grant. forget() deletes both cookies at once, those the collector re-issued through a
-// first-party proxy too (AAI-827; it never sets them HttpOnly), and a grant after a denial renews
+// first-party proxy too (AAI-827; it never sets them HttpOnly), first handing the visitor id to
+// beforeForget, the withdrawal signal of a site that purges on withdrawal (AAI-785), and a grant after a denial renews
 // both ids, so earlier anonymous pings are never linked to the visitor (consent.ts).
 //
 // Safari's ITP caps script-written cookies at 7 days, or 24 hours after a link with tracking
@@ -71,6 +72,13 @@ export interface IdentityOptions {
   readonly now?: () => number;
   /** Random bytes for the ids and the probe. */
   readonly random?: (length: number) => Uint8Array;
+  /**
+   * Called by forget() with the visitor id it is about to delete, before it deletes the cookies:
+   * the withdrawal signal of a site whose config turns purge on withdrawal on (AAI-785, feed.ts).
+   * Not called when there is no visitor id to delete. The cookies are deleted even when it throws,
+   * and its error then propagates from forget().
+   */
+  readonly beforeForget?: (visitorId: string) => void;
 }
 
 /** A cookie's value from a document.cookie string, or undefined. */
@@ -189,21 +197,33 @@ export function createIdentity(host: IdentityHost, options: IdentityOptions = {}
       store();
     },
     forget() {
+      // The visitor as ids() would read it: the cookie wherever the browser keeps one, the id in
+      // memory where it keeps none.
+      const inMemory = resolved && domain === null;
+      const forgotten = parseVisitor(readCookie(doc.cookie, VISITOR_COOKIE)) ?? (inMemory ? visitor : undefined);
       visitor = undefined;
       session = undefined;
-      // Only cookies that are there are deleted, so a visitor who never granted has none written.
-      const present = [VISITOR_COOKIE, SESSION_COOKIE].filter((name) => readCookie(doc.cookie, name) !== undefined);
-      if (present.length === 0) return;
-      // On every domain they may be on, host-only included: the tag's own, and any the collector
-      // re-issued through a proxy.
-      const domains = candidateDomains(hostname());
-      if (domains[0] !== undefined) domains.push(undefined);
-      for (const name of present) {
-        for (const candidate of domains) doc.cookie = cookieString(name, "", 0, candidate);
+      try {
+        if (forgotten !== undefined && options.beforeForget) options.beforeForget(forgotten);
+      } finally {
+        deleteCookies();
       }
-      const left = present.filter((name) => readCookie(doc.cookie, name) !== undefined);
-      // A cookie on another path than / can't be reached from here: said, never ignored.
-      if (left.length > 0) warn(`amanda: consent was withdrawn, but ${left.join(" and ")} could not be deleted`);
     },
   };
+
+  function deleteCookies(): void {
+    // Only cookies that are there are deleted, so a visitor who never granted has none written.
+    const present = [VISITOR_COOKIE, SESSION_COOKIE].filter((name) => readCookie(doc.cookie, name) !== undefined);
+    if (present.length === 0) return;
+    // On every domain they may be on, host-only included: the tag's own, and any the collector
+    // re-issued through a proxy.
+    const domains = candidateDomains(hostname());
+    if (domains[0] !== undefined) domains.push(undefined);
+    for (const name of present) {
+      for (const candidate of domains) doc.cookie = cookieString(name, "", 0, candidate);
+    }
+    const left = present.filter((name) => readCookie(doc.cookie, name) !== undefined);
+    // A cookie on another path than / can't be reached from here: said, never ignored.
+    if (left.length > 0) warn(`amanda: consent was withdrawn, but ${left.join(" and ")} could not be deleted`);
+  }
 }

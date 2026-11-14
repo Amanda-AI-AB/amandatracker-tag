@@ -16,6 +16,7 @@ import {
   parseConfig,
   paused,
   pingsIncludeClickIds,
+  purgeOnWithdrawal,
 } from "../src/core/config";
 import { configRequestInit } from "../src/core/endpoint";
 
@@ -188,6 +189,19 @@ describe("the consent section", () => {
   it("refuses a pings_include_click_ids that isn't a boolean", () => {
     for (const pings_include_click_ids of [null, 0, 1, "true", "false", {}]) {
       expect(() => parseConfig({ ...CONFIG, consent: { pings_include_click_ids } }, "site_123")).toThrow(ConfigError);
+    }
+  });
+
+  it("purges on withdrawal only when the site turns purge_on_withdrawal on (AAI-785)", () => {
+    expect(purgeOnWithdrawal(parseConfig(CONFIG, "site_123"))).toBe(false);
+    expect(purgeOnWithdrawal(parseConfig({ ...CONFIG, consent: {} }, "site_123"))).toBe(false);
+    expect(purgeOnWithdrawal(parseConfig({ ...CONFIG, consent: { purge_on_withdrawal: false } }, "site_123"))).toBe(false);
+    expect(purgeOnWithdrawal(parseConfig({ ...CONFIG, consent: { purge_on_withdrawal: true } }, "site_123"))).toBe(true);
+  });
+
+  it("refuses a purge_on_withdrawal that isn't a boolean", () => {
+    for (const purge_on_withdrawal of [null, 0, 1, "true", "false", {}]) {
+      expect(() => parseConfig({ ...CONFIG, consent: { purge_on_withdrawal } }, "site_123")).toThrow(ConfigError);
     }
   });
 

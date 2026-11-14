@@ -39,7 +39,7 @@ const boundary = new ErrorBoundary(
 
 boundary.guard("boot", () => {
   const win = window as unknown as TagWindow;
-  const feed = createFeed(win, boundary, target);
+  const feed = createFeed(win, boundary, target, TAG_VERSION);
   return boot(win, {
     tagVersion: TAG_VERSION,
     boundary,

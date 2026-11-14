@@ -152,6 +152,16 @@ keeps the first one the browser accepts (a browser refuses a cookie on a public 
 - **Withdrawal deletes both at once**, on every domain they may be on, those the collector re-issued
   through a first-party proxy included. A grant after a denial mints fresh ids, so the anonymous
   pings sent meanwhile are never linked to the visitor.
+- **Purge on withdrawal, off by default.** A site whose config turns `consent.purge_on_withdrawal`
+  on (AAI-226) has the withdrawal erase what is stored about the visitor too: just before deleting
+  the cookies, the tag posts the withdrawal signal (`src/core/withdrawal.ts`) to `v1/w` with the
+  visitor ID of `_amnda_id`, and the processor erases that visitor through the DSAR cascade delete.
+  The signal carries the visitor ID and nothing about the page, and goes without cookies and with
+  `keepalive`. It is sent once per withdrawal, in either declined mode, `off` included, and only
+  when there is a visitor ID to erase: a visitor who never granted sends none. It is not retried: a
+  5xx or a network error is logged in the console, and a refusal is reported as a tag error. The
+  cookies are deleted in every case. Without the option, a withdrawal deletes the cookies and sends
+  nothing.
 - **Safari's limit, accepted.** Safari's Intelligent Tracking Prevention caps cookies a script
   writes at 7 days, or 24 hours when the visitor arrived from a link with tracking decoration, so a
   Safari visitor returning after that counts as new. The tag does not work around it. The way to keep
@@ -351,11 +361,15 @@ truth for what the tag sends and what the collector accepts:
   error's name and message, each URL in the message cut to its scheme and host and each email
   address replaced. It is sent in every consent state, so it carries nothing about the visitor or
   the page: no ids, no URL, no `client_ts`, and an `event_id` whose time is only the hour.
-- `pubsub-message.json`: what the collector publishes to Pub/Sub. It holds the client's event or
-  ping and the fields the collector derives (received time, region, country, device class). For an
-  event it may also carry the ISO 3166-2 `subdivision`, `browser_family`, `browser_major` and
-  `os_family`; a ping's message leaves them off, as a ping carries country-level geo only. It
-  never includes the IP address.
+- `withdrawal.json`: the request body of `POST /v1/w`, the withdrawal signal of a site that purges
+  on withdrawal (AAI-785): the schema and tag versions, `site_id`, a UUIDv7 `event_id`, `client_ts`
+  and the `visitor_id` whose stored data is to be erased. It carries nothing about the page: no URL,
+  referrer, session id or consent snapshot.
+- `pubsub-message.json`: what the collector publishes to Pub/Sub. It holds the client's event,
+  ping or withdrawal signal and the fields the collector derives (received time, region, country,
+  device class). For an event it may also carry the ISO 3166-2 `subdivision`, `browser_family`,
+  `browser_major` and `os_family`; a ping's or a withdrawal signal's message leaves them off, as a
+  ping carries country-level geo only. It never includes the IP address.
 
 `pnpm gen:wire` generates `src/wire/generated.ts` from the newest version: types, field lists and
 length caps. The payload builder in `src/wire/payload.ts` shapes every payload by them. A test
@@ -390,7 +404,7 @@ checks its vendored copy against hashes it records itself (the monorepo's `share
 
 The tag fetches `cfg/<SITE_PUBLIC_ID>.json` from one base, `https://eu.serversider.com` by default,
 or the one the script tag's `data-endpoint` attribute sets. Its transport posts to `v1/e` on the
-same base. Boot loads a detected consent manager's `adapters/<version>/<name>.js` from there too,
+same base, and a site that purges on withdrawal posts its withdrawal signal to `v1/w` there. Boot loads a detected consent manager's `adapters/<version>/<name>.js` from there too,
 once a.js hands it the consent machine (AAI-965); `src/core/endpoint.ts` builds those URLs and
 request options. It resolves `data-endpoint` this way:
 

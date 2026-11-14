@@ -272,6 +272,72 @@ describe("withdrawal and renewal", () => {
     expect(jar.live().map((c) => c.name)).toEqual([VISITOR_COOKIE]);
   });
 
+  it("forget hands beforeForget the visitor id while the cookies are still there, then deletes them (AAI-785)", () => {
+    clock = START;
+    const jar = new CookieJar("shop.example.com", () => clock);
+    const seen: [string, string[]][] = [];
+    const identity = createIdentity(
+      { document: jar, location: { href: "https://shop.example.com/" } },
+      { now: () => clock, beforeForget: (id) => seen.push([id, jar.live().map((c) => c.name)]) },
+    );
+    const { visitorId } = identity.ids();
+
+    identity.forget();
+    expect(seen).toEqual([[visitorId, [VISITOR_COOKIE, SESSION_COOKIE]]]);
+    expect(jar.live()).toEqual([]);
+  });
+
+  it("forget hands beforeForget the id of a visitor cookie written on an earlier page", () => {
+    clock = START;
+    const jar = new CookieJar("shop.example.com", () => clock);
+    const id = "01934f6c-8d2a-7b3c-8d4e-5f6a7b8c9d01";
+    jar.serverSet({ name: VISITOR_COOKIE, value: `v1.${id}`, domain: "example.com", path: "/", maxAge: 86_400 });
+    const beforeForget = vi.fn();
+    createIdentity({ document: jar, location: { href: "https://shop.example.com/" } }, { beforeForget }).forget();
+    expect(beforeForget.mock.calls).toEqual([[id]]);
+    expect(jar.live()).toEqual([]);
+  });
+
+  it("forget doesn't call beforeForget without a visitor id: none, or one this version didn't write", () => {
+    clock = START;
+    const jar = new CookieJar("shop.example.com", () => clock);
+    const beforeForget = vi.fn();
+    const identity = createIdentity({ document: jar, location: { href: "https://shop.example.com/" } }, { beforeForget });
+    identity.forget();
+    jar.serverSet({ name: VISITOR_COOKIE, value: "v1.not-a-uuid", domain: "example.com", path: "/", maxAge: 86_400 });
+    identity.forget();
+    expect(beforeForget).not.toHaveBeenCalled();
+    expect(jar.live()).toEqual([]);
+  });
+
+  it("forget hands beforeForget the id held in memory where the browser keeps no cookie", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    clock = START;
+    const jar = new CookieJar("shop.example.com", () => clock, false);
+    const beforeForget = vi.fn();
+    const identity = createIdentity({ document: jar, location: { href: "http://shop.example.com/" } }, { beforeForget });
+    const { visitorId } = identity.ids();
+    identity.forget();
+    identity.forget();
+    expect(beforeForget.mock.calls).toEqual([[visitorId]]);
+  });
+
+  it("forget still deletes the cookies when beforeForget throws, and lets its error through", () => {
+    clock = START;
+    const jar = new CookieJar("shop.example.com", () => clock);
+    const identity = createIdentity(
+      { document: jar, location: { href: "https://shop.example.com/" } },
+      {
+        beforeForget: () => {
+          throw new Error("boom");
+        },
+      },
+    );
+    identity.ids();
+    expect(() => identity.forget()).toThrow("boom");
+    expect(jar.live()).toEqual([]);
+  });
+
   it("forget writes nothing when there are no cookies to delete", () => {
     const { jar, identity } = page();
     identity.forget();

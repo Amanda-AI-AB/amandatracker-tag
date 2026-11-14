@@ -133,6 +133,11 @@ export function tagErrorsUrl(endpoint: string): string {
   return `${endpoint}/v1/t`;
 }
 
+/** Where the withdrawal signal goes (schema/v1/withdrawal.json, AAI-785). */
+export function withdrawalUrl(endpoint: string): string {
+  return `${endpoint}/v1/w`;
+}
+
 /** The collector's anonymous jurisdiction hint for the no-CMP `geo` policy (AAI-93, no-cmp.ts). */
 export function policyUrl(endpoint: string): string {
   return `${endpoint}/v1/policy`;
@@ -223,6 +228,16 @@ export function policyRequestInit(): RequestInit {
  */
 export function tagErrorRequestInit(body: string): RequestInit {
   return { method: "POST", body, credentials: "omit", referrerPolicy: REFERRER_POLICY };
+}
+
+/**
+ * The fetch options for a withdrawal signal to withdrawalUrl; `body` is a WireWithdrawal as JSON.
+ * It never carries the site's cookies, so that a collector behind a first-party proxy can't
+ * re-issue the ones being deleted, and goes with keepalive, so that it outlives a page the visitor
+ * leaves right after withdrawing. Its body is a few hundred bytes, far within the keepalive quota.
+ */
+export function withdrawalRequestInit(body: string): RequestInit {
+  return { method: "POST", body, credentials: "omit", referrerPolicy: REFERRER_POLICY, keepalive: true };
 }
 
 /**

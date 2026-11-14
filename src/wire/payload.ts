@@ -12,6 +12,7 @@ import {
   TRACKED_EVENT_SHAPE,
   WIRE_PING_SHAPE,
   WIRE_TAG_ERROR_SHAPE,
+  WIRE_WITHDRAWAL_SHAPE,
   type ClickSpecialEvent,
   type PageExitEvent,
   type Purchase,
@@ -20,6 +21,7 @@ import {
   type WireEvent,
   type WirePing,
   type WireTagError,
+  type WireWithdrawal,
 } from "./generated";
 
 export type TrackedEventInput = Omit<TrackedEvent, "schema_version" | "event_id">;
@@ -29,6 +31,7 @@ export type ClickSpecialEventInput = Omit<ClickSpecialEvent, "schema_version" | 
 export type EventInput = TrackedEventInput | PurchaseEventInput | PageExitEventInput | ClickSpecialEventInput;
 export type PingInput = Omit<WirePing, "schema_version" | "event_id">;
 export type TagErrorInput = Omit<WireTagError, "schema_version" | "event_id">;
+export type WithdrawalInput = Omit<WireWithdrawal, "schema_version" | "event_id">;
 
 const HEX = "0123456789abcdef";
 
@@ -511,4 +514,15 @@ export function buildTagError(input: TagErrorInput, eventId: string = pingId()):
   const report: WireTagError = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
   if (typeof input.message === "string") report.message = scrubMessage(input.message);
   return shape(report, WIRE_TAG_ERROR_SHAPE, "tag_error");
+}
+
+/**
+ * Builds a withdrawal signal (schema/v1/withdrawal.json, AAI-785): the visitor id the tag is about
+ * to delete, for the site whose config turns purge on withdrawal on, and nothing about the page.
+ * Throws WirePayloadError when a required field is missing or a value breaks a rule (a visitor id
+ * that isn't a UUIDv7).
+ */
+export function buildWithdrawal(input: WithdrawalInput, eventId: string = uuidv7()): WireWithdrawal {
+  const signal: WireWithdrawal = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
+  return shape(signal, WIRE_WITHDRAWAL_SHAPE, "withdrawal");
 }

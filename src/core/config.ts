@@ -234,12 +234,13 @@ const NO_CMP_POLICIES: readonly NoCmpPolicy[] = ["geo", "assume_denied", "assume
 
 /**
  * The config's optional consent section; this tag reads its declined_mode, `off` or `pings`, its
- * gpc_honored, has_cmp and pings_include_click_ids, booleans, and its no_cmp_policy
- * (NO_CMP_POLICIES). A section of another shape, or another value, throws ConfigError: guessing a
- * mode could send pings from a site that chose to send nothing, guessing the GPC toggle could
- * ignore a visitor's opt-out, guessing a no-CMP policy could grant what the site chose to deny,
- * and guessing the click-ID toggle could make a ping click-linkable on a site that never accepted
- * it. Its other fields are the tickets' that use them.
+ * gpc_honored, has_cmp, pings_include_click_ids and purge_on_withdrawal, booleans, and its
+ * no_cmp_policy (NO_CMP_POLICIES). A section of another shape, or another value, throws
+ * ConfigError: guessing a mode could send pings from a site that chose to send nothing, guessing
+ * the GPC toggle could ignore a visitor's opt-out, guessing a no-CMP policy could grant what the
+ * site chose to deny, guessing the click-ID toggle could make a ping click-linkable on a site that
+ * never accepted it, and guessing the purge toggle could erase, or keep, what the site chose
+ * otherwise. Its other fields are the tickets' that use them.
  */
 function checkConsent(consent: unknown): void {
   if (consent === undefined) return;
@@ -267,6 +268,20 @@ function checkConsent(consent: unknown): void {
   if (clickIds !== undefined && typeof clickIds !== "boolean") {
     throw new ConfigError(`the config's consent.pings_include_click_ids is not a boolean: ${String(clickIds)}`);
   }
+  const purge = section.purge_on_withdrawal;
+  if (purge !== undefined && typeof purge !== "boolean") {
+    throw new ConfigError(`the config's consent.purge_on_withdrawal is not a boolean: ${String(purge)}`);
+  }
+}
+
+/**
+ * Whether a withdrawal erases the visitor's stored data: the config's consent.purge_on_withdrawal,
+ * off when it sets none (AAI-226, AAI-785). With it on, the tag sends the withdrawal signal with the
+ * visitor id before it deletes the cookies (feed.ts); with it off, a withdrawal only deletes them.
+ */
+export function purgeOnWithdrawal(config: SiteConfig): boolean {
+  const consent = config.consent as { purge_on_withdrawal?: boolean } | undefined;
+  return !!consent && consent.purge_on_withdrawal === true;
 }
 
 /**
