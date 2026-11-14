@@ -261,8 +261,16 @@ site goes in the query), and forwards to `window.amanda`, whose calls queue unti
 `test/gtm-template.test.ts` runs the template's code against the tag's real command queue and
 commands, and checks its permissions. The template's own `___TESTS___` run in GTM's template editor.
 
+The template is published through GTM's Community Template Gallery, which reads `template.tpl`,
+`metadata.yaml` and `LICENSE` from this repository's root: see
+[The Community Template Gallery](docs/gtm-gallery.md) for the package, the submission and how a new
+version is released. [Amanda Tracker in Google Tag Manager](docs/google-tag-manager.md) is the
+documentation the gallery links.
+
 ## Guides
 
+- [Amanda Tracker in Google Tag Manager](docs/google-tag-manager.md): install the tag with the
+  Community Template, bridge GTM's consent, and send custom events and purchases.
 - [First-party reverse proxy](docs/first-party-proxy.md): serve the tag and its collection endpoint from
   your own site, so Safari keeps the tracker's cookies for their full lifetime.
 - [Verifying a release](docs/verifying-a-release.md): rebuild a published `a.<version>.js` from its
@@ -279,6 +287,7 @@ pnpm test        # Vitest
 pnpm build       # dist/a.js, dist/adapters/*.js, the size gate, then dist/schema/
 pnpm gen:wire    # src/wire/generated.ts from the wire schema
 pnpm reproduce <a.<version>.provenance.json>   # rebuild a release and compare it byte for byte
+pnpm gtm:check   # metadata.yaml's GTM gallery versions against origin/main (--ref <ref> for another)
 ```
 
 ## The wire schema
