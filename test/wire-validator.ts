@@ -48,6 +48,13 @@ export const PURCHASE = {
   },
 } as const;
 
+/** A valid page_exit with every field. */
+export const PAGE_EXIT = {
+  ...EVENT,
+  type: "page_exit",
+  engagement_ms: 42_500,
+} as const;
+
 /** A valid ping with every field. */
 export const PING = {
   schema_version: SCHEMA_VERSION,

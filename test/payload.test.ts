@@ -15,12 +15,13 @@ import {
   uuidv7,
   WirePayloadError,
   type EventInput,
+  type PageExitEventInput,
   type PurchaseEventInput,
   type Shape,
   type PingInput,
   type TrackedEventInput,
 } from "../src/wire/payload";
-import { EVENT, PING, PURCHASE, validator } from "./wire-validator";
+import { EVENT, PAGE_EXIT, PING, PURCHASE, validator } from "./wire-validator";
 
 type Items = NonNullable<PurchaseEventInput["purchase"]["items"]>;
 
@@ -441,6 +442,47 @@ describe("buildEvent props", () => {
   it("throws when props isn't an object", () => {
     expect(() => withProps(["a"])).toThrow(new WirePayloadError("event.props", "is not an object"));
     expect(() => withProps("a")).toThrow(new WirePayloadError("event.props", "is not an object"));
+  });
+});
+
+describe("buildEvent page_exit (AAI-105)", () => {
+  const validate = validator("event.json");
+
+  function pageExitInput(): PageExitEventInput {
+    const { schema_version, event_id, ...input } = PAGE_EXIT;
+    return { ...input, consent: { ...input.consent }, props: { ...input.props } };
+  }
+
+  it("builds a valid page_exit with its engagement time, 0 included", () => {
+    const event = buildEvent(pageExitInput());
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    expect(event).toMatchObject({ type: "page_exit", engagement_ms: 42_500 });
+    const idle = buildEvent({ ...pageExitInput(), engagement_ms: 0 });
+    expect(idle).toMatchObject({ engagement_ms: 0 });
+    expect(validate(idle), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("throws when the engagement time is on another type of event", () => {
+    const input = { ...pageExitInput(), type: "pageview" } as unknown as EventInput;
+    expect(() => buildEvent(input)).toThrow(new WirePayloadError("event.type", 'is not "page_exit" on an event with an engagement_ms'));
+  });
+
+  it("throws on an event of type page_exit without its engagement time", () => {
+    const { engagement_ms, ...rest } = pageExitInput();
+    expect(() => buildEvent(rest as unknown as EventInput)).toThrow(new WirePayloadError("event.engagement_ms"));
+    expect(() => buildEvent({ ...EVENT, type: "page_exit" } as unknown as EventInput)).toThrow(
+      new WirePayloadError("event.engagement_ms"),
+    );
+  });
+
+  it.each([
+    ["negative", -1, "is under its minimum of 0"],
+    ["fractional", 1.5, "is not an integer"],
+    ["NaN", Number.NaN, "is not an integer"],
+  ])("throws on a %s engagement time", (_, engagement, problem) => {
+    expect(() => buildEvent({ ...pageExitInput(), engagement_ms: engagement })).toThrow(
+      new WirePayloadError("event.engagement_ms", problem),
+    );
   });
 });
 

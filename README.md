@@ -147,7 +147,11 @@ truth for what the tag sends and what the collector accepts:
   `msclkid`) and the site's `custom` parameters, each verbatim. Its `props` are flat: at most 25 keys, none starting with `am_`, each value
   a string of at most 200 characters, a number or a boolean. A purchase is a `PurchaseEvent`:
   `type: "purchase"` and a `purchase` object (`order_id`, `revenue`, `currency`, and up to 50
-  `items` of `sku`, `name`, `qty` and `price`). No other event carries `purchase`.
+  `items` of `sku`, `name`, `qty` and `price`). No other event carries `purchase`. A page exit is
+  a `PageExitEvent`: `type: "page_exit"` and `engagement_ms`, the engagement time since the page
+  load's previous page exit (visible time, each span counted up to 15 s after the last
+  interaction). The tag sends one by beacon each time the page is hidden after engagement, and at
+  least one per page load. No other event carries `engagement_ms`.
 - `ping.json`: the anonymous ping that declined mode `pings` sends. It has no ids, no `seq` and
   nothing linkable across events. Its field list is frozen after counsel sign-off, so adding a
   field is a framework amendment, never a routine release.

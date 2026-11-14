@@ -45,7 +45,7 @@ export type WireBatch = EventBatch | PingBatch;
 
 // event.json
 
-/** An event that isn't a purchase, such as a pageview or a custom event. */
+/** An event that is neither a purchase nor a page exit, such as a pageview or a custom event. */
 export interface TrackedEvent {
   schema_version: SchemaVersion;
   tag_version: TagVersion;
@@ -63,6 +63,7 @@ export interface TrackedEvent {
   attribution?: Attribution;
   props?: Props;
   purchase?: never;
+  engagement_ms?: never;
   path?: never;
   referrer_host?: never;
   utm?: never;
@@ -78,7 +79,7 @@ export const TRACKED_EVENT_VALUES = { schema_version: [1] } as const;
 
 export const TRACKED_EVENT_MINIMUM = { client_ts: 0 } as const;
 
-export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", type: "^(?:[^p]|p(?:[^u]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S])", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", type: "^(?:[^p]|p(?:[^ua]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S]|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^_]|$)|page_(?:[^e]|$)|page_e(?:[^x]|$)|page_ex(?:[^i]|$)|page_exi(?:[^t]|$)|page_exit[\\s\\S])", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
 
 export const TRACKED_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
 
@@ -101,6 +102,7 @@ export interface PurchaseEvent {
   attribution?: Attribution;
   props?: Props;
   purchase: Purchase;
+  engagement_ms?: never;
   path?: never;
   referrer_host?: never;
   utm?: never;
@@ -119,6 +121,48 @@ export const PURCHASE_EVENT_MINIMUM = { client_ts: 0 } as const;
 export const PURCHASE_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
 
 export const PURCHASE_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
+
+/** A page exit (01 §7.1): the envelope every event carries, type page_exit, and in engagement_ms the engagement time since the page load's previous page exit. The tag sends one, by beacon, each time the page is hidden (visibilitychange to hidden, or pagehide) after engagement since the previous one, and at least one per page load: a tab switched back and forth sends several, and the processor adds them up (AAI-798). */
+export interface PageExitEvent {
+  schema_version: SchemaVersion;
+  tag_version: TagVersion;
+  site_id: SiteId;
+  event_id: EventId;
+  /** Always page_exit. */
+  type: "page_exit";
+  client_ts: ClientTs;
+  url: Url;
+  referrer?: Referrer;
+  page_title?: PageTitle;
+  language?: Language;
+  visitor_id: VisitorId;
+  session_id: SessionId;
+  consent: Consent;
+  attribution?: Attribution;
+  props?: Props;
+  engagement_ms: EngagementMs;
+  purchase?: never;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
+}
+
+export const PAGE_EXIT_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "engagement_ms"] as const;
+
+export const PAGE_EXIT_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent", "engagement_ms"] as const;
+
+export const PAGE_EXIT_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", attribution: "object", props: "object", engagement_ms: "integer" } as const;
+
+export const PAGE_EXIT_EVENT_VALUES = { schema_version: [1], type: ["page_exit"] } as const;
+
+export const PAGE_EXIT_EVENT_MINIMUM = { client_ts: 0, engagement_ms: 0 } as const;
+
+export const PAGE_EXIT_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+
+export const PAGE_EXIT_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
+
+/** Engagement time in milliseconds (01 §7.1, GA4-like): time the page was visible, each span of it counted up to 15 s after the visitor's last interaction (a pointer, key, touch, wheel or scroll event), or after the page loaded or was shown again. A hidden tab pauses the clock, and so do 15 s without interaction. 0 when the page was never engaged since the previous page exit. */
+export type EngagementMs = number;
 
 /** The wire schema's major version: this file's. */
 export type SchemaVersion = 1;
@@ -159,7 +203,7 @@ export type SiteId = string;
 /** The event's name, such as pageview. */
 export type EventType = string;
 
-/** A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order. The pattern refuses exactly purchase, and has no lookahead, so that every regex engine the schema is read with takes it alike. */
+/** A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order, and page_exit, which only a PageExitEvent carries, with its engagement time. The pattern refuses exactly those two, and has no lookahead, so that every regex engine the schema is read with takes it alike. */
 export type TrackedEventType = string;
 
 /** One category's consent: granted, denied, unknown (not yet decided) or no_cmp (the site has no consent manager). */
@@ -300,8 +344,8 @@ export const PURCHASE_ITEM_MINIMUM = { qty: 1, price: 0 } as const;
 
 export const PURCHASE_ITEM_MAX_LENGTH = { sku: 128, name: 200 } as const;
 
-/** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; every other event is a TrackedEvent, which never does, and whose type is never purchase. The two are told apart by purchase: one requires it and the other doesn't list it. */
-export type WireEvent = TrackedEvent | PurchaseEvent;
+/** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; a page exit is a PageExitEvent, which carries its engagement time in engagement_ms; every other event is a TrackedEvent, which carries neither, and whose type is never purchase or page_exit. They are told apart by purchase and engagement_ms: each is required by one branch and listed by no other. */
+export type WireEvent = TrackedEvent | PurchaseEvent | PageExitEvent;
 
 // ping.json
 
@@ -347,6 +391,7 @@ export interface WirePing {
   attribution?: never;
   props?: never;
   purchase?: never;
+  engagement_ms?: never;
 }
 
 export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm"] as const;
@@ -459,6 +504,8 @@ export const PURCHASE_ITEM_SHAPE = { fields: PURCHASE_ITEM_FIELDS, required: PUR
 export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQUIRED, types: PURCHASE_TYPES, values: {}, minimum: PURCHASE_MINIMUM, pattern: PURCHASE_PATTERN, maxLength: PURCHASE_MAX_LENGTH, minItems: PURCHASE_MIN_ITEMS, maxItems: PURCHASE_MAX_ITEMS, nested: {}, items: { items: PURCHASE_ITEM_SHAPE }, maps: {} } as const;
 
 export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+
+export const PAGE_EXIT_EVENT_SHAPE = { fields: PAGE_EXIT_EVENT_FIELDS, required: PAGE_EXIT_EVENT_REQUIRED, types: PAGE_EXIT_EVENT_TYPES, values: PAGE_EXIT_EVENT_VALUES, minimum: PAGE_EXIT_EVENT_MINIMUM, pattern: PAGE_EXIT_EVENT_PATTERN, maxLength: PAGE_EXIT_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
 export const WIRE_TAG_ERROR_SHAPE = { fields: WIRE_TAG_ERROR_FIELDS, required: WIRE_TAG_ERROR_REQUIRED, types: WIRE_TAG_ERROR_TYPES, values: WIRE_TAG_ERROR_VALUES, minimum: {}, pattern: WIRE_TAG_ERROR_PATTERN, maxLength: WIRE_TAG_ERROR_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 

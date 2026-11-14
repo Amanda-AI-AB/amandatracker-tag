@@ -4,11 +4,13 @@
 import {
   ATTRIBUTION_UTM_FIELDS,
   CLICK_IDS_FIELDS,
+  PAGE_EXIT_EVENT_SHAPE,
   PURCHASE_EVENT_SHAPE,
   SCHEMA_VERSION,
   TRACKED_EVENT_SHAPE,
   WIRE_PING_SHAPE,
   WIRE_TAG_ERROR_SHAPE,
+  type PageExitEvent,
   type PurchaseEvent,
   type TrackedEvent,
   type WireEvent,
@@ -18,7 +20,8 @@ import {
 
 export type TrackedEventInput = Omit<TrackedEvent, "schema_version" | "event_id">;
 export type PurchaseEventInput = Omit<PurchaseEvent, "schema_version" | "event_id">;
-export type EventInput = TrackedEventInput | PurchaseEventInput;
+export type PageExitEventInput = Omit<PageExitEvent, "schema_version" | "event_id">;
+export type EventInput = TrackedEventInput | PurchaseEventInput | PageExitEventInput;
 export type PingInput = Omit<WirePing, "schema_version" | "event_id">;
 export type TagErrorInput = Omit<WireTagError, "schema_version" | "event_id">;
 
@@ -415,11 +418,12 @@ function shape<T extends object>(input: T, spec: Shape, path: string): T {
 }
 
 /**
- * Builds an event: a purchase when the input carries a purchase, which then needs type purchase,
- * and any other event otherwise, whose type is never purchase. Throws WirePayloadError when a
- * required field is missing or empty (an event of type purchase without its purchase included), the
- * purchase isn't an object (null included), or a value breaks a rule the tag can't keep for it
- * (shape).
+ * Builds an event: a purchase when the input carries a purchase, which then needs type purchase;
+ * a page exit when it carries engagement_ms, which then needs type page_exit; and any other event
+ * otherwise, whose type is neither. Throws WirePayloadError when a required field is missing or
+ * empty (an event of type purchase without its purchase, or of type page_exit without its
+ * engagement_ms, included), the purchase isn't an object (null included), or a value breaks a rule
+ * the tag can't keep for it (shape).
  */
 export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireEvent {
   if ("purchase" in input && input.purchase !== undefined) {
@@ -428,7 +432,13 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
     const event: PurchaseEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
     return shape(event, PURCHASE_EVENT_SHAPE, "event");
   }
+  if ("engagement_ms" in input && input.engagement_ms !== undefined) {
+    if (input.type !== "page_exit") throw new WirePayloadError("event.type", 'is not "page_exit" on an event with an engagement_ms');
+    const event: PageExitEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
+    return shape(event, PAGE_EXIT_EVENT_SHAPE, "event");
+  }
   if (input.type === "purchase") throw new WirePayloadError("event.purchase");
+  if (input.type === "page_exit") throw new WirePayloadError("event.engagement_ms");
   const event: TrackedEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
   return shape(event, TRACKED_EVENT_SHAPE, "event");
 }

@@ -3,7 +3,7 @@
 // each test checks that the schema refuses the same value.
 import { describe, expect, it } from "vitest";
 import type { WireBatch, WireEvent, WirePing } from "../src/wire/generated";
-import { EVENT, PING, PURCHASE, validator } from "./wire-validator";
+import { EVENT, PAGE_EXIT, PING, PURCHASE, validator } from "./wire-validator";
 
 const batch = validator("batch.json");
 const event = validator("event.json");
@@ -50,5 +50,15 @@ describe("WireEvent and WirePing", () => {
     const noItems: WireEvent = { ...PURCHASE, purchase: { ...PURCHASE.purchase, items: [] } };
     expect(event(tracked)).toBe(false);
     expect(event(noItems)).toBe(false);
+  });
+
+  it("refuses an engagement time on an event of any other type, and on a ping (AAI-105)", () => {
+    // @ts-expect-error only a PageExitEvent carries engagement_ms, and its type is page_exit
+    const tracked: WireEvent = { ...EVENT, engagement_ms: PAGE_EXIT.engagement_ms };
+    // @ts-expect-error a ping carries no engagement time
+    const pinged: WirePing = { ...PING, engagement_ms: PAGE_EXIT.engagement_ms };
+    expect(event(PAGE_EXIT)).toBe(true);
+    expect(event(tracked)).toBe(false);
+    expect(ping(pinged)).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EVENT, loadSchemas, PING, PURCHASE, UUID7, validator } from "./wire-validator";
+import { EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
 
 describe("wire schema v1: event", () => {
   const validate = validator("event.json");
@@ -180,9 +180,9 @@ describe("wire schema v1: purchase", () => {
     expect(purchase.required).toEqual([...tracked.required, "purchase"]);
   });
 
-  it("names each envelope field once in $defs, so that both events only refer to it", () => {
+  it("names each envelope field once in $defs, so that every event only refers to it", () => {
     const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, object> }>;
-    for (const name of ["TrackedEvent", "PurchaseEvent"]) {
+    for (const name of ["TrackedEvent", "PurchaseEvent", "PageExitEvent"]) {
       const { type, ...envelope } = defs[name]!.properties;
       for (const [key, prop] of Object.entries(envelope)) {
         expect(Object.keys(prop), `${name}.${key}`).toEqual(["$ref"]);
@@ -193,6 +193,58 @@ describe("wire schema v1: purchase", () => {
   it("rides in a batch and a Pub/Sub message", () => {
     expect(validator("batch.json")({ seq: 1, e: [EVENT, PURCHASE] })).toBe(true);
     const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: PURCHASE };
+    expect(validator("pubsub-message.json")(message)).toBe(true);
+  });
+});
+
+describe("wire schema v1: page_exit (AAI-105)", () => {
+  const validate = validator("event.json");
+
+  it("accepts a page_exit, and one with no engagement since the previous one", () => {
+    expect(validate(PAGE_EXIT), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...PAGE_EXIT, engagement_ms: 0 }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a page_exit without its engagement time, which no other event may be", () => {
+    const { engagement_ms, ...rest } = PAGE_EXIT;
+    expect(validate(rest)).toBe(false);
+    expect(validate({ ...EVENT, type: "page_exit" })).toBe(false);
+  });
+
+  it("rejects an engagement time on another type of event, a purchase included", () => {
+    expect(validate({ ...PAGE_EXIT, type: "pageview" })).toBe(false);
+    expect(validate({ ...PURCHASE, engagement_ms: 1 })).toBe(false);
+  });
+
+  it.each([
+    ["a negative", -1],
+    ["a fractional", 1.5],
+    ["a string", "1000"],
+  ])("rejects %s engagement time", (_, engagement) => {
+    expect(validate({ ...PAGE_EXIT, engagement_ms: engagement })).toBe(false);
+  });
+
+  it.each(["pa", "page", "page_", "page_exi", "page_exits", "page_exit_intent", "Page_exit", "PAGE_EXIT", "xpage_exit", "page_exit\n", "pageview", "pa_exit"])(
+    "takes %j as the type of an ordinary event",
+    (type) => {
+      expect(validate({ ...EVENT, type }), JSON.stringify(validate.errors)).toBe(true);
+    },
+  );
+
+  it("gives a page_exit the same envelope as every other event", () => {
+    const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, unknown>; required: string[] }>;
+    const tracked = defs.TrackedEvent!;
+    const exit = defs.PageExitEvent!;
+    const { type: trackedType, ...trackedRest } = tracked.properties;
+    const { type: exitType, engagement_ms: engagement, ...exitRest } = exit.properties;
+    expect(exitRest).toEqual(trackedRest);
+    expect(exitType).toMatchObject({ const: "page_exit" });
+    expect(exit.required).toEqual([...tracked.required, "engagement_ms"]);
+  });
+
+  it("rides in a batch and a Pub/Sub message", () => {
+    expect(validator("batch.json")({ seq: 1, e: [EVENT, PAGE_EXIT] })).toBe(true);
+    const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: PAGE_EXIT };
     expect(validator("pubsub-message.json")(message)).toBe(true);
   });
 });

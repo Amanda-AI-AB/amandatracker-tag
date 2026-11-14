@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/event.json",
   "title": "WireEvent",
-  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; every other event is a TrackedEvent, which never does, and whose type is never purchase. The two are told apart by purchase: one requires it and the other doesn't list it.",
-  "oneOf": [{ "$ref": "#/$defs/TrackedEvent" }, { "$ref": "#/$defs/PurchaseEvent" }],
+  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; a page exit is a PageExitEvent, which carries its engagement time in engagement_ms; every other event is a TrackedEvent, which carries neither, and whose type is never purchase or page_exit. They are told apart by purchase and engagement_ms: each is required by one branch and listed by no other.",
+  "oneOf": [{ "$ref": "#/$defs/TrackedEvent" }, { "$ref": "#/$defs/PurchaseEvent" }, { "$ref": "#/$defs/PageExitEvent" }],
   "$defs": {
     "TrackedEvent": {
-      "description": "An event that isn't a purchase, such as a pageview or a custom event.",
+      "description": "An event that is neither a purchase nor a page exit, such as a pageview or a custom event.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -78,6 +78,50 @@
         "purchase": { "$ref": "#/$defs/Purchase" }
       }
     },
+    "PageExitEvent": {
+      "description": "A page exit (01 §7.1): the envelope every event carries, type page_exit, and in engagement_ms the engagement time since the page load's previous page exit. The tag sends one, by beacon, each time the page is hidden (visibilitychange to hidden, or pagehide) after engagement since the previous one, and at least one per page load: a tab switched back and forth sends several, and the processor adds them up (AAI-798).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "tag_version",
+        "site_id",
+        "event_id",
+        "type",
+        "client_ts",
+        "url",
+        "visitor_id",
+        "session_id",
+        "consent",
+        "engagement_ms"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "tag_version": { "$ref": "#/$defs/TagVersion" },
+        "site_id": { "$ref": "#/$defs/SiteId" },
+        "event_id": { "$ref": "#/$defs/EventId" },
+        "type": {
+          "description": "Always page_exit.",
+          "const": "page_exit"
+        },
+        "client_ts": { "$ref": "#/$defs/ClientTs" },
+        "url": { "$ref": "#/$defs/Url" },
+        "referrer": { "$ref": "#/$defs/Referrer" },
+        "page_title": { "$ref": "#/$defs/PageTitle" },
+        "language": { "$ref": "#/$defs/Language" },
+        "visitor_id": { "$ref": "#/$defs/VisitorId" },
+        "session_id": { "$ref": "#/$defs/SessionId" },
+        "consent": { "$ref": "#/$defs/Consent" },
+        "attribution": { "$ref": "#/$defs/Attribution" },
+        "props": { "$ref": "#/$defs/Props" },
+        "engagement_ms": { "$ref": "#/$defs/EngagementMs" }
+      }
+    },
+    "EngagementMs": {
+      "description": "Engagement time in milliseconds (01 §7.1, GA4-like): time the page was visible, each span of it counted up to 15 s after the visitor's last interaction (a pointer, key, touch, wheel or scroll event), or after the page loaded or was shown again. A hidden tab pauses the clock, and so do 15 s without interaction. 0 when the page was never engaged since the previous page exit.",
+      "type": "integer",
+      "minimum": 0
+    },
     "SchemaVersion": {
       "description": "The wire schema's major version: this file's.",
       "const": 1
@@ -148,11 +192,11 @@
       "maxLength": 64
     },
     "TrackedEventType": {
-      "description": "A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order. The pattern refuses exactly purchase, and has no lookahead, so that every regex engine the schema is read with takes it alike.",
+      "description": "A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order, and page_exit, which only a PageExitEvent carries, with its engagement time. The pattern refuses exactly those two, and has no lookahead, so that every regex engine the schema is read with takes it alike.",
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "pattern": "^(?:[^p]|p(?:[^u]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S])"
+      "pattern": "^(?:[^p]|p(?:[^ua]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S]|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^_]|$)|page_(?:[^e]|$)|page_e(?:[^x]|$)|page_ex(?:[^i]|$)|page_exi(?:[^t]|$)|page_exit[\\s\\S])"
     },
     "ConsentState": {
       "description": "One category's consent: granted, denied, unknown (not yet decided) or no_cmp (the site has no consent manager).",
