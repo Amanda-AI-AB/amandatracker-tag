@@ -262,8 +262,9 @@ truth for what the tag sends and what the collector accepts:
   `items` of `sku`, `name`, `qty` and `price`). No other event carries `purchase`. A page exit is
   a `PageExitEvent`: `type: "page_exit"` and `engagement_ms`, the engagement time since the page
   load's previous page exit (visible time, each span counted up to 15 s after the last
-  interaction). The tag sends one by beacon each time the page is hidden after engagement, and at
-  least one per page load. No other event carries `engagement_ms`. A form submission is a
+  interaction). The tag sends one by beacon each time the page is hidden after engagement, and one
+  for the route a single-page app leaves at each route change, with that route's URL and
+  engagement: at least one per pageview. No other event carries `engagement_ms`. A form submission is a
   `form_submit` whose `props` hold only the form's `form_id`, `form_name` and `form_action` (the
   action attribute without its query string and fragment), those it has. Field values are never
   captured, and there is no allowlist or setting that could capture them. Scroll depth, off by

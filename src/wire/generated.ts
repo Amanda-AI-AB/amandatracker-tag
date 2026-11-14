@@ -135,7 +135,7 @@ export const PURCHASE_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9
 
 export const PURCHASE_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35, user_ref: 128 } as const;
 
-/** A page exit (01 §7.1): the envelope every event carries, type page_exit, and in engagement_ms the engagement time since the page load's previous page exit. The tag sends one, by beacon, each time the page is hidden (visibilitychange to hidden, or pagehide) after engagement since the previous one, and at least one per page load: a tab switched back and forth sends several, and the processor adds them up (AAI-798). */
+/** A page exit (01 §7.1): the envelope every event carries, type page_exit, and in engagement_ms the engagement time since the page load's previous page exit. The tag sends one, by beacon, each time the page is hidden (visibilitychange to hidden, or pagehide) after engagement since the previous one, and one for the route a single-page app leaves at each route change, with that route's url and engagement (AAI-969): at least one per pageview. A tab switched back and forth sends several, and the processor adds them up (AAI-798). */
 export interface PageExitEvent {
   schema_version: SchemaVersion;
   tag_version: TagVersion;

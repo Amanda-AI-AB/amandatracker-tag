@@ -87,7 +87,7 @@
       }
     },
     "PageExitEvent": {
-      "description": "A page exit (01 §7.1): the envelope every event carries, type page_exit, and in engagement_ms the engagement time since the page load's previous page exit. The tag sends one, by beacon, each time the page is hidden (visibilitychange to hidden, or pagehide) after engagement since the previous one, and at least one per page load: a tab switched back and forth sends several, and the processor adds them up (AAI-798).",
+      "description": "A page exit (01 §7.1): the envelope every event carries, type page_exit, and in engagement_ms the engagement time since the page load's previous page exit. The tag sends one, by beacon, each time the page is hidden (visibilitychange to hidden, or pagehide) after engagement since the previous one, and one for the route a single-page app leaves at each route change, with that route's url and engagement (AAI-969): at least one per pageview. A tab switched back and forth sends several, and the processor adds them up (AAI-798).",
       "type": "object",
       "additionalProperties": false,
       "required": [

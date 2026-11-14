@@ -272,8 +272,9 @@ describe("page_exit (AAI-105)", () => {
   /**
    * A booted tag with onPageExit on a window whose visibility the test drives, its clock at
    * START + `at()`, and a transport on the same window, created first as a.js is to create it.
+   * `sink`, when given, is called with each page_exit before the transport is.
    */
-  function exitPage() {
+  function exitPage(sink?: (input: PageExitInput) => void) {
     const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
     let elapsed = 0;
     let visibility: DocumentVisibilityState = "visible";
@@ -300,11 +301,13 @@ describe("page_exit (AAI-105)", () => {
     const boundary = new ErrorBoundary((report) => reports.push(report), 1);
     const transport = createTransport(win as unknown as TransportWindow, DEFAULT_ENDPOINT, boundary);
     const exits: PageExitInput[] = [];
+    const pageviews: PageviewInput[] = [];
     const booted = boot(win, {
       tagVersion: "0.2.0",
       boundary,
-      onPageview: () => undefined,
+      onPageview: (input) => pageviews.push(input),
       onPageExit: (input) => {
+        sink?.(input);
         exits.push(input);
         transport.event(
           buildEvent({
@@ -322,6 +325,7 @@ describe("page_exit (AAI-105)", () => {
       booted,
       reports,
       exits,
+      pageviews,
       beacon,
       at: (ms: number) => {
         elapsed = ms;
@@ -350,8 +354,6 @@ describe("page_exit (AAI-105)", () => {
   it("hands over a page_exit on each hide, with the page and the engagement time since the previous one", async () => {
     const p = exitPage();
     await p.booted;
-    p.at(2_000);
-    p.win.history.pushState(null, "", "/cart");
     p.hide(9_000);
     p.show(60_000);
     p.interact(70_000);
@@ -363,7 +365,7 @@ describe("page_exit (AAI-105)", () => {
         site_id: "site_123",
         tag_version: "0.2.0",
         client_ts: START + 9_000,
-        url: `${PAGE}/cart`,
+        url: `${PAGE}/products?id=1`,
         page_title: "Products",
         language: "sv-SE",
         engagement_ms: 9_000,
@@ -405,6 +407,73 @@ describe("page_exit (AAI-105)", () => {
     await p.booted;
     p.hide(4_000);
     expect(p.exits.map((exit) => exit.engagement_ms)).toEqual([2_000]);
+  });
+
+  describe("on a route change (AAI-969)", () => {
+    it("hands over the left route's page_exit, with its URL, title and engagement, before the next route's pageview", async () => {
+      const p = exitPage();
+      await p.booted;
+      p.at(2_000);
+      p.win.history.pushState(null, "", "/cart");
+      p.win.document.title = "Cart";
+      p.hide(9_000);
+
+      expect(p.exits).toEqual([
+        {
+          type: "page_exit",
+          site_id: "site_123",
+          tag_version: "0.2.0",
+          client_ts: START + 2_000,
+          url: `${PAGE}/products?id=1`,
+          page_title: "Products",
+          language: "sv-SE",
+          engagement_ms: 2_000,
+        },
+        // The hide's page_exit is the new route's, with its time alone.
+        expect.objectContaining({ url: `${PAGE}/cart`, page_title: "Cart", client_ts: START + 9_000, engagement_ms: 7_000 }),
+      ]);
+      expect(p.reports).toEqual([]);
+    });
+
+    it("sends one for each pageview after the first, the `pageview` command's included, 0 engagement included", async () => {
+      const p = exitPage();
+      await p.booted;
+      p.hide(3_000);
+      p.at(4_000);
+      p.win.history.pushState(null, "", "/cart");
+      p.win.amanda!("pageview");
+      p.win.history.replaceState(null, "", "/cart#top");
+
+      expect(p.exits.map((exit) => [exit.url, exit.engagement_ms])).toEqual([
+        [`${PAGE}/products?id=1`, 3_000],
+        [`${PAGE}/products?id=1`, 0],
+        [`${PAGE}/cart`, 0],
+      ]);
+    });
+
+    it("sends the left route's page_exit in a batch the wire schema accepts", async () => {
+      const p = exitPage();
+      await p.booted;
+      p.at(6_000);
+      p.win.history.pushState(null, "", "/cart");
+
+      expect(p.beacon).toHaveBeenCalledTimes(1);
+      const batch = JSON.parse(p.beacon.mock.calls[0]![1]);
+      expect(batch).toMatchObject({ e: [{ type: "page_exit", engagement_ms: 6_000, url: `${PAGE}/products?id=1` }] });
+      const validate = validator("batch.json");
+      expect(validate(batch), JSON.stringify(validate.errors)).toBe(true);
+    });
+
+    it("still sends the next route's pageview when handing over the left route's page_exit fails", async () => {
+      const p = exitPage(() => {
+        throw new Error("sink failed");
+      });
+      await p.booted;
+      p.win.history.pushState(null, "", "/cart");
+
+      expect(p.pageviews.map((input) => input.url)).toEqual([`${PAGE}/products?id=1`, `${PAGE}/cart`]);
+      expect(p.reports).toEqual([{ stage: "pageview", name: "Error", message: "sink failed" }]);
+    });
   });
 
   it("tracks no engagement without onPageExit", async () => {

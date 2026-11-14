@@ -113,6 +113,9 @@ function page(initial: DocumentVisibilityState = "visible") {
     exits,
     docListeners,
     watch: (onExit: (ms: number) => void = (ms) => exits.push(ms)) => watchEngagement(host, boundary, onExit, () => time),
+    at: (t: number) => {
+      time = t;
+    },
     interact: (t: number, type = "pointerdown") => {
       time = t;
       fire(docListeners, type);
@@ -229,6 +232,41 @@ describe("watchEngagement: page_exit", () => {
     });
     expect(() => p.hide(5 * S)).not.toThrow();
     expect(p.reports).toEqual([{ stage: "pageview", name: "Error", message: "sink failed" }]);
+  });
+});
+
+describe("watchEngagement: leave, a route change's page_exit (AAI-969)", () => {
+  it("hands back the left route's engagement so far, and the clock runs on for the next route", () => {
+    const p = page();
+    const watch = p.watch();
+    p.at(4 * S);
+    expect(watch.leave()).toBe(4 * S);
+    p.interact(10 * S);
+    p.hide(12 * S);
+    // The next route's time alone: 4 s to 12 s, the clock never paused by the route change.
+    expect(p.exits).toEqual([8 * S]);
+  });
+
+  it("hands back 0 for a route left with no engagement, as the hidden tab's", () => {
+    const p = page();
+    const watch = p.watch();
+    p.hide(5 * S);
+    p.at(9 * S);
+    expect(watch.leave()).toBe(0);
+    expect(p.exits).toEqual([5 * S]);
+  });
+
+  it("lets every route's first hide send a page_exit, 0 included: every pageview left sends one", () => {
+    const p = page();
+    const watch = p.watch();
+    p.hide(5 * S);
+    p.pagehide(6 * S);
+    expect(p.exits).toEqual([5 * S]);
+    p.at(7 * S);
+    watch.leave();
+    p.pagehide(8 * S);
+    p.pagehide(9 * S);
+    expect(p.exits).toEqual([5 * S, 0]);
   });
 });
 

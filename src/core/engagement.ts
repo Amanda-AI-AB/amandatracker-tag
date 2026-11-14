@@ -6,10 +6,13 @@
 // Each time the page is hidden (visibilitychange to hidden, or pagehide, the last moment a mobile
 // browser reliably gives a page), the tag hands over a page_exit with the engagement time since the
 // previous one, so the processor can add them up (AAI-798) and a tab switched back and forth counts
-// each visible span once. A hide with no engagement since the previous page_exit sends nothing,
-// except the page load's first, so every page load the visitor leaves sends at least one: the
-// tail-loss proxy counts them (AAI-648). The transport sends a page_exit at once, by beacon
-// (transport.ts), since a hidden page may never run a timer again.
+// each visible span once. A single-page app's route change hands over one too, for the route it
+// leaves, with that route's engagement so far (leave, AAI-969): engagement is attributed per route,
+// as GA4 does, and the clock runs on for the next route. A hide with no engagement since the
+// previous page_exit sends nothing, except the first hide of the pageview, so every pageview the
+// visitor leaves sends at least one: the tail-loss proxy counts the page loads that do (AAI-648).
+// The transport sends a page_exit at once, by beacon (transport.ts), since a hidden page may never
+// run a timer again.
 //
 // Everything is in memory, and nothing is read from the page but its visibility and the
 // interactions' times: no target, key or coordinate.
@@ -88,6 +91,16 @@ export interface EngagementHost {
   addEventListener(type: "pagehide" | "pageshow", listener: () => void): void;
 }
 
+/** A running engagement watcher. */
+export interface EngagementWatch {
+  /**
+   * The visitor left the route for another, in the same page load: the engagement time since the
+   * previous page_exit, for the left route's page_exit, which is always sent, 0 included. The
+   * clock runs on, and the next route's first hide sends a page_exit again, as the page load's did.
+   */
+  leave(): number;
+}
+
 /**
  * Runs the engagement clock on win's visibility and interactions, and calls onExit with the
  * engagement time each time the page is hidden, as the file's header says. Every listener runs
@@ -98,9 +111,10 @@ export function watchEngagement(
   boundary: ErrorBoundary,
   onExit: (engagementMs: number) => void,
   now: () => number = Date.now,
-): void {
+): EngagementWatch {
   const visible = (): boolean => win.document.visibilityState === "visible";
   const clock = createEngagementClock(visible(), now());
+  /** Whether the current pageview has sent a page_exit already. */
   let exited = false;
 
   const exit = (): void => {
@@ -131,6 +145,12 @@ export function watchEngagement(
       if (visible()) clock.shown(now());
     }),
   );
+  return {
+    leave() {
+      exited = false;
+      return clock.take(now());
+    },
+  };
 }
 
 /** A page_exit's page fields, as pageviewInput reads them, and its engagement time. */

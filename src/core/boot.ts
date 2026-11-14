@@ -1,6 +1,7 @@
 // The tag's boot: read the installing script tag, fetch the site's config, then install the
 // command queue, send the first pageview and follow the single-page app's route changes. The
-// engagement clock runs from the page's load, and each hide sends a page_exit (engagement.ts). A
+// engagement clock runs from the page's load, and each hide sends a page_exit (engagement.ts), as
+// does each pageview after the first, for the route it leaves (AAI-969). A
 // config that pins the site to another build hands off to it instead (canary.ts). A config that
 // pauses the site, its kill switch (AAI-797), stops the boot there: the tag sends nothing. Every step runs
 // inside the error boundary: a failure is reported, and the page never sees it.
@@ -39,7 +40,7 @@ import {
   type TcfHost,
 } from "./consent-sources";
 import { ecommerceInput, watchEcommerce, type EcommerceHost, type EcommerceInput } from "./ecommerce";
-import { pageExitInput, watchEngagement, type EngagementHost, type PageExitInput } from "./engagement";
+import { pageExitInput, watchEngagement, type EngagementHost, type EngagementWatch, type PageExitInput } from "./engagement";
 import { bootParam, currentScript, endpointFromScript } from "./endpoint";
 import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
 import { IDENTIFY_COMMAND, identifyCommand, identifyInput, type IdentifyInput } from "./identify";
@@ -86,7 +87,9 @@ export interface BootOptions {
   /**
    * Where each page_exit goes (engagement.ts), as each pageview does: an event only, never a
    * ping. With it, the boot runs the engagement clock from the page's load, and hands over the
-   * page_exits of hides after the tag booted. Without it, the tag tracks no engagement.
+   * page_exits of hides after the tag booted, and before each pageview after the first (a route
+   * change, or the `pageview` command), the page_exit of the route it leaves, with that route's URL,
+   * title and engagement. Without it, the tag tracks no engagement.
    */
   readonly onPageExit?: (input: PageExitInput) => void;
   /**
@@ -170,11 +173,13 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
   const now = options.now || Date.now;
   /** The page_exits' destination, once the tag booted; until then a page_exit is dropped. */
   let exitTo: ((engagementMs: number) => void) | undefined;
+  /** The engagement watcher, with onPageExit, for the route changes' page_exits. */
+  let engagement: EngagementWatch | undefined;
   /** The installing script tag, a <script> element once endpointFromScript has accepted it. */
   let script: Element | undefined;
   const started = boundary.guard("boot", () => {
     if (!ensureStub(win)) return undefined;
-    if (onPageExit) watchEngagement(win, boundary, (engagementMs) => exitTo?.(engagementMs), now);
+    if (onPageExit) engagement = watchEngagement(win, boundary, (engagementMs) => exitTo?.(engagementMs), now);
     const current = currentScript(win.document);
     const endpoint = endpointFromScript(current, win.location);
     // endpointFromScript has checked that current is a <script> element.
@@ -190,7 +195,7 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
     if (onPageExit) {
       exitTo = (engagementMs) => onPageExit(pageExitInput(win, tag.site, options.tagVersion, engagementMs, now()));
     }
-    return start(win, tag, options);
+    return start(win, tag, options, engagement);
   };
   return started.then(
     (tag) =>
@@ -232,24 +237,39 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * their ID, privacy.ts; `identify`, when the site turns it on, links the visitor to the site's
  * pseudonymous ref, identify.ts; `purchase` records an order, purchase.ts), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
- * on each route change, a form_submit for each form the page submits (forms.ts), a click_special
+ * on each route change, after the page_exit of the route left (engagement.ts), a form_submit for each form the page submits (forms.ts), a click_special
  * for each click on a tel: or mailto: link, with its scheme alone (special-clicks.ts), a
  * click_outbound for each click on a link that leaves the site's own domains, with its hostname alone,
  * unless the site turns it off (outbound.ts), and, when it is
  * turned on, a scroll event for each depth threshold the visitor reaches in each pageview (scroll.ts)
  * and the GA4 e-commerce events of the dataLayer, mapped to the tag's (ecommerce.ts).
  */
-function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
-  const { boundary, tagVersion, onPageview } = options;
+function start(win: TagWindow, tag: Tag, options: BootOptions, engagement: EngagementWatch | undefined): Tag {
+  const { boundary, tagVersion, onPageview, onPageExit } = options;
   const now = options.now || Date.now;
   let lastUrl: string | undefined;
+  /** The previous pageview's title, as it carried it: its route's page_exit carries the same. */
+  let lastTitle = "";
   /** Starts the scroll depth's count over, once the watcher runs (onScrollDepth). */
   let resetScroll: ScrollReset | undefined;
+  /**
+   * Hands over the page_exit of the route the visitor left, with its URL and title as its pageview
+   * had them and its engagement so far (engagement.ts, AAI-969). Guarded on its own: when it fails,
+   * the next route's pageview still goes.
+   */
+  const leaveRoute = (url: string): void => {
+    if (!engagement || !onPageExit) return;
+    const watch = engagement;
+    const left: PageSource = { location: { href: url }, document: { title: lastTitle, referrer: "" }, navigator: win.navigator };
+    boundary.guard("pageview", () => onPageExit(pageExitInput(left, tag.site, tagVersion, watch.leave(), now())));
+  };
   const pageview = (): void => {
     boundary.guard("pageview", () => {
       const landing = lastUrl === undefined;
+      if (lastUrl !== undefined) leaveRoute(lastUrl);
       const input = pageviewInput(win, tag.site, tagVersion, lastUrl === undefined ? win.document.referrer : lastUrl, now());
       lastUrl = input.url;
+      lastTitle = input.page_title || "";
       // A new pageview's thresholds fire again, even if handing over its pageview fails.
       if (resetScroll) resetScroll();
       const attribution = landing ? attributionOf(input.url, customParams(tag.config)) : undefined;
