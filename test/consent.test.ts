@@ -378,7 +378,7 @@ describe("a refused signal", () => {
 
   it("changes nothing for a source off the list", () => {
     const { machine } = harness("off");
-    expect(() => machine.update({ analytics: "granted" }, "tcf" as "gcm")).toThrow(ConsentError);
+    expect(() => machine.update({ analytics: "granted" }, "cookiebot" as "gcm")).toThrow(ConsentError);
     expect(machine.snapshot()).toEqual(initialConsent());
   });
 });

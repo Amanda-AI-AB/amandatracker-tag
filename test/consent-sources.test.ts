@@ -9,10 +9,14 @@ import {
   honorGpc,
   isDefinitive,
   manualSignal,
+  tcfSignal,
   watchConsentMode,
+  watchTcf,
   type ConsentLadder,
   type ConsentModeHost,
 } from "../src/core/consent-sources";
+import { buildEvent } from "../src/wire/payload";
+import { EVENT, validator } from "./wire-validator";
 
 /** gtag(...args) on layer: pushes its arguments object, as Google's snippet does. */
 function gtag(layer: unknown[], ...args: unknown[]): void {
@@ -347,5 +351,194 @@ describe("watchConsentMode", () => {
     gtag(layer, "consent", "update", { analytics_storage: "granted" });
 
     expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "unknown", source: "manual" });
+  });
+});
+
+/** A TC string: a core segment and a disclosed-vendors one. */
+const TC_ACCEPT = "CQBnS0AQBnS0AAHABBENBJFsAP_gAEPgAAqIg1NX_H__bW9r8X7_aft0eY1P9_j77sQxBhfJE-4F3LvW_JwXx2E5NF36tqoKmRoEu3ZBIUNlHJHUTVmwaogVryHsakWcoTNKJ6BkkFMRM2dYCF5vm4tjeQKY5_p_d3fx2D-t_dv839zzz8VHn3e5fue0-PCdU5-9Dfn9fRfb-9IL9_78v8v8_9_rk2_eT13_79_7_H9-f_87_AA";
+const TC_REJECT = "CQBnS0AQBnS0AAHABBENBJFgAAAAAAAAAAqIAAAAAAAA.YAAAAAAAAAAA";
+
+/** A TCF v2.2 consent manager's __tcfapi, as far as addEventListener goes. */
+class FakeCmp {
+  readonly listeners: Array<(tcData: unknown, success: boolean) => void> = [];
+  readonly calls: unknown[][] = [];
+  readonly __tcfapi = (command: string, version: number, callback: (tcData: unknown, success: boolean) => void): void => {
+    this.calls.push([command, version]);
+    if (command === "addEventListener") this.listeners.push(callback);
+  };
+
+  /** Calls every listener back with TCData, as the consent manager does on load and on each change. */
+  emit(tcData: unknown, success = true): void {
+    for (const listener of this.listeners) listener(tcData, success);
+  }
+}
+
+/** TCData with consent to the purposes listed. */
+function tcData(eventStatus: string, purposes: number[], tcString?: string): Record<string, unknown> {
+  const consents: Record<string, boolean> = {};
+  for (let id = 1; id <= 11; id++) consents[id] = purposes.indexOf(id) >= 0;
+  return { tcString, eventStatus, gdprApplies: true, listenerId: 1, purpose: { consents, legitimateInterests: {} } };
+}
+
+describe("TCF's signal", () => {
+  it.each([
+    ["purposes 1, 7 and 8", [1, 7, 8], { analytics: "granted", ads: "granted" }],
+    ["purposes 1 and 8", [1, 8], { analytics: "granted", ads: "denied" }],
+    ["purposes 1 and 7", [1, 7], { analytics: "denied", ads: "granted" }],
+    ["purposes 7 and 8 without 1", [7, 8], { analytics: "denied", ads: "denied" }],
+    ["no purpose", [], { analytics: "denied", ads: "denied" }],
+  ] as const)("maps consent to %s", (_name, purposes, signal) => {
+    expect(tcfSignal(tcData("useractioncomplete", [...purposes], TC_ACCEPT))).toEqual({ signal, tcString: TC_ACCEPT });
+  });
+
+  it("decides on tcloaded, a returning visitor's stored consent", () => {
+    expect(tcfSignal(tcData("tcloaded", [1, 7, 8]))).toEqual({ signal: { analytics: "granted", ads: "granted" } });
+  });
+
+  it("counts only a literal true as consent", () => {
+    const data = tcData("useractioncomplete", []);
+    data.purpose = { consents: { 1: "true", 7: 1, 8: true } };
+    expect(tcfSignal(data)!.signal).toEqual({ analytics: "denied", ads: "denied" });
+  });
+
+  it("gives no signal while the visitor is still deciding, or where GDPR doesn't apply", () => {
+    expect(tcfSignal(tcData("cmpuishown", [1, 7, 8], TC_ACCEPT))).toBeUndefined();
+    expect(tcfSignal({ ...tcData("tcloaded", [1, 7, 8]), gdprApplies: false })).toBeUndefined();
+  });
+
+  it("leaves out an empty TC string", () => {
+    expect(tcfSignal(tcData("tcloaded", [1], ""))).toEqual({ signal: { analytics: "denied", ads: "denied" } });
+  });
+
+  it.each([
+    ["not an object", null],
+    ["an unknown eventStatus", { ...tcData("tcloaded", []), eventStatus: "done" }],
+    ["no purpose consents", { ...tcData("tcloaded", []), purpose: {} }],
+  ])("refuses TCData that is %s", (_name, data) => {
+    expect(() => tcfSignal(data)).toThrow(ConsentError);
+  });
+});
+
+describe("watchTcf", () => {
+  it("does nothing on a page without __tcfapi", () => {
+    const { ladder } = harness();
+    expect(watchTcf({}, boundary().boundary, ladder)).toBe(false);
+  });
+
+  it("listens with addEventListener, version 2", () => {
+    const { ladder } = harness();
+    const cmp = new FakeCmp();
+    expect(watchTcf(cmp, boundary().boundary, ladder)).toBe(true);
+    expect(cmp.calls).toEqual([["addEventListener", 2]]);
+  });
+
+  it("drives the machine on accept, carrying the TC string in the snapshot", () => {
+    const { machine, ladder, identified } = harness();
+    const cmp = new FakeCmp();
+    watchTcf(cmp, boundary().boundary, ladder);
+    machine.collect(1);
+
+    cmp.emit(tcData("cmpuishown", []));
+    expect(machine.mode()).toBe("pending");
+    cmp.emit(tcData("useractioncomplete", [1, 7, 8], TC_ACCEPT));
+
+    const accepted = { analytics: "granted", ads: "granted", source: "tcf", tc_string: TC_ACCEPT };
+    expect(machine.snapshot()).toEqual(accepted);
+    expect(identified).toEqual([accepted]);
+  });
+
+  it("drives the machine on reject", () => {
+    const { machine, ladder } = harness();
+    const cmp = new FakeCmp();
+    watchTcf(cmp, boundary().boundary, ladder);
+
+    cmp.emit(tcData("useractioncomplete", [], TC_REJECT));
+
+    expect(machine.mode()).toBe("declined");
+    expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "tcf", tc_string: TC_REJECT });
+  });
+
+  it("follows a change mid-session, the snapshot taking the new TC string", () => {
+    const { machine, ladder } = harness();
+    const cmp = new FakeCmp();
+    watchTcf(cmp, boundary().boundary, ladder);
+
+    cmp.emit(tcData("tcloaded", [1, 7, 8], TC_ACCEPT));
+    expect(machine.mode()).toBe("identified");
+    cmp.emit(tcData("useractioncomplete", [1, 8], TC_REJECT));
+    expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "denied", source: "tcf", tc_string: TC_REJECT });
+    cmp.emit(tcData("useractioncomplete", []));
+
+    expect(machine.mode()).toBe("declined");
+    expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "tcf" });
+  });
+
+  it("gives way to Consent Mode and the manual API, and the TC string goes with it", () => {
+    const { machine, ladder } = harness();
+    const cmp = new FakeCmp();
+    watchTcf(cmp, boundary().boundary, ladder);
+    cmp.emit(tcData("tcloaded", [1, 7, 8], TC_ACCEPT));
+
+    expect(ladder.signal("gcm", { analytics: "granted", ads: "denied" })).toBe(true);
+    expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "denied", source: "gcm" });
+
+    cmp.emit(tcData("useractioncomplete", [], TC_REJECT));
+    expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "denied", source: "gcm" });
+  });
+
+  it("never takes over from GPC", () => {
+    const { machine, ladder } = harness();
+    const cmp = new FakeCmp();
+    honorGpc({ navigator: { globalPrivacyControl: true } }, ladder);
+    watchTcf(cmp, boundary().boundary, ladder);
+
+    cmp.emit(tcData("useractioncomplete", [1, 7, 8], TC_ACCEPT));
+
+    expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "gpc" });
+  });
+
+  it("warns about a callback that reports failure, and changes nothing", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { machine, ladder } = harness();
+    const cmp = new FakeCmp();
+    watchTcf(cmp, boundary().boundary, ladder);
+
+    cmp.emit(tcData("useractioncomplete", [1, 7, 8], TC_ACCEPT), false);
+
+    expect(machine.snapshot()).toEqual({ analytics: "unknown", ads: "unknown" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("TCF"));
+  });
+
+  it("reports malformed TCData, and never throws it at the consent manager", () => {
+    const { ladder } = harness();
+    const cmp = new FakeCmp();
+    const { boundary: b, reports } = boundary();
+    watchTcf(cmp, b, ladder);
+
+    expect(() => cmp.emit({ eventStatus: "tcloaded" })).not.toThrow();
+    expect(reports).toEqual([{ stage: "consent", name: "ConsentError", message: "__tcfapi gave TCData without purpose.consents" }]);
+  });
+
+  it("emits events whose payload carries the TC string and validates against the schema", () => {
+    const { machine, ladder, identified } = harness();
+    const cmp = new FakeCmp();
+    watchTcf(cmp, boundary().boundary, ladder);
+    machine.collect(1);
+    cmp.emit(tcData("useractioncomplete", [1, 8], TC_ACCEPT));
+
+    const { event_id: eventId, ...input } = EVENT;
+    const event = buildEvent({ ...input, consent: identified[0]! }, eventId);
+    const validate = validator("event.json");
+
+    expect(event.consent).toEqual({ analytics: "granted", ads: "denied", source: "tcf", tc_string: TC_ACCEPT });
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+});
+
+describe("the machine's TC string", () => {
+  it("refuses a TC string from a source other than tcf", () => {
+    const { machine } = harness();
+    expect(() => machine.update({ analytics: "granted" }, "manual", TC_ACCEPT)).toThrow(ConsentError);
+    expect(machine.snapshot()).toEqual({ analytics: "unknown", ads: "unknown" });
   });
 });

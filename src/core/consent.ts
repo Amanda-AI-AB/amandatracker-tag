@@ -51,7 +51,7 @@ export const MAX_PENDING = 100;
 
 const STATES: readonly ConsentState[] = ["granted", "denied", "unknown", "no_cmp"];
 const CATEGORIES: readonly Category[] = ["analytics", "ads"];
-const SOURCES: readonly ConsentSource[] = ["gpc", "manual", "gcm"];
+const SOURCES: readonly ConsentSource[] = ["gpc", "manual", "gcm", "tcf"];
 
 /** Where the machine hands each item, once the state says how it goes. */
 export interface ConsentSink<T> {
@@ -90,11 +90,13 @@ export interface ConsentMachine<T> {
   pendingCount(): number;
   /**
    * Applies a consent signal: the categories it names take their new states, the others keep
-   * theirs, and the snapshot names `source` as its source from then on. Throws ConsentError,
-   * changing nothing, on a category or a state off the lists. Which source may signal is the
-   * ladder's to decide (consent-sources.ts), not the machine's.
+   * theirs, and the snapshot names `source` as its source from then on. The snapshot carries
+   * tcString, the TCF consent manager's TC string, only with source `tcf`; any other signal leaves
+   * it out. Throws ConsentError, changing nothing, on a category or a state off the lists, or a TC
+   * string from another source. Which source may signal is the ladder's to decide
+   * (consent-sources.ts), not the machine's.
    */
-  update(signal: ConsentSignal, source?: ConsentSource): void;
+  update(signal: ConsentSignal, source?: ConsentSource, tcString?: string): void;
   /** Applies the site's no-CMP policy's decision (AAI-94) to the categories in no_cmp. */
   resolveNoCmp(decision: NoCmpDecision): void;
   /** Collects item as the current mode says: identified, declined or pending. */
@@ -179,10 +181,13 @@ export function createConsent<T>(options: ConsentOptions<T>): ConsentMachine<T> 
     snapshot: () => ({ ...consent }),
     mode: current,
     pendingCount: () => pending.length,
-    update(signal, source) {
+    update(signal, source, tcString) {
       const checked = checkSignal(signal);
       if (source !== undefined && SOURCES.indexOf(source) < 0) {
         throw new ConsentError(`consent source is not one of ${SOURCES.join(", ")}: ${String(source)}`);
+      }
+      if (tcString !== undefined && source !== "tcf") {
+        throw new ConsentError(`a TC string comes only with the tcf source, not ${String(source)}`);
       }
       const from = current();
       for (const key of CATEGORIES) {
@@ -190,6 +195,9 @@ export function createConsent<T>(options: ConsentOptions<T>): ConsentMachine<T> 
         if (state !== undefined) consent[key] = state;
       }
       if (source !== undefined) consent.source = source;
+      // The TC string goes with the TCF signal it came with: never stale, never under another source.
+      if (tcString !== undefined) consent.tc_string = tcString;
+      else delete consent.tc_string;
       transition(from);
     },
     resolveNoCmp(decision) {

@@ -508,6 +508,29 @@ describe("the consent sources", () => {
     expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "granted", source: "manual" });
   });
 
+  it("follows the TCF consent manager before the first pageview and after, its TC string in the snapshot", async () => {
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+    const listeners: Array<(tcData: unknown, success: boolean) => void> = [];
+    const tcData = (tcString: string, consents: Record<number, boolean>) => ({
+      tcString,
+      eventStatus: "tcloaded",
+      gdprApplies: true,
+      purpose: { consents },
+    });
+    win.__tcfapi = (command: string, _version: number, callback: (tcData: unknown, success: boolean) => void) => {
+      if (command !== "addEventListener") return;
+      listeners.push(callback);
+      callback(tcData("CQAAAAA.YAAA", { 1: true, 7: true, 8: true }), true);
+    };
+    const { snapshots, machine, reports, booted } = bootWithConsent(win);
+    await booted;
+    expect(snapshots).toEqual([{ analytics: "granted", ads: "granted", source: "tcf", tc_string: "CQAAAAA.YAAA" }]);
+
+    listeners[0]!({ ...tcData("CQBBBBB", { 1: true, 8: true }), eventStatus: "useractioncomplete" }, true);
+    expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "denied", source: "tcf", tc_string: "CQBBBBB" });
+    expect(reports).toEqual([]);
+  });
+
   it("reports a refused amanda('consent', ...) and a dataLayer it can't follow, and still boots", async () => {
     const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
     win.dataLayer = { not: "an array" };

@@ -13,9 +13,11 @@ import {
   createLadder,
   honorGpc,
   watchConsentMode,
+  watchTcf,
   type ConsentInput,
   type ConsentModeHost,
   type GpcHost,
+  type TcfHost,
 } from "./consent-sources";
 import { pageExitInput, watchEngagement, type EngagementHost, type PageExitInput } from "./engagement";
 import { currentScript, endpointFromScript } from "./endpoint";
@@ -24,7 +26,7 @@ import { ensureStub, installCommands, type AmandaHost, type Command } from "./qu
 import type { TagTarget } from "./telemetry";
 
 /** The browser globals the tag boots on: window, or a stand-in for it in tests. */
-export interface TagWindow extends AmandaHost, PageSource, RouteSource, ConsentModeHost, GpcHost, EngagementHost {
+export interface TagWindow extends AmandaHost, PageSource, RouteSource, ConsentModeHost, TcfHost, GpcHost, EngagementHost {
   readonly document: Document;
   readonly location: Location;
   readonly navigator: PageSource["navigator"] & GpcHost["navigator"];
@@ -46,7 +48,7 @@ export interface BootOptions {
   /**
    * The consent state machine for the booted site's config (createConsent, with the config's
    * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
-   * config honors it, the `consent` command and Google Consent Mode (consent-sources.ts). Without
+   * config honors it, the `consent` command, Google Consent Mode and TCF v2.2 (consent-sources.ts). Without
    * it, the tag follows no consent source.
    */
   readonly consent?: (config: SiteConfig) => ConsentInput;
@@ -122,7 +124,8 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
 
 /**
  * Runs the booted tag: Global Privacy Control, when the site honors it, so that nothing grants
- * before it denies; Consent Mode's state as the dataLayer has it so far, then the site's queued
+ * before it denies; Consent Mode's state as the dataLayer has it so far, the TCF consent manager's
+ * when the page has one, then the site's queued
  * commands (they may set what the pageview carries, such as consent), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
  * on each route change.
@@ -145,6 +148,7 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
     const ladder = createLadder(options.consent(tag.config));
     if (gpcHonored(tag.config)) boundary.guard("consent", () => honorGpc(win, ladder));
     boundary.guard("consent", () => watchConsentMode(win, boundary, ladder));
+    boundary.guard("consent", () => watchTcf(win, boundary, ladder));
     commands.consent = consentCommand(ladder);
   }
   installCommands(win, commands, boundary);

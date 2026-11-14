@@ -1,12 +1,14 @@
 // The consent sources that drive the state machine (consent.ts), and the ladder that picks one
-// (02 §3, §5). The M1 rungs, highest first:
+// (02 §3, §5). The rungs, highest first:
 //
 //   gpc    -> the browser's Global Privacy Control (navigator.globalPrivacyControl), read once at
 //             boot when the site honors it (consent.gpc_honored, on by default): it denies both
 //             categories, and as the top rung nothing takes over from it for the rest of the page;
 //   manual -> the site's own banner calls amanda('consent', {analytics, ads});
 //   gcm    -> Google Consent Mode v2: gtag('consent', 'default' | 'update', {...}) entries in
-//             window.dataLayer, those already there at boot and those pushed later.
+//             window.dataLayer, those already there at boot and those pushed later;
+//   tcf    -> an IAB TCF v2.2 consent manager: __tcfapi('addEventListener', 2, ...), whose
+//             signals carry the TC string to the snapshot (AAI-160).
 //
 // The first source to give a definitive signal (a category granted or denied) wins, and the
 // winner's later signals always apply. A higher rung takes over when it signals: once the site
@@ -23,17 +25,20 @@ import type { Command } from "./queue";
 
 /** What the ladder drives: the state machine's update (ConsentMachine). */
 export interface ConsentInput {
-  update(signal: ConsentSignal, source: ConsentSource): void;
+  update(signal: ConsentSignal, source: ConsentSource, tcString?: string): void;
 }
 
 /** Each source's rung: the lower, the higher its priority. */
-const RUNG: Readonly<Record<ConsentSource, number>> = { gpc: 0, manual: 1, gcm: 2 };
+const RUNG: Readonly<Record<ConsentSource, number>> = { gpc: 0, manual: 1, gcm: 2, tcf: 3 };
 
 export interface ConsentLadder {
   /** The source whose signals drive the state now; undefined until one gave a definitive signal. */
   active(): ConsentSource | undefined;
-  /** Applies a source's signal if the ladder lets it through; true when it did. */
-  signal(source: ConsentSource, signal: ConsentSignal): boolean;
+  /**
+   * Applies a source's signal if the ladder lets it through; true when it did. tcString is the TC
+   * string a `tcf` signal came with, which the snapshot then carries.
+   */
+  signal(source: ConsentSource, signal: ConsentSignal, tcString?: string): boolean;
 }
 
 /** Whether signal decides a category: grants or denies it. */
@@ -45,10 +50,10 @@ export function createLadder(machine: ConsentInput): ConsentLadder {
   let active: ConsentSource | undefined;
   return {
     active: () => active,
-    signal(source, signal) {
+    signal(source, signal, tcString) {
       if (!isDefinitive(signal)) return false;
       if (active !== undefined && source !== active && RUNG[source] > RUNG[active]) return false;
-      machine.update(signal, source);
+      machine.update(signal, source, tcString);
       active = source;
       return true;
     },
@@ -217,4 +222,76 @@ export function watchConsentMode(win: ConsentModeHost, boundary: ErrorBoundary, 
     boundary.guard("consent", () => readAll(items));
     return length;
   };
+}
+
+// IAB TCF v2.2.
+//
+// The purpose mapping is the proposed one (AAI-160), built ahead of counsel's sign-off, which gates
+// production, not building: analytics needs the consent to Purpose 1 (store and access information
+// on a device) and Purpose 8 (measure content performance); ads, Purpose 1 and Purpose 7 (measure
+// advertising performance). A category is granted when its purposes all are, and denied otherwise.
+
+/** The page's TCF API, as the consent manager's stub defines it. */
+export interface TcfHost {
+  __tcfapi?: unknown;
+}
+
+/** The TCF purposes each category needs consent to. */
+export const TCF_PURPOSES: Readonly<Record<Category, readonly number[]>> = { analytics: [1, 8], ads: [1, 7] };
+
+/** A TCF signal: the categories it decides, and the TC string it came with, when one did. */
+export interface TcfSignal {
+  readonly signal: ConsentSignal;
+  readonly tcString?: string;
+}
+
+/**
+ * The signal one TCData gives, as __tcfapi's addEventListener hands it over; undefined when it
+ * gives none: while the consent manager's UI is up (cmpuishown, the visitor is still deciding), or
+ * when GDPR doesn't apply, where TCF decides nothing and the tag must not assume it granted
+ * anything. Throws ConsentError on TCData that is not TCF v2's.
+ */
+export function tcfSignal(tcData: unknown): TcfSignal | undefined {
+  if (typeof tcData !== "object" || tcData === null) throw new ConsentError("__tcfapi gave TCData that is not an object");
+  const data = tcData as Record<string, unknown>;
+  const status = data.eventStatus;
+  if (status === "cmpuishown") return undefined;
+  if (status !== "tcloaded" && status !== "useractioncomplete") {
+    throw new ConsentError(`__tcfapi gave an unknown eventStatus: ${String(status)}`);
+  }
+  if (data.gdprApplies === false) return undefined;
+  const purpose = data.purpose as { consents?: unknown } | undefined;
+  const consents = typeof purpose === "object" && purpose !== null ? purpose.consents : undefined;
+  if (typeof consents !== "object" || consents === null) {
+    throw new ConsentError("__tcfapi gave TCData without purpose.consents");
+  }
+  const granted = (id: number): boolean => (consents as Record<string, unknown>)[id] === true;
+  const signal: ConsentSignal = {};
+  for (const category of ["analytics", "ads"] as const) {
+    signal[category] = TCF_PURPOSES[category].every(granted) ? "granted" : "denied";
+  }
+  const tcString = data.tcString;
+  return typeof tcString === "string" && tcString !== "" ? { signal, tcString } : { signal };
+}
+
+/**
+ * Follows the page's TCF v2.2 consent manager: registers with __tcfapi('addEventListener', 2, ...),
+ * which calls back with the current consent and again on each change. Each callback runs inside
+ * the boundary, so a failure there is reported and never reaches the consent manager. False when
+ * the page has no __tcfapi, true when the tag listens.
+ */
+export function watchTcf(win: TcfHost, boundary: ErrorBoundary, ladder: ConsentLadder): boolean {
+  const api = win.__tcfapi;
+  if (typeof api !== "function") return false;
+  api("addEventListener", 2, (tcData: unknown, success: unknown) => {
+    boundary.guard("consent", () => {
+      if (success !== true) {
+        warn("amanda: the TCF consent manager reported a failure; its consent is not followed");
+        return;
+      }
+      const tcf = tcfSignal(tcData);
+      if (tcf) ladder.signal("tcf", tcf.signal, tcf.tcString);
+    });
+  });
+  return true;
 }

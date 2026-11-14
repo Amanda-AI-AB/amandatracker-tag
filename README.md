@@ -53,11 +53,21 @@ The consent sources (`src/core/consent-sources.ts`) drive the machine once boot 
   `analytics_storage`; `ads` is denied when `ad_storage` or `ad_user_data` is, and granted only when
   both are. An update overrides a default, a later default never overrides an update, and a default
   scoped to `region`s is skipped, as the tag doesn't know the visitor's region.
+- **tcf**: an IAB TCF v2.2 consent manager, followed through `__tcfapi('addEventListener', 2, ...)`
+  when the page has one. On `tcloaded` and `useractioncomplete`, `analytics` is granted when the
+  visitor consented to Purpose 1 (store and access information on a device) and Purpose 8 (measure
+  content performance), and `ads` when to Purpose 1 and Purpose 7 (measure advertising performance);
+  each is denied otherwise. This is the proposed mapping, pending counsel's sign-off, which gates
+  production. While the consent manager's UI is up (`cmpuishown`), or where it says GDPR doesn't
+  apply, TCF signals nothing. The snapshot of a TCF signal carries the consent manager's TC string
+  as `tc_string`, which is personal data (CJEU C-604/22); a TC string over 8192 characters, or not
+  of base64url segments, is left out rather than cut.
 
-The first source to grant or deny a category wins, and its later signals always apply. The manual
-API takes over from Consent Mode as soon as the site calls it, and Consent Mode never takes over
-from it. The snapshot every event carries names its `source` (`gpc`, `manual` or `gcm`). Nothing
-defaults to granted.
+The first source to grant or deny a category wins, and its later signals always apply. A higher
+source takes over from a lower one as soon as it signals (the manual API from Consent Mode, Consent
+Mode from TCF), and a lower one never takes over from a higher one. The snapshot every event carries
+names its `source` (`gpc`, `manual`, `gcm` or `tcf`), and only a `tcf` snapshot has a `tc_string`.
+Nothing defaults to granted.
 
 The visitor's identity (`src/core/identity.ts`) is built, and driven by the consent machine, but not
 yet wired into `a.js` (AAI-964). It is two strictly first-party cookies on the site's own registrable
@@ -121,8 +131,7 @@ Still to come:
 - pageviews fed through the consent state machine, made into events (with the identity's ids) or
   pings, and handed to the transport, with the machine handed to boot so the sources drive it
   (AAI-964, AAI-965);
-- the other consent sources: the no-CMP policy (AAI-94), TCF and the consent-manager
-  adapters (M2);
+- the other consent sources: the no-CMP policy (AAI-94) and the consent-manager adapters (M2);
 - the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
 - `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).
 
