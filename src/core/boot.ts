@@ -49,10 +49,12 @@ import { ensureStub, installCommands, type AmandaHost, type Command } from "./qu
 import { scrollDepthInput, watchScroll, type ScrollDepthInput, type ScrollHost, type ScrollReset } from "./scroll";
 import { clickSpecialInput, watchSpecialClicks, type ClickSpecialInput, type SpecialClickHost } from "./special-clicks";
 import type { TagTarget } from "./telemetry";
+import type { TransportWindow } from "./transport";
 
 /** The browser globals the tag boots on: window, or a stand-in for it in tests. */
 export interface TagWindow
   extends AmandaHost,
+    TransportWindow,
     PageSource,
     RouteSource,
     ConsentModeHost,
@@ -67,7 +69,7 @@ export interface TagWindow
     PrivacyHost {
   readonly document: Document;
   readonly location: Location;
-  readonly navigator: PageSource["navigator"] & GpcHost["navigator"] & PrivacyHost["navigator"];
+  readonly navigator: PageSource["navigator"] & GpcHost["navigator"] & PrivacyHost["navigator"] & TransportWindow["navigator"];
   fetch: typeof fetch;
   /** popstate, pagehide, pageshow and scroll, and the events of the consent managers the tag has adapters for. */
   addEventListener(type: string, listener: () => void): void;
@@ -76,7 +78,7 @@ export interface TagWindow
 export interface BootOptions {
   readonly tagVersion: string;
   readonly boundary: ErrorBoundary;
-  /** Where each pageview goes: the transport (createTransport), once identity and consent make it an event. */
+  /** Where each pageview goes: in a.js, the feed (feed.ts), which makes it an event or a ping for the transport. */
   readonly onPageview: (input: PageviewInput) => void;
   /**
    * Where each page_exit goes (engagement.ts), as each pageview does: an event only, never a
