@@ -199,7 +199,7 @@ Still to come:
   pings, and handed to the transport, with the machine handed to boot so the sources drive it
   (AAI-964, AAI-965);
 - the other consent source: the no-CMP policy (AAI-94);
-- the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
+- recovering a pagehide request refused because other scripts used the keepalive quota (AAI-951);
 - the per-site toggle that turns the GA4 e-commerce auto-map on in a.js.
 
 Where this README or a guide describes what the tag does at runtime, it describes the design these
@@ -332,8 +332,10 @@ collector re-issues with `Set-Cookie` (AAI-827). It sends ping batches, and `con
 config fetch, with `credentials: "omit"`: they never carry the site's cookies. Every request, adapter
 scripts included, sends the page's origin alone as `Referer` (`referrerPolicy: "strict-origin"`),
 never its path or query. Only the pagehide flush adds `keepalive`, and `batchRequestInit` refuses a
-keepalive body over 60 KiB; keeping the flush's bodies within 60 KiB together is the transport's job
-(AAI-893; until then a larger pagehide batch is reported and lost). Browsers refuse a keepalive request once the bodies of all
+keepalive body over 60 KiB. The transport splits the pagehide flush, by beacon or keepalive fetch,
+into bodies that stay within 60 KiB together with its keepalive fetches still in flight, each event
+batch with its own `seq`; the events that don't fit are dropped with a console warning, and their
+`seq` gap shows the collector the loss (AAI-893). Browsers refuse a keepalive request once the bodies of all
 of a page's keepalive requests in flight would pass 64 KiB, and that quota is shared with
 `sendBeacon` and with every other script's beacons on the page (analytics and ad tags firing on the
 same pagehide). The 4 KiB left over is a margin, not a reservation: a pagehide request can still be

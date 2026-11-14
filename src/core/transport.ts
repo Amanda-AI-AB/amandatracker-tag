@@ -3,7 +3,10 @@
 // at once for a pageview. A batch that meets a network error or a 5xx is retried twice, with
 // backoff, and then dropped. On pagehide, and with a page_exit (engagement.ts), which comes as the
 // page is hidden, every buffered item and every batch awaiting a retry goes with sendBeacon, or a
-// keepalive fetch where the browser has no sendBeacon or refuses it.
+// keepalive fetch where the browser has no sendBeacon or refuses it. Both count against the
+// browser's 64 KiB keepalive quota, so that flush is split into bodies that stay within
+// KEEPALIVE_BODY_LIMIT together; what doesn't fit is dropped (AAI-893). An ordinary batch goes
+// without keepalive, whatever its size.
 // When the visitor declines, the events not sent yet are dropped instead (withdrawEvents, AAI-86).
 //
 // Everything lives in memory: no cookie, localStorage or IndexedDB, so a visitor who declined
@@ -15,7 +18,7 @@
 
 import type { EventBatch, PingBatch, WireEvent, WirePing } from "../wire/generated";
 import { warn, type ErrorBoundary } from "./boundary";
-import { batchRequestInit, eventsUrl, type BatchKind } from "./endpoint";
+import { batchRequestInit, bodyBytes, eventsUrl, KEEPALIVE_BODY_LIMIT, type BatchKind } from "./endpoint";
 
 /** The most items in one batch (batch.json's maxItems). */
 export const MAX_BATCH_ITEMS = 10;
@@ -56,6 +59,8 @@ export interface Transport {
   withdrawEvents(): void;
 }
 
+type Item = WireEvent | WirePing;
+
 /** One batch as sent: its body keeps its seq through every retry. */
 interface Batch {
   readonly kind: BatchKind;
@@ -80,27 +85,73 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
   const awaitingRetry = new Set<Batch>();
   const flushTimers: Record<BatchKind, unknown> = { events: undefined, pings: undefined };
   let seq = 0;
+  /** The UTF-8 bytes of the tag's own keepalive fetches still in flight. */
+  let keepaliveInFlight = 0;
   // Only a strict true marks the browser as automated: a missing or odd value sends nothing.
   const webdriver = win.navigator.webdriver === true;
 
+  /** The body of a batch of `items`; `batchSeq` is the seq an event batch carries. */
+  const bodyOf = (kind: BatchKind, items: readonly Item[], batchSeq: number): string => {
+    if (kind === "pings") return JSON.stringify({ e: items } as PingBatch);
+    const batch: EventBatch = { seq: batchSeq, e: items as EventBatch["e"] };
+    if (webdriver) batch.webdriver = true;
+    return JSON.stringify(batch);
+  };
+
   const batchOf = (kind: BatchKind): Batch | undefined => {
-    let body: string;
-    let size: number;
-    if (kind === "events") {
-      const items = buffers.events.splice(0);
-      if (items.length === 0) return undefined;
-      const batch: EventBatch = { seq: ++seq, e: items as EventBatch["e"] };
-      if (webdriver) batch.webdriver = true;
-      body = JSON.stringify(batch);
-      size = items.length;
-    } else {
-      const items = buffers.pings.splice(0);
-      if (items.length === 0) return undefined;
-      const batch: PingBatch = { e: items as PingBatch["e"] };
-      body = JSON.stringify(batch);
-      size = items.length;
+    const items: Item[] = buffers[kind].splice(0);
+    if (items.length === 0) return undefined;
+    return { kind, body: bodyOf(kind, items, kind === "events" ? ++seq : 0), size: items.length, tries: 0 };
+  };
+
+  /**
+   * The buffered items of `kind` as batches for the unload flush, each body built greedily up to
+   * MAX_BATCH_ITEMS while all of them fit in `budget.left` bytes together, which it takes from. An
+   * item that doesn't fit, alone or after the others, is dropped, with a warning counting them;
+   * each run of dropped events takes a seq of its own, which the collector reads as a lost batch.
+   */
+  const unloadBatchesOf = (kind: BatchKind, budget: { left: number }): Batch[] => {
+    const items: Item[] = buffers[kind].splice(0);
+    const batches: Batch[] = [];
+    let chunk: Item[] = [];
+    let body = "";
+    let lost = 0;
+    let inGap = false;
+    // Bodies are built with seq + 1, the seq they take when closed.
+    const close = (): void => {
+      if (chunk.length === 0) return;
+      if (kind === "events") seq++;
+      batches.push({ kind, body, size: chunk.length, tries: 0 });
+      budget.left -= bodyBytes(body);
+      chunk = [];
+    };
+    for (const item of items) {
+      if (chunk.length < MAX_BATCH_ITEMS) {
+        const grown = bodyOf(kind, [...chunk, item], seq + 1);
+        if (bodyBytes(grown) <= budget.left) {
+          chunk.push(item);
+          body = grown;
+          inGap = false;
+          continue;
+        }
+      }
+      close();
+      const alone = bodyOf(kind, [item], seq + 1);
+      if (bodyBytes(alone) <= budget.left) {
+        chunk = [item];
+        body = alone;
+        inGap = false;
+        continue;
+      }
+      if (!inGap && kind === "events") seq++;
+      inGap = true;
+      lost++;
     }
-    return { kind, body, size, tries: 0 };
+    close();
+    if (lost > 0) {
+      warn(`amanda: dropped ${lost} ${kind} to ${url} on pagehide: over the keepalive limit of ${KEEPALIVE_BODY_LIMIT} bytes`);
+    }
+    return batches;
   };
 
   const dropped = (batch: Batch, why: string, error?: unknown): void => {
@@ -144,18 +195,26 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     boundary.watch("transport", sent);
   };
 
-  /** Sends one batch as the page goes: no retry can follow, since the page may not outlive it. */
+  /**
+   * Sends one batch as the page goes: no retry can follow, since the page may not outlive it, and
+   * a fetch rejected there, for the keepalive quota or the network, is dropped and never resent.
+   */
   const postOnUnload = (batch: Batch): void => {
     // sendBeacon always sends the endpoint's cookies, which a ping must never carry (batchRequestInit).
     const beacon = win.navigator.sendBeacon;
     if (batch.kind === "events" && typeof beacon === "function" && beacon.call(win.navigator, url, batch.body)) return;
-    const sent = win.fetch(url, batchRequestInit(batch.body, batch.kind, true)).then(
+    const init = batchRequestInit(batch.body, batch.kind, true);
+    const bytes = bodyBytes(batch.body);
+    keepaliveInFlight += bytes;
+    const sent = win.fetch(url, init).then(
       (response) => {
+        keepaliveInFlight -= bytes;
         if (response.ok) return;
         if (response.status >= 500) return dropped(batch, `HTTP ${response.status} on pagehide`);
         refused(batch, response.status);
       },
       (error: unknown) => {
+        keepaliveInFlight -= bytes;
         if (!(error instanceof TypeError)) throw error;
         dropped(batch, "network error on pagehide", error);
       },
@@ -185,21 +244,31 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     }
   };
 
-  /** Sends every buffered item and every batch awaiting a retry as the page goes (postOnUnload). */
+  /**
+   * Sends every batch awaiting a retry and every buffered item as the page goes (postOnUnload),
+   * in bodies that fit together, with the tag's keepalive fetches still in flight, within
+   * KEEPALIVE_BODY_LIMIT. A batch awaiting a retry keeps its body and seq, and is dropped whole when
+   * it doesn't fit. A beacon's bytes count only within its own flush: the page can't tell when the
+   * browser has sent it.
+   */
   const flushOnUnload = (): void => {
     stopTimer("events");
     stopTimer("pings");
+    const budget = { left: KEEPALIVE_BODY_LIMIT - keepaliveInFlight };
     const batches: Batch[] = [];
     for (const batch of awaitingRetry) {
       win.clearTimeout(batch.timer);
       batch.timer = undefined;
+      const bytes = bodyBytes(batch.body);
+      if (bytes > budget.left) {
+        dropped(batch, `${bytes} bytes on pagehide, over the keepalive limit of ${KEEPALIVE_BODY_LIMIT} bytes`);
+        continue;
+      }
+      budget.left -= bytes;
       batches.push(batch);
     }
     awaitingRetry.clear();
-    for (const kind of ["events", "pings"] as const) {
-      const batch = batchOf(kind);
-      if (batch !== undefined) batches.push(batch);
-    }
+    for (const kind of ["events", "pings"] as const) batches.push(...unloadBatchesOf(kind, budget));
     // Each batch on its own: one that fails is reported, and the others still go.
     for (const batch of batches) boundary.guard("transport", () => postOnUnload(batch));
   };

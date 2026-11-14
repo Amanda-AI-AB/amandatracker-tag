@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
-import { BatchSizeError, KEEPALIVE_BODY_LIMIT, REFERRER_POLICY } from "../src/core/endpoint";
+import { bodyBytes, KEEPALIVE_BODY_LIMIT, REFERRER_POLICY } from "../src/core/endpoint";
 import {
   createTransport,
   FLUSH_DELAY_MS,
@@ -23,7 +23,8 @@ const pageExit = (): WireEvent => ({ ...PAGE_EXIT }) as unknown as WireEvent;
 /** An event of about 8 KiB as JSON: the transport sends what it is given, and doesn't check it. */
 const big = (): WireEvent => ({ ...EVENT, type: "click", props: { text: "x".repeat(8 * 1024) } }) as unknown as WireEvent;
 
-type Answer = { ok: boolean; status: number } | Error;
+/** A fetch's answer: a response, a rejection, or "pending", a request that stays in flight. */
+type Answer = { ok: boolean; status: number } | Error | "pending";
 
 interface Harness {
   transport: Transport;
@@ -41,6 +42,7 @@ function harness(answers: Answer[] = [], options: { beacon?: boolean | "missing"
   const queue = [...answers];
   const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => {
     const answer = queue.shift() ?? { ok: true, status: 204 };
+    if (answer === "pending") return new Promise<never>(() => undefined);
     if (answer instanceof Error) throw answer;
     return answer;
   });
@@ -343,17 +345,142 @@ describe("pagehide", () => {
     ]);
   });
 
-  it("reports a pagehide batch over the keepalive limit instead of throwing, and still sends the others", () => {
-    // Splitting the pagehide flush by size is AAI-893's: until then such a batch is reported, not sent.
-    const t = harness([], { beacon: false });
-    for (let n = 0; n < 9; n++) t.transport.event(big());
-    for (let n = 0; n < 9; n++) t.transport.ping(pingOf("click"));
+});
+
+describe("pagehide split by size (AAI-893)", () => {
+  const bytesOf = (body: unknown): number => bodyBytes(body as string);
+  const beaconed = (t: Harness): string[] => t.beacon.mock.calls.map((call) => call[1] as string);
+  const fetched = (t: Harness): string[] => t.inits().map((init) => init.body as string);
+
+  it("splits a keepalive fetch flush into bodies within the limit together, each with its own seq, and drops what doesn't fit", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness([{ ok: false, status: 503 }], { beacon: false });
+    // A batch of 3 big events (about 9.7 KiB each as JSON) awaits its retry, and 6 more are
+    // buffered: about 87 KiB in all, of which 6 events fit in 60 KiB.
+    for (let n = 0; n < 3; n++) t.transport.event(big());
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+    for (let n = 0; n < 6; n++) t.transport.event(big());
     expect(() => t.pagehide()).not.toThrow();
-    expect(t.reports).toEqual([
-      { stage: "transport", name: new BatchSizeError().name, message: expect.stringContaining(`over ${KEEPALIVE_BODY_LIMIT}`) },
+
+    const bodies = fetched(t).slice(1);
+    expect(bodies.length).toBe(2);
+    expect(bodies.reduce((sum, body) => sum + bytesOf(body), 0)).toBeLessThanOrEqual(KEEPALIVE_BODY_LIMIT);
+    for (const init of t.inits().slice(1)) expect(init.keepalive).toBe(true);
+    const batches = bodies.map((body) => JSON.parse(body));
+    // The retry keeps its seq 1; 3 buffered events fit in a body with seq 2; the 3 left take seq 3.
+    expect(batches.map((b) => [b.seq, b.e.length])).toEqual([
+      [1, 3],
+      [2, 3],
     ]);
-    expect(t.posted()).toHaveLength(1);
-    expect(t.posted()[0]!.e).toHaveLength(9);
+    expect(warn).toHaveBeenCalledWith(
+      `amanda: dropped 3 events to ${URL_E} on pagehide: over the keepalive limit of ${KEEPALIVE_BODY_LIMIT} bytes`,
+    );
+    expect(t.reports).toEqual([]);
+    // After the bfcache, the next batch shows the dropped one as a gap.
+    t.transport.event(pageview());
+    expect(t.posted().at(-1)).toMatchObject({ seq: 4 });
+  });
+
+  it("drops an event too big on its own, without throwing, and still sends the others", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const huge = { ...EVENT, type: "click", props: { text: "x".repeat(KEEPALIVE_BODY_LIMIT) } } as unknown as WireEvent;
+    const t = harness([], { beacon: false });
+    t.transport.event(click(1));
+    t.transport.event(huge);
+    t.transport.event(click(2));
+    expect(() => t.pagehide()).not.toThrow();
+    expect(t.posted().map((b) => [b.seq, b.e.map((e) => e.props!.n)])).toEqual([
+      [1, [1]],
+      [3, [2]],
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      `amanda: dropped 1 events to ${URL_E} on pagehide: over the keepalive limit of ${KEEPALIVE_BODY_LIMIT} bytes`,
+    );
+    expect(t.reports).toEqual([]);
+  });
+
+  it("splits sendBeacon bodies the same way", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness();
+    for (let n = 0; n < 9; n++) t.transport.event(big());
+    t.pagehide();
+    expect(t.fetchMock).not.toHaveBeenCalled();
+    const bodies = beaconed(t);
+    expect(bodies.reduce((sum, body) => sum + bytesOf(body), 0)).toBeLessThanOrEqual(KEEPALIVE_BODY_LIMIT);
+    expect(bodies.map((body) => JSON.parse(body).seq)).toEqual([1]);
+    expect(JSON.parse(bodies[0]!).e.length).toBe(6);
+  });
+
+  it("splits pings by size too, without seq", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const bigPing = { ...PING, type: "click", page_path: `/${"p".repeat(20 * 1024)}` } as unknown as WirePing;
+    const t = harness();
+    for (let n = 0; n < 4; n++) t.transport.ping(bigPing);
+    t.pagehide();
+    const bodies = fetched(t);
+    expect(bodies.reduce((sum, body) => sum + bytesOf(body), 0)).toBeLessThanOrEqual(KEEPALIVE_BODY_LIMIT);
+    expect(bodies.map((body) => JSON.parse(body).e.length)).toEqual([2]);
+    expect(JSON.parse(bodies[0]!)).not.toHaveProperty("seq");
+  });
+
+  it("counts the tag's keepalive fetches still in flight against the next flush", () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness(["pending"], { beacon: false });
+    // A page_exit flush of 5 big events (about 48 KiB) stays in flight...
+    for (let n = 0; n < 4; n++) t.transport.event(big());
+    t.transport.event({ ...(big() as object), type: "page_exit", engagement_ms: 1 } as unknown as WireEvent);
+    // ...so the pagehide flush has about 12 KiB left: 1 of 4 big events.
+    for (let n = 0; n < 4; n++) t.transport.event(big());
+    t.pagehide();
+    const bodies = fetched(t);
+    expect(bodies.reduce((sum, body) => sum + bytesOf(body), 0)).toBeLessThanOrEqual(KEEPALIVE_BODY_LIMIT);
+    expect(bodies.map((body) => JSON.parse(body).e.length)).toEqual([5, 1]);
+  });
+
+  it("frees a keepalive fetch's share once it settles", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness([], { beacon: false });
+    for (let n = 0; n < 6; n++) t.transport.event(big());
+    t.pagehide();
+    await vi.advanceTimersByTimeAsync(0);
+    for (let n = 0; n < 6; n++) t.transport.event(big());
+    t.pagehide();
+    expect(t.posted().map((b) => b.e.length)).toEqual([6, 6]);
+  });
+
+  it("drops a batch awaiting its retry whose body is over the limit, instead of resending it with keepalive", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness([{ ok: false, status: 503 }]);
+    for (let n = 0; n < MAX_BATCH_ITEMS; n++) t.transport.event(big());
+    await vi.advanceTimersByTimeAsync(0);
+    t.pagehide();
+    expect(t.beacon).not.toHaveBeenCalled();
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/^amanda: dropped a batch of 10 events to .*over the keepalive limit/));
+    expect(t.reports).toEqual([]);
+  });
+
+  it("never resends a pagehide body that fetch rejected, for its size or the network", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness([new TypeError("keepalive quota exceeded")], { beacon: false });
+    t.transport.event(big());
+    t.pagehide();
+    await vi.advanceTimersByTimeAsync(60_000);
+    t.pagehide();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never retries an ordinary batch the collector refused for its size", async () => {
+    const t = harness([{ ok: false, status: 413 }]);
+    for (let n = 0; n < MAX_BATCH_ITEMS; n++) t.transport.event(big());
+    await vi.advanceTimersByTimeAsync(60_000);
+    t.pagehide();
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+    expect(t.beacon).not.toHaveBeenCalled();
+    expect(t.reports).toEqual([
+      { stage: "transport", name: "CollectorRefusedError", message: `POST ${URL_E}: HTTP 413, 10 events dropped` },
+    ]);
   });
 });
 

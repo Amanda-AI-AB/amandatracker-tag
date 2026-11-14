@@ -165,7 +165,7 @@ function checkCodeOrigin(endpoint: string, pageOrigin: string, what: string): vo
  * and so do GA4's, Meta's and any other tracker's beacons fired on the same pagehide. The tag
  * can neither see nor reserve their share, so the 4 KiB under 64 KiB is a margin for small
  * third-party beacons, not a guarantee: a pagehide fetch within this limit can still be rejected,
- * and the transport (AAI-68, AAI-893) must catch that TypeError rather than lose the batch.
+ * and the transport must catch that TypeError rather than lose the batch (AAI-951).
  */
 export const KEEPALIVE_BODY_LIMIT = 60 * 1024;
 
