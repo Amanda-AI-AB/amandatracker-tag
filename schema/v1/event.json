@@ -36,7 +36,8 @@
         "session_id": { "$ref": "#/$defs/SessionId" },
         "consent": { "$ref": "#/$defs/Consent" },
         "attribution": { "$ref": "#/$defs/Attribution" },
-        "props": { "$ref": "#/$defs/Props" }
+        "props": { "$ref": "#/$defs/Props" },
+        "user_ref": { "$ref": "#/$defs/UserRef" }
       }
     },
     "PurchaseEvent": {
@@ -75,6 +76,7 @@
         "consent": { "$ref": "#/$defs/Consent" },
         "attribution": { "$ref": "#/$defs/Attribution" },
         "props": { "$ref": "#/$defs/Props" },
+        "user_ref": { "$ref": "#/$defs/UserRef" },
         "purchase": { "$ref": "#/$defs/Purchase" }
       }
     },
@@ -114,8 +116,16 @@
         "consent": { "$ref": "#/$defs/Consent" },
         "attribution": { "$ref": "#/$defs/Attribution" },
         "props": { "$ref": "#/$defs/Props" },
+        "user_ref": { "$ref": "#/$defs/UserRef" },
         "engagement_ms": { "$ref": "#/$defs/EngagementMs" }
       }
+    },
+    "UserRef": {
+      "description": "The site's own pseudonymous reference for the logged-in visitor, such as a hashed customer number, as the site gave it to amanda('identify', ref) (01 §3): it links the visitor to the site's user for logged-in stitching. The tag sends it on the identify event alone, only when the site's config turns identify on, and only on the identified path (granted analytics), never in a ping. Never a raw email address: a value holding an @, the shape of every email address, is refused here, by the tag before it leaves the browser, and by the collector (AAI-197). An identifier, never cut: one over the cap is refused.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^@]+$"
     },
     "EngagementMs": {
       "description": "Engagement time in milliseconds (01 §7.1, GA4-like): time the page was visible, each span of it counted up to 15 s after the visitor's last interaction (a pointer, key, touch, wheel or scroll event), or after the page loaded or was shown again. A hidden tab pauses the clock, and so do 15 s without interaction. 0 when the page was never engaged since the previous page exit.",
