@@ -1,5 +1,6 @@
 // The tag's boot: read the installing script tag, fetch the site's config, then install the
-// command queue, send the first pageview and follow the single-page app's route changes. Every
+// command queue, send the first pageview and follow the single-page app's route changes. The
+// engagement clock runs from the page's load, and each hide sends a page_exit (engagement.ts). Every
 // step runs inside the error boundary: a failure is reported, and the page never sees it.
 
 import { attributionOf } from "./attribution";
@@ -14,17 +15,19 @@ import {
   type ConsentModeHost,
   type GpcHost,
 } from "./consent-sources";
+import { pageExitInput, watchEngagement, type EngagementHost, type PageExitInput } from "./engagement";
 import { currentScript, endpointFromScript } from "./endpoint";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
 import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
 import type { TagTarget } from "./telemetry";
 
 /** The browser globals the tag boots on: window, or a stand-in for it in tests. */
-export interface TagWindow extends AmandaHost, PageSource, RouteSource, ConsentModeHost, GpcHost {
+export interface TagWindow extends AmandaHost, PageSource, RouteSource, ConsentModeHost, GpcHost, EngagementHost {
   readonly document: Document;
   readonly location: Location;
   readonly navigator: PageSource["navigator"] & GpcHost["navigator"];
   fetch: typeof fetch;
+  addEventListener(type: "popstate" | "pagehide" | "pageshow", listener: () => void): void;
 }
 
 export interface BootOptions {
@@ -32,6 +35,12 @@ export interface BootOptions {
   readonly boundary: ErrorBoundary;
   /** Where each pageview goes: the transport (createTransport), once identity and consent make it an event. */
   readonly onPageview: (input: PageviewInput) => void;
+  /**
+   * Where each page_exit goes (engagement.ts), as each pageview does: an event only, never a
+   * ping. With it, the boot runs the engagement clock from the page's load, and hands over the
+   * page_exits of hides after the tag booted. Without it, the tag tracks no engagement.
+   */
+  readonly onPageExit?: (input: PageExitInput) => void;
   /**
    * The consent state machine for the booted site's config (createConsent, with the config's
    * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
@@ -58,9 +67,13 @@ export interface Tag {
  * reported, or another copy of a.js already runs on the page. It never rejects and never throws.
  */
 export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefined> {
-  const { boundary, target } = options;
+  const { boundary, target, onPageExit } = options;
+  const now = options.now || Date.now;
+  /** The page_exits' destination, once the tag booted; until then a page_exit is dropped. */
+  let exitTo: ((engagementMs: number) => void) | undefined;
   const started = boundary.guard("boot", () => {
     if (!ensureStub(win)) return undefined;
+    if (onPageExit) watchEngagement(win, boundary, (engagementMs) => exitTo?.(engagementMs), now);
     const script = currentScript(win.document);
     const endpoint = endpointFromScript(script, win.location);
     if (target) target.endpoint = endpoint;
@@ -75,6 +88,9 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
       boundary.guard("boot", () => {
         const rate = errorSampleRate(tag.config);
         if (rate !== undefined) boundary.setSampleRate(rate);
+        if (onPageExit) {
+          exitTo = (engagementMs) => onPageExit(pageExitInput(win, tag.site, options.tagVersion, engagementMs, now()));
+        }
         return start(win, tag, options);
       }),
     (error: unknown) => {

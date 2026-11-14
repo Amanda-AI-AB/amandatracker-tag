@@ -3,9 +3,11 @@ import { boot, type TagWindow } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
 import { createConsent, type Consent } from "../src/core/consent";
 import { configRequestInit, DEFAULT_ENDPOINT } from "../src/core/endpoint";
+import type { PageExitInput } from "../src/core/engagement";
 import type { PageviewInput } from "../src/core/pageview";
 import type { AmandaFunction } from "../src/core/queue";
 import { defaultTarget } from "../src/core/telemetry";
+import { createTransport, type TransportWindow } from "../src/core/transport";
 import { buildEvent } from "../src/wire/payload";
 import { fakeWindow, jsonResponse, PAGE, scriptTag, type FakeWindow } from "./fake-window";
 import { validator } from "./wire-validator";
@@ -226,6 +228,158 @@ describe("boot", () => {
 
     expect(onPageview).toHaveBeenCalledTimes(3);
     expect(reports).toEqual(Array(3).fill({ stage: "pageview", name: "Error", message: "transport down" }));
+  });
+});
+
+describe("page_exit (AAI-105)", () => {
+  const START = 1_731_400_000_000;
+
+  /**
+   * A booted tag with onPageExit on a window whose visibility the test drives, its clock at
+   * START + `at()`, and a transport on the same window, created first as a.js is to create it.
+   */
+  function exitPage() {
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+    let elapsed = 0;
+    let visibility: DocumentVisibilityState = "visible";
+    const docListeners = new Map<string, (() => void)[]>();
+    const winListeners = new Map<string, (() => void)[]>();
+    const add = (map: Map<string, (() => void)[]>, type: string, listener: () => void): void => {
+      map.set(type, [...(map.get(type) ?? []), listener]);
+    };
+    const fire = (map: Map<string, (() => void)[]>, type: string): void => {
+      for (const listener of map.get(type) ?? []) listener();
+    };
+    Object.defineProperty(win.document, "visibilityState", { get: () => visibility });
+    Object.assign(win.document, { addEventListener: (type: string, listener: () => void) => add(docListeners, type, listener) });
+    const beacon = vi.fn((_url: string, _body: string) => true);
+    const forward = win.addEventListener.bind(win);
+    Object.assign(win, {
+      navigator: { language: "sv-SE", sendBeacon: beacon },
+      setTimeout: (handler: () => void, timeout: number) => setTimeout(handler, timeout),
+      clearTimeout: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+      addEventListener: (type: string, listener: () => void) =>
+        type === "popstate" ? forward("popstate", listener) : add(winListeners, type, listener),
+    });
+    const reports: ErrorReport[] = [];
+    const boundary = new ErrorBoundary((report) => reports.push(report), 1);
+    const transport = createTransport(win as unknown as TransportWindow, DEFAULT_ENDPOINT, boundary);
+    const exits: PageExitInput[] = [];
+    const booted = boot(win, {
+      tagVersion: "0.2.0",
+      boundary,
+      onPageview: () => undefined,
+      onPageExit: (input) => {
+        exits.push(input);
+        transport.event(
+          buildEvent({
+            ...input,
+            visitor_id: "01934f6c-8d2a-7b3c-8d4e-5f6a7b8c9d01",
+            session_id: "01934f6c-8d2a-7b3c-ad4e-5f6a7b8c9d02",
+            consent: { analytics: "granted", ads: "granted" },
+          }),
+        );
+      },
+      now: () => START + elapsed,
+    });
+    return {
+      win,
+      booted,
+      reports,
+      exits,
+      beacon,
+      at: (ms: number) => {
+        elapsed = ms;
+      },
+      interact: (ms: number) => {
+        elapsed = ms;
+        fire(docListeners, "keydown");
+      },
+      hide: (ms: number) => {
+        elapsed = ms;
+        visibility = "hidden";
+        fire(docListeners, "visibilitychange");
+      },
+      show: (ms: number) => {
+        elapsed = ms;
+        visibility = "visible";
+        fire(docListeners, "visibilitychange");
+      },
+      pagehide: (ms: number) => {
+        elapsed = ms;
+        fire(winListeners, "pagehide");
+      },
+    };
+  }
+
+  it("hands over a page_exit on each hide, with the page and the engagement time since the previous one", async () => {
+    const p = exitPage();
+    await p.booted;
+    p.at(2_000);
+    p.win.history.pushState(null, "", "/cart");
+    p.hide(9_000);
+    p.show(60_000);
+    p.interact(70_000);
+    p.hide(80_000);
+
+    expect(p.exits).toEqual([
+      {
+        type: "page_exit",
+        site_id: "site_123",
+        tag_version: "0.2.0",
+        client_ts: START + 9_000,
+        url: `${PAGE}/cart`,
+        page_title: "Products",
+        language: "sv-SE",
+        engagement_ms: 9_000,
+      },
+      expect.objectContaining({ client_ts: START + 80_000, engagement_ms: 20_000 }),
+    ]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("sends each page_exit by beacon, at once, in a batch the wire schema accepts", async () => {
+    const p = exitPage();
+    await p.booted;
+    p.hide(5_000);
+    // The page_exit went at the hide; the pagehide that follows as the tab closes adds nothing.
+    p.pagehide(5_000);
+
+    expect(p.beacon).toHaveBeenCalledTimes(1);
+    const [url, body] = p.beacon.mock.calls[0]!;
+    expect(url).toBe(`${DEFAULT_ENDPOINT}/v1/e`);
+    const batch = JSON.parse(body);
+    expect(batch).toMatchObject({ seq: 1, e: [{ type: "page_exit", engagement_ms: 5_000 }] });
+    const validate = validator("batch.json");
+    expect(validate(batch), JSON.stringify(validate.errors)).toBe(true);
+    expect(p.win.fetchMock).toHaveBeenCalledTimes(1); // the config fetch alone
+  });
+
+  it("counts the engagement from the page's load, before the config arrives", async () => {
+    const p = exitPage();
+    p.at(3_000);
+    await p.booted;
+    p.pagehide(10_000);
+    expect(p.exits.map((exit) => exit.engagement_ms)).toEqual([10_000]);
+  });
+
+  it("drops a hide's page_exit before the tag booted: it has no site to send it for yet", async () => {
+    const p = exitPage();
+    p.hide(1_000);
+    p.show(2_000);
+    await p.booted;
+    p.hide(4_000);
+    expect(p.exits.map((exit) => exit.engagement_ms)).toEqual([2_000]);
+  });
+
+  it("tracks no engagement without onPageExit", async () => {
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+    const addEventListener = vi.fn();
+    Object.assign(win.document, { addEventListener });
+    const { reports, booted } = setup(win);
+    await booted;
+    expect(addEventListener).not.toHaveBeenCalled();
+    expect(reports).toEqual([]);
   });
 });
 

@@ -1,8 +1,9 @@
 // The transport: it posts the tag's events and anonymous pings to POST <endpoint>/v1/e as batches
 // (schema/v1/batch.json). A batch goes when 10 items are buffered, 2 s after the first of them, or
 // at once for a pageview. A batch that meets a network error or a 5xx is retried twice, with
-// backoff, and then dropped. On pagehide every buffered item and every batch awaiting a retry
-// goes with sendBeacon, or a keepalive fetch where the browser has no sendBeacon or refuses it.
+// backoff, and then dropped. On pagehide, and with a page_exit (engagement.ts), which comes as the
+// page is hidden, every buffered item and every batch awaiting a retry goes with sendBeacon, or a
+// keepalive fetch where the browser has no sendBeacon or refuses it.
 // When the visitor declines, the events not sent yet are dropped instead (withdrawEvents, AAI-86).
 //
 // Everything lives in memory: no cookie, localStorage or IndexedDB, so a visitor who declined
@@ -38,7 +39,10 @@ export class CollectorRefusedError extends Error {
 }
 
 export interface Transport {
-  /** Buffers a built event; a pageview, or the 10th buffered event, sends the batch at once. */
+  /**
+   * Buffers a built event; a pageview, or the 10th buffered event, sends the batch at once, and a
+   * page_exit sends everything buffered at once, as pagehide does.
+   */
   event(event: WireEvent): void;
   /** Buffers a built ping, as event buffers an event; pings go in batches of their own. */
   ping(ping: WirePing): void;
@@ -176,29 +180,35 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     }
   };
 
+  /** Sends every buffered item and every batch awaiting a retry as the page goes (postOnUnload). */
+  const flushOnUnload = (): void => {
+    stopTimer("events");
+    stopTimer("pings");
+    const batches: Batch[] = [];
+    for (const batch of awaitingRetry) {
+      win.clearTimeout(batch.timer);
+      batch.timer = undefined;
+      batches.push(batch);
+    }
+    awaitingRetry.clear();
+    for (const kind of ["events", "pings"] as const) {
+      const batch = batchOf(kind);
+      if (batch !== undefined) batches.push(batch);
+    }
+    // Each batch on its own: one that fails is reported, and the others still go.
+    for (const batch of batches) boundary.guard("transport", () => postOnUnload(batch));
+  };
+
   win.addEventListener("pagehide", () => {
-    boundary.guard("transport", () => {
-      stopTimer("events");
-      stopTimer("pings");
-      const batches: Batch[] = [];
-      for (const batch of awaitingRetry) {
-        win.clearTimeout(batch.timer);
-        batch.timer = undefined;
-        batches.push(batch);
-      }
-      awaitingRetry.clear();
-      for (const kind of ["events", "pings"] as const) {
-        const batch = batchOf(kind);
-        if (batch !== undefined) batches.push(batch);
-      }
-      // Each batch on its own: one that fails is reported, and the others still go.
-      for (const batch of batches) boundary.guard("transport", () => postOnUnload(batch));
-    });
+    boundary.guard("transport", flushOnUnload);
   });
 
   return {
     event(event) {
-      buffered("events", event.type, buffers.events.push(event));
+      const size = buffers.events.push(event);
+      // A page_exit is handed over as the page is hidden, whose timers may never run again.
+      if (event.type === "page_exit") flushOnUnload();
+      else buffered("events", event.type, size);
     },
     ping(ping) {
       buffered("pings", ping.type, buffers.pings.push(ping));

@@ -8,7 +8,9 @@
 // consent snapshot, its click IDs dropped under denied ads (src/core/attribution.ts, gateClickIds), or a ping in declined mode `pings` (src/core/ping.ts, pingOf); then it goes to the transport
 // (src/core/transport.ts, createTransport) (AAI-964), whose withdrawEvents is the machine sink's
 // withdraw, so that nothing goes after a decline (AAI-86; test/declined-off.test.ts wires them all
-// as a.js is to). Until then, a pageview goes nowhere. The
+// as a.js is to). A page_exit (src/core/engagement.ts) goes the same way, as an event only: it never
+// becomes a ping, whose field list has no engagement time. Until then, a pageview and a page_exit
+// go nowhere. The
 // machine is to be handed to boot as its `consent` option, which makes the consent sources
 // (src/core/consent-sources.ts: the `consent` command and Google Consent Mode) drive it; until
 // then the tag follows no consent source.
@@ -35,5 +37,6 @@ boundary.guard("boot", () =>
     boundary,
     target,
     onPageview: () => undefined,
+    onPageExit: () => undefined,
   }),
 );

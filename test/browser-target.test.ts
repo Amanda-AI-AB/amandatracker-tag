@@ -45,6 +45,8 @@ function browserContext(
     }
     readonly title = "Products";
     readonly referrer = "";
+    readonly visibilityState = "visible";
+    addEventListener(): void {}
   }
   const context: Record<string, unknown> = {
     URL,

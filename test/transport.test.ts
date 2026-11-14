@@ -10,7 +10,7 @@ import {
   type TransportWindow,
 } from "../src/core/transport";
 import type { WireEvent, WirePing } from "../src/wire/generated";
-import { EVENT, PING, validator } from "./wire-validator";
+import { EVENT, PAGE_EXIT, PING, validator } from "./wire-validator";
 
 const ENDPOINT = "https://eu.serversider.com";
 const URL_E = `${ENDPOINT}/v1/e`;
@@ -19,6 +19,7 @@ const validate = validator("batch.json");
 const click = (n: number): WireEvent => ({ ...EVENT, type: "click", props: { n } }) as unknown as WireEvent;
 const pageview = (): WireEvent => ({ ...EVENT }) as unknown as WireEvent;
 const pingOf = (type: string): WirePing => ({ ...PING, type }) as unknown as WirePing;
+const pageExit = (): WireEvent => ({ ...PAGE_EXIT }) as unknown as WireEvent;
 /** An event of about 8 KiB as JSON: the transport sends what it is given, and doesn't check it. */
 const big = (): WireEvent => ({ ...EVENT, type: "click", props: { text: "x".repeat(8 * 1024) } }) as unknown as WireEvent;
 
@@ -319,6 +320,56 @@ describe("pagehide", () => {
     ]);
     expect(t.posted()).toHaveLength(1);
     expect(t.posted()[0]!.e).toHaveLength(9);
+  });
+});
+
+describe("page_exit (AAI-105)", () => {
+  it("sends a page_exit at once with sendBeacon, with the events buffered before it, as pagehide does", async () => {
+    const t = harness();
+    t.transport.event(click(1));
+    t.transport.event(pageExit());
+    expect(t.fetchMock).not.toHaveBeenCalled();
+    expect(t.beacon).toHaveBeenCalledTimes(1);
+    const [url, body] = t.beacon.mock.calls[0]!;
+    expect(url).toBe(URL_E);
+    const batch = JSON.parse(body as string);
+    expect(batch).toMatchObject({ seq: 1, e: [{ type: "click" }, { type: "page_exit", engagement_ms: 42_500 }] });
+    expect(validate(batch), JSON.stringify(validate.errors)).toBe(true);
+    // The 2 s timer is stopped: nothing goes twice.
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+    expect(t.beacon).toHaveBeenCalledTimes(1);
+    expect(t.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends a batch awaiting its retry with it, and the buffered pings by keepalive fetch", async () => {
+    const t = harness([{ ok: false, status: 503 }]);
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(0);
+    t.transport.ping(pingOf("click"));
+    t.transport.event(pageExit());
+    expect(t.beacon.mock.calls.map((call) => JSON.parse(call[1] as string).seq)).toEqual([1, 2]);
+    expect(t.inits()[1]).toMatchObject({ credentials: "omit", keepalive: true });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to a keepalive fetch when sendBeacon refuses it, and keeps working after the page is shown again", () => {
+    const t = harness([], { beacon: false });
+    t.transport.event(pageExit());
+    expect(t.inits()[0]).toMatchObject({ credentials: "same-origin", keepalive: true });
+    expect(t.posted()[0]).toMatchObject({ seq: 1, e: [{ type: "page_exit" }] });
+    t.transport.event(pageview());
+    expect(t.posted()[1]).toMatchObject({ seq: 2, e: [{ type: "pageview" }] });
+    expect(t.inits()[1]).not.toHaveProperty("keepalive");
+  });
+
+  it("never puts more than 10 events in its batch", () => {
+    const t = harness();
+    for (let n = 1; n <= MAX_BATCH_ITEMS + 3; n++) t.transport.event(click(n));
+    t.transport.event(pageExit());
+    const batch = JSON.parse(t.beacon.mock.calls[0]![1] as string);
+    expect(batch.e.length).toBeLessThanOrEqual(MAX_BATCH_ITEMS);
+    expect(validate(batch)).toBe(true);
   });
 });
 
