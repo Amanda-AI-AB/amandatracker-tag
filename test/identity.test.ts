@@ -250,6 +250,28 @@ describe("withdrawal and renewal", () => {
     expect(jar.live().map((c) => c.name)).toEqual(["session"]);
   });
 
+  it("forget deletes both cookies exactly as the collector sets them through a proxy (AAI-827)", () => {
+    const { jar, identity } = page();
+    const { visitorId, sessionId } = identity.ids();
+    // Set-Cookie: <name>=<the tag's value>; Domain=.<etld+1>; Path=/; Max-Age; SameSite=Lax; Secure, never HttpOnly
+    jar.serverSet({ name: VISITOR_COOKIE, value: `v1.${visitorId}`, domain: "example.com", path: "/", maxAge: VISITOR_MAX_AGE_S });
+    jar.serverSet({ name: SESSION_COOKIE, value: `v1.${sessionId}.${START}`, domain: "example.com", path: "/", maxAge: 1800 });
+    expect(jar.live().map((c) => [c.name, c.domain, c.path])).toEqual([
+      [VISITOR_COOKIE, "example.com", "/"],
+      [SESSION_COOKIE, "example.com", "/"],
+    ]);
+
+    identity.forget();
+    expect(jar.live()).toEqual([]);
+  });
+
+  it("can't reach an HttpOnly cookie, which is why the collector never sets one", () => {
+    const { jar, identity } = page();
+    jar.serverSet({ name: VISITOR_COOKIE, value: "v1.a", domain: "example.com", path: "/", maxAge: 86_400, httpOnly: true });
+    identity.forget();
+    expect(jar.live().map((c) => c.name)).toEqual([VISITOR_COOKIE]);
+  });
+
   it("forget writes nothing when there are no cookies to delete", () => {
     const { jar, identity } = page();
     identity.forget();

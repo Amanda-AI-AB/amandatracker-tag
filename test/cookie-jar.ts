@@ -1,7 +1,8 @@
 // A stand-in for document.cookie that keeps cookies as a browser does, for the identity tests: it
 // refuses a cookie on a public suffix or on a domain the page isn't on, and a Secure cookie on an
 // http: page; it matches a write to the cookie it replaces by name, domain and path; and it drops a
-// cookie whose Max-Age has passed by the clock it is given.
+// cookie whose Max-Age has passed by the clock it is given. A server may set an HttpOnly cookie,
+// which document.cookie neither shows nor overwrites.
 
 /** The public suffixes this jar knows, as a browser's list would have them. */
 export const PUBLIC_SUFFIXES = ["com", "se", "uk", "co.uk", "github.io"];
@@ -15,6 +16,8 @@ export interface StoredCookie {
   readonly expires: number;
   readonly secure: boolean;
   readonly sameSite: string | undefined;
+  /** Set only by serverSet: document.cookie can't write HttpOnly. */
+  readonly httpOnly?: boolean;
 }
 
 export class CookieJar {
@@ -31,7 +34,7 @@ export class CookieJar {
   /** The cookies the page sees now. */
   get cookie(): string {
     return this.live()
-      .filter((c) => c.path === "/")
+      .filter((c) => c.path === "/" && !c.httpOnly)
       .map((c) => `${c.name}=${c.value}`)
       .join("; ");
   }
@@ -61,7 +64,10 @@ export class CookieJar {
       if (PUBLIC_SUFFIXES.indexOf(domain) >= 0) return;
       if (domain !== this.hostname && !this.hostname.endsWith(`.${domain}`)) return;
     }
-    this.cookies = this.cookies.filter((c) => !(c.name === name && c.domain === domain && c.path === path));
+    const same = (c: StoredCookie): boolean => c.name === name && c.domain === domain && c.path === path;
+    // A script can neither overwrite nor delete an HttpOnly cookie.
+    if (this.cookies.some((c) => same(c) && c.httpOnly)) return;
+    this.cookies = this.cookies.filter((c) => !same(c));
     if (maxAge <= 0) return;
     this.cookies.push({ name, value: cookieValue, domain, path, expires: this.now() + maxAge * 1000, secure, sameSite });
   }
@@ -71,8 +77,13 @@ export class CookieJar {
     return this.cookies.filter((c) => c.expires > this.now());
   }
 
-  /** Puts a cookie in the jar as a server's Set-Cookie would, bypassing document.cookie. */
+  /**
+   * Puts a cookie in the jar as a server's Set-Cookie would, bypassing document.cookie: Secure and
+   * SameSite=Lax, replacing the one of the same name, domain and path.
+   */
   serverSet(cookie: Omit<StoredCookie, "expires" | "secure" | "sameSite"> & { maxAge: number }): void {
-    this.cookies.push({ ...cookie, expires: this.now() + cookie.maxAge * 1000, secure: true, sameSite: "Lax" });
+    const { maxAge, ...stored } = cookie;
+    this.cookies = this.cookies.filter((c) => !(c.name === stored.name && c.domain === stored.domain && c.path === stored.path));
+    this.cookies.push({ ...stored, expires: this.now() + maxAge * 1000, secure: true, sameSite: "Lax" });
   }
 }

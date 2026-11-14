@@ -200,7 +200,6 @@ Still to come:
   (AAI-964, AAI-965);
 - the other consent source: the no-CMP policy (AAI-94);
 - the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
-- `data-endpoint` wired into boot, the transport and withdrawal (AAI-831);
 - the per-site toggle that turns the GA4 e-commerce auto-map on in a.js.
 
 Where this README or a guide describes what the tag does at runtime, it describes the design these
@@ -326,7 +325,8 @@ request options. It resolves `data-endpoint` this way:
 - a full URL must be `https:`, or the page's own origin;
 - credentials, a query or a fragment are refused.
 
-Its request options are the ones the transport and boot are to use. `batchRequestInit` sends event
+The transport and boot use its request options (`test/proxied.test.ts` follows a site on
+`data-endpoint="/amnda"` from boot to withdrawal). `batchRequestInit` sends event
 batches with `credentials: "same-origin"`, so that behind a proxy the browser stores the cookies the
 collector re-issues with `Set-Cookie` (AAI-827). It sends ping batches, and `configRequestInit` the
 config fetch, with `credentials: "omit"`: they never carry the site's cookies. Every request, adapter

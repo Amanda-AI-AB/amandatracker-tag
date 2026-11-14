@@ -8,12 +8,11 @@ This is a pattern you run on your own infrastructure. Amanda does not host it fo
 [Why not a hosted tracking domain?](#why-not-a-hosted-tracking-domain)).
 
 > **Availability: planned, not yet working.** This guide describes how the tag is designed to work behind
-> a proxy. The tag itself is still being built: its transport (AAI-68) and its cookies (AAI-98) are
-> written but not yet fed with pageviews (AAI-964). It
-> already fetches its config through the `data-endpoint` you give it (AAI-67, AAI-828); loading adapters
-> and posting events through it are AAI-831. The collector setting the cookies through your proxy is
-> AAI-827. Until these land, a proxy set up as described here serves `a.js` and its config, but the tag
-> sends no events yet. This note goes away when they are live.
+> a proxy. The tag fetches its config and loads its consent-manager adapters through the
+> `data-endpoint` you give it, and its transport posts to it (AAI-67, AAI-828, AAI-831). But `a.js`
+> doesn't feed pageviews to the transport yet (AAI-964), and the collector doesn't yet set the cookies
+> through your proxy (AAI-827). Until these land, a proxy set up as described here serves `a.js`, its
+> config and its adapters, but the tag sends no events yet. This note goes away when they are live.
 
 ## What it does, and why
 
