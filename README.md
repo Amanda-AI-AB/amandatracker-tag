@@ -22,10 +22,24 @@ then dropped; one the collector refuses otherwise is dropped and reported as a t
 `pagehide` it sends what is buffered or awaiting a retry with `sendBeacon` (pings, which must not
 carry cookies, and any batch `sendBeacon` refuses go with a `keepalive` fetch instead). Each event
 batch carries `seq`, the page's batch counter from 1, whose gaps show lost batches. Its queues live
-in memory only: no cookie, `localStorage` or IndexedDB. Still to come:
+in memory only: no cookie, `localStorage` or IndexedDB.
+
+The consent state machine (`src/core/consent.ts`) is built but not yet fed either. It holds two
+categories, `analytics` and `ads`, each `granted`, `denied`, `unknown` or `no_cmp`, and the
+analytics state decides how an item is collected: with the visitor's ids when granted; per the
+site's declined mode when denied (the config's `consent.declined_mode`: `pings` sends anonymous
+pings, `off`, the default, sends nothing); held in memory, at most 100 per page, while unknown; and
+for `no_cmp`, as the site's no-CMP policy resolves it, held until it does. The ads state rides each
+event's consent snapshot. Held items go with the ids on a grant, and per the declined mode on a
+denial or on `pagehide` while still undecided, so an `off` site drops them. A denial deletes the
+visitor's ids at once, and a grant after a denial mints fresh ones, so earlier pings are never
+linked to the visitor. Still to come:
 
 - the collector accepting `POST /v1/t` and the event debugger showing tag errors (amandatracker);
-- pageviews made into events (with the ids and consent below) or pings, and handed to the transport;
+- pageviews fed through the consent state machine, made into events (with the ids below) or pings,
+  and handed to the transport (AAI-964);
+- the consent sources that drive the state machine: the manual `amanda('consent', ...)` API and
+  Google Consent Mode v2 (AAI-85), GPC (AAI-89) and the no-CMP policy (AAI-94);
 - the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
 - the `_amnda_id` and `_amnda_ses` cookies (AAI-98);
 - `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).

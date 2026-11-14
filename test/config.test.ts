@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { checkSiteId, ConfigError, errorSampleRate, fetchConfig, parseConfig } from "../src/core/config";
+import { checkSiteId, ConfigError, declinedMode, errorSampleRate, fetchConfig, parseConfig } from "../src/core/config";
 import { configRequestInit } from "../src/core/endpoint";
 
 const CONFIG = { schema_version: 1, site: "site_123", config_version: 3, paused: false };
@@ -49,6 +49,26 @@ describe("the telemetry section", () => {
   it("refuses a section or a rate of another shape", () => {
     for (const telemetry of [null, [], "x", { error_sample_rate: 1.5 }, { error_sample_rate: -0.1 }, { error_sample_rate: "0.5" }]) {
       expect(() => parseConfig({ ...CONFIG, telemetry }, "site_123")).toThrow(ConfigError);
+    }
+  });
+});
+
+describe("the consent section", () => {
+  it("is optional, and sets the declined mode, off by default", () => {
+    expect(declinedMode(parseConfig(CONFIG, "site_123"))).toBe("off");
+    expect(declinedMode(parseConfig({ ...CONFIG, consent: {} }, "site_123"))).toBe("off");
+    expect(declinedMode(parseConfig({ ...CONFIG, consent: { declined_mode: "off" } }, "site_123"))).toBe("off");
+    expect(declinedMode(parseConfig({ ...CONFIG, consent: { declined_mode: "pings" } }, "site_123"))).toBe("pings");
+  });
+
+  it("keeps the section's other fields for the tickets that read them", () => {
+    const consent = { declined_mode: "pings", no_cmp_policy: "geo", gpc: true };
+    expect(parseConfig({ ...CONFIG, consent }, "site_123").consent).toEqual(consent);
+  });
+
+  it("refuses a section or a declined mode of another shape", () => {
+    for (const consent of [null, [], "pings", { declined_mode: "on" }, { declined_mode: "" }, { declined_mode: null }, { declined_mode: 1 }]) {
+      expect(() => parseConfig({ ...CONFIG, consent }, "site_123")).toThrow(ConfigError);
     }
   });
 });

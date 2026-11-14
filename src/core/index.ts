@@ -2,9 +2,10 @@
 // where document.currentScript is the installing script tag, inside the error boundary, whose
 // sampled reports go to the collector as tag errors (src/core/telemetry.ts).
 //
-// Still to come: a pageview becomes an event only with the visitor and session ids (AAI-98) and the
-// consent snapshot (AAI-84) the wire schema requires, or a ping in declined mode; then it goes to
-// the transport (src/core/transport.ts, createTransport). Until then, a pageview goes nowhere.
+// Still to come: a pageview goes through the consent state machine (src/core/consent.ts,
+// createConsent), which makes it an event with the visitor and session ids (AAI-98) and the
+// consent snapshot, or a ping in declined mode; then it goes to the transport
+// (src/core/transport.ts, createTransport) (AAI-964). Until then, a pageview goes nowhere.
 import { boot, type TagWindow } from "./boot";
 import { ErrorBoundary, warn } from "./boundary";
 import { TAG_VERSION } from "./build-info";

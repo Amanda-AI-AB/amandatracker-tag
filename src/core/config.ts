@@ -6,6 +6,7 @@
 // here; the tickets that use a section (consent AAI-84, kill switch AAI-797, ...) check that
 // section's fields.
 
+import type { DeclinedMode } from "./consent";
 import { configRequestInit, configUrl } from "./endpoint";
 
 /** The config layout this tag reads. */
@@ -53,7 +54,33 @@ export function parseConfig(json: unknown, site: string): SiteConfig {
     throw new ConfigError(`the config's config_version is not a version: ${String(version)}`);
   }
   checkTelemetry(config.telemetry);
+  checkConsent(config.consent);
   return config as SiteConfig;
+}
+
+/** The declined modes a site can choose (02 §2); `off` is the default for a site that sets none. */
+const DECLINED_MODES: readonly DeclinedMode[] = ["off", "pings"];
+
+/**
+ * The config's optional consent section; this tag reads its declined_mode, `off` or `pings`. A
+ * section of another shape, or another mode, throws ConfigError: guessing a mode could send pings
+ * from a site that chose to send nothing. Its other fields are the tickets' that use them.
+ */
+function checkConsent(consent: unknown): void {
+  if (consent === undefined) return;
+  if (typeof consent !== "object" || consent === null || Array.isArray(consent)) {
+    throw new ConfigError("the config's consent is not an object");
+  }
+  const mode = (consent as Record<string, unknown>).declined_mode;
+  if (mode !== undefined && DECLINED_MODES.indexOf(mode as DeclinedMode) < 0) {
+    throw new ConfigError(`the config's consent.declined_mode is not one of ${DECLINED_MODES.join(", ")}: ${String(mode)}`);
+  }
+}
+
+/** The site's declined mode: the config's consent.declined_mode, or `off` when it sets none. */
+export function declinedMode(config: SiteConfig): DeclinedMode {
+  const consent = config.consent as { declined_mode?: DeclinedMode } | undefined;
+  return (consent && consent.declined_mode) || "off";
 }
 
 /**
