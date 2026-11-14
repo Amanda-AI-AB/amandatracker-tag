@@ -21,7 +21,8 @@ pageview. A batch that meets a network error or a 5xx is retried twice (after 1 
 then dropped; one the collector refuses otherwise is dropped and reported as a tag error. On
 `pagehide` it sends what is buffered or awaiting a retry with `sendBeacon` (pings, which must not
 carry cookies, and any batch `sendBeacon` refuses go with a `keepalive` fetch instead). Each event
-batch carries `seq`, the page's batch counter from 1, whose gaps show lost batches. Its queues live
+batch carries `seq`, the page's batch counter from 1, whose gaps show lost batches, and
+`"webdriver": true` when `navigator.webdriver` is `true`. Its queues live
 in memory only: no cookie, `localStorage` or IndexedDB.
 
 The consent state machine (`src/core/consent.ts`) is built but not yet fed either. It holds two
@@ -252,7 +253,9 @@ truth for what the tag sends and what the collector accepts:
   field is a framework amendment, never a routine release.
 - `batch.json`: the request body of `POST /v1/e`, `{"seq": 3, "e": [...]}`. It holds 1 to 10
   events or pings, never both. A batch of events always carries `seq`, the page's batch counter,
-  which the collector reads for loss. A batch of pings never carries it.
+  which the collector reads for loss. A batch of pings never carries it. A batch of events from a
+  browser driven by automation (`navigator.webdriver === true`) also carries `"webdriver": true`, for
+  the collector's bot marking; it is absent otherwise, and never on a batch of pings.
 - `tag-error.json`: the request body of `POST /v1/t`, one failure the tag's error boundary caught:
   the tag version, the site (when the snippet names a valid one), the stage it failed in (`consent`
   for a consent source it follows, such as Consent Mode's dataLayer), and the

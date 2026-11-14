@@ -10,6 +10,8 @@
 // accrues no storage, and what the page hasn't sent when it dies is lost. Loss is measured
 // instead: each event batch carries seq, the page's batch counter, whose gaps the collector reads
 // as lost batches (AAI-106). A ping batch never carries seq (schema/v1/batch.json).
+// An event batch from a browser that reports navigator.webdriver === true carries webdriver: true,
+// for the collector's bot marking (AAI-76); a ping batch never does.
 
 import type { EventBatch, PingBatch, WireEvent, WirePing } from "../wire/generated";
 import { warn, type ErrorBoundary } from "./boundary";
@@ -27,7 +29,7 @@ export const RETRY_DELAYS_MS: readonly number[] = [1000, 3000];
 /** The browser globals the transport uses: window, or a stand-in for it in tests. */
 export interface TransportWindow {
   fetch: typeof fetch;
-  readonly navigator: { sendBeacon?(url: string, data?: BodyInit | null): boolean };
+  readonly navigator: { sendBeacon?(url: string, data?: BodyInit | null): boolean; readonly webdriver?: boolean };
   setTimeout(handler: () => void, timeout: number): unknown;
   clearTimeout(handle: unknown): void;
   addEventListener(type: "pagehide", listener: () => void): void;
@@ -78,6 +80,8 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
   const awaitingRetry = new Set<Batch>();
   const flushTimers: Record<BatchKind, unknown> = { events: undefined, pings: undefined };
   let seq = 0;
+  // Only a strict true marks the browser as automated: a missing or odd value sends nothing.
+  const webdriver = win.navigator.webdriver === true;
 
   const batchOf = (kind: BatchKind): Batch | undefined => {
     let body: string;
@@ -86,6 +90,7 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
       const items = buffers.events.splice(0);
       if (items.length === 0) return undefined;
       const batch: EventBatch = { seq: ++seq, e: items as EventBatch["e"] };
+      if (webdriver) batch.webdriver = true;
       body = JSON.stringify(batch);
       size = items.length;
     } else {

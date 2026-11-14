@@ -37,7 +37,7 @@ interface Harness {
 }
 
 /** A transport on a stand-in window whose fetch gives each answer in turn, then 204s. */
-function harness(answers: Answer[] = [], options: { beacon?: boolean | "missing" } = {}): Harness {
+function harness(answers: Answer[] = [], options: { beacon?: boolean | "missing"; webdriver?: unknown } = {}): Harness {
   const queue = [...answers];
   const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => {
     const answer = queue.shift() ?? { ok: true, status: 204 };
@@ -48,7 +48,10 @@ function harness(answers: Answer[] = [], options: { beacon?: boolean | "missing"
   const listeners: (() => void)[] = [];
   const win: TransportWindow = {
     fetch: fetchMock as unknown as typeof fetch,
-    navigator: options.beacon === "missing" ? {} : { sendBeacon: beacon as unknown as (url: string) => boolean },
+    navigator: {
+      ...(options.beacon === "missing" ? {} : { sendBeacon: beacon as unknown as (url: string) => boolean }),
+      ...("webdriver" in options ? { webdriver: options.webdriver as boolean } : {}),
+    },
     setTimeout: (handler, timeout) => setTimeout(handler, timeout),
     clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     addEventListener: (_type, listener) => listeners.push(listener),
@@ -167,6 +170,37 @@ describe("seq", () => {
     second.transport.event(pageview());
     expect(first.posted()[0]!.seq).toBe(1);
     expect(second.posted()[0]!.seq).toBe(1);
+  });
+});
+
+describe("webdriver (AAI-796)", () => {
+  it("puts webdriver: true on every event batch when navigator.webdriver is true, by fetch and by beacon", () => {
+    const t = harness([], { webdriver: true });
+    t.transport.event(pageview());
+    t.transport.event(click(1));
+    t.pagehide();
+    const beaconed = JSON.parse(t.beacon.mock.calls[0]![1] as string);
+    expect(t.posted()[0]).toMatchObject({ seq: 1, webdriver: true });
+    expect(beaconed).toMatchObject({ seq: 2, webdriver: true });
+    for (const batch of [...t.posted(), beaconed]) expect(validate(batch), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it.each([
+    ["false", false],
+    ["missing", undefined],
+    ["not a boolean", "true"],
+  ])("leaves webdriver out when navigator.webdriver is %s", (_name, value) => {
+    const t = harness([], value === undefined ? {} : { webdriver: value });
+    t.transport.event(pageview());
+    expect(t.posted()[0]).not.toHaveProperty("webdriver");
+    expect(validate(t.posted()[0]), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("never puts webdriver on a ping batch", async () => {
+    const t = harness([], { webdriver: true });
+    t.transport.ping(pingOf("pageview"));
+    expect(t.posted()[0]).not.toHaveProperty("webdriver");
+    expect(validate(t.posted()[0]), JSON.stringify(validate.errors)).toBe(true);
   });
 });
 
