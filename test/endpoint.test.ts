@@ -8,6 +8,7 @@ import {
   adapterUrl,
   batchRequestInit,
   bodyBytes,
+  bundleUrl,
   configRequestInit,
   configUrl,
   currentScript,
@@ -225,6 +226,20 @@ describe("the endpoint's URLs", () => {
     expect(adapterUrl(resolveEndpoint("/amnda", DEV), "0.3.0", "x", DEV.origin)).toBe(
       "http://localhost:8080/amnda/adapters/0.3.0/x.js",
     );
+  });
+
+  it("serves a versioned build beside the evergreen a.js, from the collection host or the proxy", () => {
+    expect(bundleUrl(DEFAULT_ENDPOINT, "0.3.0", PAGE)).toBe("https://eu.serversider.com/a.0.3.0.js");
+    expect(bundleUrl(endpoint, "0.3.1-dev.20261114103000.gabc1234", PAGE)).toBe(
+      "https://shop.example.com/amnda/a.0.3.1-dev.20261114103000.gabc1234.js",
+    );
+    expect(bundleUrl(endpoint, "1.0.0+b/../x", PAGE)).toBe("https://shop.example.com/amnda/a.1.0.0%2Bb%2F..%2Fx.js");
+  });
+
+  it("serves versioned builds only from the collection host or the page's own origin", () => {
+    const evil = resolveEndpoint("https://evil.example", LOCATION);
+    expect(() => bundleUrl(evil, "0.3.0", PAGE)).toThrow("versioned builds load only from");
+    expect(bundleUrl(resolveEndpoint("/amnda", DEV), "0.3.0", DEV.origin)).toBe("http://localhost:8080/amnda/a.0.3.0.js");
   });
 });
 

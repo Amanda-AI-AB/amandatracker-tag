@@ -117,6 +117,9 @@ export async function build({
   const coreFile = join(outdir, "a.js");
   await esbuild.build({
     ...common,
+    // The core names its version on its first line, so that whoever loads the evergreen a.js can find
+    // the release it is, and that release's provenance (AAI-148).
+    banner: { js: `/*! amandatracker-tag ${version} */` },
     define: { ...define, __ADAPTER_INTEGRITY__: JSON.stringify(adapterIntegrity) },
     entryPoints: [coreEntry],
     outfile: coreFile,

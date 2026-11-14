@@ -28,8 +28,30 @@
       "type": "string",
       "pattern": "^[A-Z]{2}$"
     },
+    "subdivision": {
+      "description": "The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Never on a ping's message: a ping carries country-level geo only (06 §3).",
+      "type": "string",
+      "pattern": "^[A-Z]{2}-[A-Z0-9]{1,3}$"
+    },
     "device_class": {
       "$ref": "#/$defs/DeviceClass"
+    },
+    "browser_family": {
+      "description": "The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Never on a ping's message.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "browser_major": {
+      "description": "The browser's major version the collector parses from the user agent, when it could. Never on a ping's message.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "os_family": {
+      "description": "The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
     },
     "event": {
       "description": "The client's payload: an event, or an anonymous ping.",

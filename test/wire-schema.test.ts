@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EVENT, loadSchemas, PING, PURCHASE, UUID7, validator } from "./wire-validator";
+import { EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
 
 describe("wire schema v1: event", () => {
   const validate = validator("event.json");
@@ -38,6 +38,13 @@ describe("wire schema v1: event", () => {
     expect(validate({ ...EVENT, consent: { analytics: "yes", ads: "denied" } })).toBe(false);
     expect(validate({ ...EVENT, consent: { analytics: "granted" } })).toBe(false);
     expect(validate({ ...EVENT, consent: { ...EVENT.consent, functional: "granted" } })).toBe(false);
+  });
+
+  it("accepts the consent snapshot's source, gpc, manual, gcm, tcf, cookiebot, onetrust or usercentrics, and no other", () => {
+    for (const source of ["gpc", "manual", "gcm", "tcf", "cookiebot", "onetrust", "usercentrics"]) {
+      expect(validate({ ...EVENT, consent: { ...EVENT.consent, source } })).toBe(true);
+    }
+    expect(validate({ ...EVENT, consent: { ...EVENT.consent, source: "unlisted-cmp" } })).toBe(false);
   });
 
   it("rejects another schema version, a non-semver tag version and a fractional timestamp", () => {
@@ -173,9 +180,9 @@ describe("wire schema v1: purchase", () => {
     expect(purchase.required).toEqual([...tracked.required, "purchase"]);
   });
 
-  it("names each envelope field once in $defs, so that both events only refer to it", () => {
+  it("names each envelope field once in $defs, so that every event only refers to it", () => {
     const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, object> }>;
-    for (const name of ["TrackedEvent", "PurchaseEvent"]) {
+    for (const name of ["TrackedEvent", "PurchaseEvent", "PageExitEvent"]) {
       const { type, ...envelope } = defs[name]!.properties;
       for (const [key, prop] of Object.entries(envelope)) {
         expect(Object.keys(prop), `${name}.${key}`).toEqual(["$ref"]);
@@ -186,6 +193,58 @@ describe("wire schema v1: purchase", () => {
   it("rides in a batch and a Pub/Sub message", () => {
     expect(validator("batch.json")({ seq: 1, e: [EVENT, PURCHASE] })).toBe(true);
     const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: PURCHASE };
+    expect(validator("pubsub-message.json")(message)).toBe(true);
+  });
+});
+
+describe("wire schema v1: page_exit (AAI-105)", () => {
+  const validate = validator("event.json");
+
+  it("accepts a page_exit, and one with no engagement since the previous one", () => {
+    expect(validate(PAGE_EXIT), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...PAGE_EXIT, engagement_ms: 0 }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a page_exit without its engagement time, which no other event may be", () => {
+    const { engagement_ms, ...rest } = PAGE_EXIT;
+    expect(validate(rest)).toBe(false);
+    expect(validate({ ...EVENT, type: "page_exit" })).toBe(false);
+  });
+
+  it("rejects an engagement time on another type of event, a purchase included", () => {
+    expect(validate({ ...PAGE_EXIT, type: "pageview" })).toBe(false);
+    expect(validate({ ...PURCHASE, engagement_ms: 1 })).toBe(false);
+  });
+
+  it.each([
+    ["a negative", -1],
+    ["a fractional", 1.5],
+    ["a string", "1000"],
+  ])("rejects %s engagement time", (_, engagement) => {
+    expect(validate({ ...PAGE_EXIT, engagement_ms: engagement })).toBe(false);
+  });
+
+  it.each(["pa", "page", "page_", "page_exi", "page_exits", "page_exit_intent", "Page_exit", "PAGE_EXIT", "xpage_exit", "page_exit\n", "pageview", "pa_exit"])(
+    "takes %j as the type of an ordinary event",
+    (type) => {
+      expect(validate({ ...EVENT, type }), JSON.stringify(validate.errors)).toBe(true);
+    },
+  );
+
+  it("gives a page_exit the same envelope as every other event", () => {
+    const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, unknown>; required: string[] }>;
+    const tracked = defs.TrackedEvent!;
+    const exit = defs.PageExitEvent!;
+    const { type: trackedType, ...trackedRest } = tracked.properties;
+    const { type: exitType, engagement_ms: engagement, ...exitRest } = exit.properties;
+    expect(exitRest).toEqual(trackedRest);
+    expect(exitType).toMatchObject({ const: "page_exit" });
+    expect(exit.required).toEqual([...tracked.required, "engagement_ms"]);
+  });
+
+  it("rides in a batch and a Pub/Sub message", () => {
+    expect(validator("batch.json")({ seq: 1, e: [EVENT, PAGE_EXIT] })).toBe(true);
+    const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: PAGE_EXIT };
     expect(validator("pubsub-message.json")(message)).toBe(true);
   });
 });
@@ -267,6 +326,26 @@ describe("wire schema v1: Pub/Sub message", () => {
     expect(validate({ ...message, country: "se", event: PING })).toBe(false);
     expect(validate({ ...message, device_class: "smartwatch", event: PING })).toBe(false);
   });
+
+  it("carries an event's subdivision, browser family and major, and OS family (AAI-908)", () => {
+    const derived = { subdivision: "SE-AB", browser_family: "Chrome Mobile", browser_major: 131, os_family: "Android" };
+    expect(validate({ ...message, ...derived, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...message, subdivision: "GB-ENG", event: EVENT })).toBe(true);
+    expect(validate({ ...message, subdivision: "FR-75C", event: EVENT })).toBe(true);
+  });
+
+  it("checks the shape of the subdivision and the user-agent fields", () => {
+    for (const subdivision of ["se-ab", "SE", "SE-", "SE-ABCD", "SEAB"]) {
+      expect(validate({ ...message, subdivision, event: EVENT }), subdivision).toBe(false);
+    }
+    expect(validate({ ...message, browser_family: "", event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_family: "x".repeat(65), event: EVENT })).toBe(false);
+    expect(validate({ ...message, os_family: "", event: EVENT })).toBe(false);
+    expect(validate({ ...message, os_family: "x".repeat(65), event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_major: -1, event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_major: 131.5, event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_major: "131", event: EVENT })).toBe(false);
+  });
 });
 
 describe("wire schema v1: batch (the body of POST /v1/e)", () => {
@@ -311,6 +390,20 @@ describe("wire schema v1: batch (the body of POST /v1/e)", () => {
   it("rejects a seq below 1 or fractional", () => {
     expect(validate({ seq: 0, e: [EVENT] })).toBe(false);
     expect(validate({ seq: 1.5, e: [EVENT] })).toBe(false);
+  });
+
+  it("accepts webdriver: true on a batch of events, for the collector's bot marking (AAI-796)", () => {
+    expect(validate({ seq: 1, e: [EVENT], webdriver: true }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a webdriver other than true: the tag leaves it out instead", () => {
+    expect(validate({ seq: 1, e: [EVENT], webdriver: false })).toBe(false);
+    expect(validate({ seq: 1, e: [EVENT], webdriver: "true" })).toBe(false);
+    expect(validate({ seq: 1, e: [EVENT], webdriver: 1 })).toBe(false);
+  });
+
+  it("rejects webdriver on a batch of pings, whose field list is frozen", () => {
+    expect(validate({ e: [PING], webdriver: true })).toBe(false);
   });
 
   it("rejects a key the schema doesn't list", () => {

@@ -13,6 +13,8 @@
     "build": "node scripts/build.mjs",
     "gen:wire": "node scripts/gen-wire.mjs",
     "size": "node scripts/size-gate.mjs dist/a.js",
+    "provenance": "node scripts/provenance.mjs",
+    "reproduce": "node scripts/reproduce.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.src.json",
     "check": "pnpm typecheck && pnpm test && pnpm build"

@@ -2,20 +2,30 @@
 // types and rules (src/wire/generated.ts), so a payload carries exactly the fields the schema
 // allows, each with a value it accepts, or isn't built at all.
 import {
+  ATTRIBUTION_UTM_FIELDS,
+  CLICK_IDS_FIELDS,
+  PAGE_EXIT_EVENT_SHAPE,
   PURCHASE_EVENT_SHAPE,
+  PURCHASE_SHAPE,
   SCHEMA_VERSION,
   TRACKED_EVENT_SHAPE,
   WIRE_PING_SHAPE,
+  WIRE_TAG_ERROR_SHAPE,
+  type PageExitEvent,
+  type Purchase,
   type PurchaseEvent,
   type TrackedEvent,
   type WireEvent,
   type WirePing,
+  type WireTagError,
 } from "./generated";
 
 export type TrackedEventInput = Omit<TrackedEvent, "schema_version" | "event_id">;
 export type PurchaseEventInput = Omit<PurchaseEvent, "schema_version" | "event_id">;
-export type EventInput = TrackedEventInput | PurchaseEventInput;
+export type PageExitEventInput = Omit<PageExitEvent, "schema_version" | "event_id">;
+export type EventInput = TrackedEventInput | PurchaseEventInput | PageExitEventInput;
 export type PingInput = Omit<WirePing, "schema_version" | "event_id">;
+export type TagErrorInput = Omit<WireTagError, "schema_version" | "event_id">;
 
 const HEX = "0123456789abcdef";
 
@@ -104,6 +114,13 @@ export class WirePayloadError extends Error {
   }
 }
 
+/** An OVERFLOW entry of `cut` for each of an object's fields, at path. */
+function overflowCuts(path: string, fields: readonly string[]): Record<string, "cut"> {
+  const rules: Record<string, "cut"> = {};
+  for (const field of fields) rules[`${path}.${field}`] = "cut";
+  return rules;
+}
+
 /**
  * What a string over its cap becomes, by its path. `cut`: free text, cut to the cap on a whole
  * character. `subtags`: a BCP 47 tag, cut to its whole subtags that fit (RFC 4647 lookup). `drop`:
@@ -119,7 +136,13 @@ export const OVERFLOW: Readonly<Record<string, "cut" | "subtags" | "drop">> = {
   "event.page_title": "cut",
   "event.language": "subtags",
   "event.props.*": "cut",
+  // An attribution value over the URL's cap is cut: the collector cuts it to 200 anyway (03 §5).
+  ...overflowCuts("event.attribution.utm", ATTRIBUTION_UTM_FIELDS),
+  ...overflowCuts("event.attribution.click_ids", CLICK_IDS_FIELDS),
+  "event.attribution.custom.*": "cut",
   "event.purchase.items[].name": "cut",
+  // A cut TC string would be another, malformed one: one over the cap is left out.
+  "event.consent.tc_string": "drop",
   "ping.path": "cut",
   "ping.referrer_host": "drop",
   "ping.utm.source": "cut",
@@ -127,6 +150,8 @@ export const OVERFLOW: Readonly<Record<string, "cut" | "subtags" | "drop">> = {
   "ping.utm.campaign": "cut",
   "ping.utm.term": "cut",
   "ping.utm.content": "cut",
+  "tag_error.name": "cut",
+  "tag_error.message": "cut",
 };
 
 /**
@@ -397,11 +422,12 @@ function shape<T extends object>(input: T, spec: Shape, path: string): T {
 }
 
 /**
- * Builds an event: a purchase when the input carries a purchase, which then needs type purchase,
- * and any other event otherwise, whose type is never purchase. Throws WirePayloadError when a
- * required field is missing or empty (an event of type purchase without its purchase included), the
- * purchase isn't an object (null included), or a value breaks a rule the tag can't keep for it
- * (shape).
+ * Builds an event: a purchase when the input carries a purchase, which then needs type purchase;
+ * a page exit when it carries engagement_ms, which then needs type page_exit; and any other event
+ * otherwise, whose type is neither. Throws WirePayloadError when a required field is missing or
+ * empty (an event of type purchase without its purchase, or of type page_exit without its
+ * engagement_ms, included), the purchase isn't an object (null included), or a value breaks a rule
+ * the tag can't keep for it (shape).
  */
 export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireEvent {
   if ("purchase" in input && input.purchase !== undefined) {
@@ -410,9 +436,26 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
     const event: PurchaseEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
     return shape(event, PURCHASE_EVENT_SHAPE, "event");
   }
+  if ("engagement_ms" in input && input.engagement_ms !== undefined) {
+    if (input.type !== "page_exit") throw new WirePayloadError("event.type", 'is not "page_exit" on an event with an engagement_ms');
+    const event: PageExitEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
+    return shape(event, PAGE_EXIT_EVENT_SHAPE, "event");
+  }
   if (input.type === "purchase") throw new WirePayloadError("event.purchase");
+  if (input.type === "page_exit") throw new WirePayloadError("event.engagement_ms");
   const event: TrackedEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
   return shape(event, TRACKED_EVENT_SHAPE, "event");
+}
+
+/**
+ * Builds a purchase's order, as a purchase event carries it in `purchase`: kept to the schema's
+ * Purchase by the same rules buildEvent keeps it to (its currency upper-cased, an item's name cut to
+ * its cap, fields the schema doesn't list left out). Throws WirePayloadError when the order isn't an
+ * object, or buildEvent would refuse it (shape).
+ */
+export function buildPurchase(input: unknown): Purchase {
+  if (!isRecord(input)) throw new WirePayloadError("event.purchase", "is not an object");
+  return shape(input as unknown as Purchase, PURCHASE_SHAPE, "event.purchase");
 }
 
 /**
@@ -426,4 +469,28 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
 export function buildPing(input: PingInput, eventId: string = pingId()): WirePing {
   const ping: WirePing = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
   return shape(ping, WIRE_PING_SHAPE, "ping");
+}
+
+const URL_IN_TEXT = /\b([a-z][a-z0-9+.-]*:\/\/[^/?#\s"'<>]*)[^\s"'<>]*/gi;
+const EMAIL_IN_TEXT = /[^\s"'<>@]+@[^\s"'<>@]+\.[^\s"'<>@]+/g;
+
+/**
+ * An error message as a tag error may carry it: each URL in it cut to its scheme and host, and each
+ * email address replaced by "<email>". A tag error is sent whatever the visitor's consent, and an
+ * error's message can quote the page's URL, query string included.
+ */
+export function scrubMessage(message: string): string {
+  return message.replace(EMAIL_IN_TEXT, "<email>").replace(URL_IN_TEXT, "$1");
+}
+
+/**
+ * Builds a tag error (schema/v1/tag-error.json): its message scrubbed (scrubMessage) whatever the
+ * caller passes, its name and message cut to their caps. Throws WirePayloadError when a required
+ * field is missing or a value breaks a rule (a stage the schema doesn't list). Its event_id's time is
+ * only the hour (pingId), as a ping's is: it is sent in every consent state.
+ */
+export function buildTagError(input: TagErrorInput, eventId: string = pingId()): WireTagError {
+  const report: WireTagError = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
+  if (typeof input.message === "string") report.message = scrubMessage(input.message);
+  return shape(report, WIRE_TAG_ERROR_SHAPE, "tag_error");
 }

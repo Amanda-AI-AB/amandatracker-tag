@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/event.json",
   "title": "WireEvent",
-  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; every other event is a TrackedEvent, which never does, and whose type is never purchase. The two are told apart by purchase: one requires it and the other doesn't list it.",
-  "oneOf": [{ "$ref": "#/$defs/TrackedEvent" }, { "$ref": "#/$defs/PurchaseEvent" }],
+  "description": "One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; a page exit is a PageExitEvent, which carries its engagement time in engagement_ms; every other event is a TrackedEvent, which carries neither, and whose type is never purchase or page_exit. They are told apart by purchase and engagement_ms: each is required by one branch and listed by no other.",
+  "oneOf": [{ "$ref": "#/$defs/TrackedEvent" }, { "$ref": "#/$defs/PurchaseEvent" }, { "$ref": "#/$defs/PageExitEvent" }],
   "$defs": {
     "TrackedEvent": {
-      "description": "An event that isn't a purchase, such as a pageview or a custom event.",
+      "description": "An event that is neither a purchase nor a page exit, such as a pageview or a custom event.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -35,7 +35,9 @@
         "visitor_id": { "$ref": "#/$defs/VisitorId" },
         "session_id": { "$ref": "#/$defs/SessionId" },
         "consent": { "$ref": "#/$defs/Consent" },
-        "props": { "$ref": "#/$defs/Props" }
+        "attribution": { "$ref": "#/$defs/Attribution" },
+        "props": { "$ref": "#/$defs/Props" },
+        "user_ref": { "$ref": "#/$defs/UserRef" }
       }
     },
     "PurchaseEvent": {
@@ -72,9 +74,63 @@
         "visitor_id": { "$ref": "#/$defs/VisitorId" },
         "session_id": { "$ref": "#/$defs/SessionId" },
         "consent": { "$ref": "#/$defs/Consent" },
+        "attribution": { "$ref": "#/$defs/Attribution" },
         "props": { "$ref": "#/$defs/Props" },
+        "user_ref": { "$ref": "#/$defs/UserRef" },
         "purchase": { "$ref": "#/$defs/Purchase" }
       }
+    },
+    "PageExitEvent": {
+      "description": "A page exit (01 §7.1): the envelope every event carries, type page_exit, and in engagement_ms the engagement time since the page load's previous page exit. The tag sends one, by beacon, each time the page is hidden (visibilitychange to hidden, or pagehide) after engagement since the previous one, and at least one per page load: a tab switched back and forth sends several, and the processor adds them up (AAI-798).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "tag_version",
+        "site_id",
+        "event_id",
+        "type",
+        "client_ts",
+        "url",
+        "visitor_id",
+        "session_id",
+        "consent",
+        "engagement_ms"
+      ],
+      "properties": {
+        "schema_version": { "$ref": "#/$defs/SchemaVersion" },
+        "tag_version": { "$ref": "#/$defs/TagVersion" },
+        "site_id": { "$ref": "#/$defs/SiteId" },
+        "event_id": { "$ref": "#/$defs/EventId" },
+        "type": {
+          "description": "Always page_exit.",
+          "const": "page_exit"
+        },
+        "client_ts": { "$ref": "#/$defs/ClientTs" },
+        "url": { "$ref": "#/$defs/Url" },
+        "referrer": { "$ref": "#/$defs/Referrer" },
+        "page_title": { "$ref": "#/$defs/PageTitle" },
+        "language": { "$ref": "#/$defs/Language" },
+        "visitor_id": { "$ref": "#/$defs/VisitorId" },
+        "session_id": { "$ref": "#/$defs/SessionId" },
+        "consent": { "$ref": "#/$defs/Consent" },
+        "attribution": { "$ref": "#/$defs/Attribution" },
+        "props": { "$ref": "#/$defs/Props" },
+        "user_ref": { "$ref": "#/$defs/UserRef" },
+        "engagement_ms": { "$ref": "#/$defs/EngagementMs" }
+      }
+    },
+    "UserRef": {
+      "description": "The site's own pseudonymous reference for the logged-in visitor, such as a hashed customer number, as the site gave it to amanda('identify', ref) (01 §3): it links the visitor to the site's user for logged-in stitching. The tag sends it on the identify event alone, only when the site's config turns identify on, and only on the identified path (granted analytics), never in a ping. Never a raw email address: a value holding an @, the shape of every email address, is refused here, by the tag before it leaves the browser, and by the collector (AAI-197). An identifier, never cut: one over the cap is refused.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[^@]+$"
+    },
+    "EngagementMs": {
+      "description": "Engagement time in milliseconds (01 §7.1, GA4-like): time the page was visible, each span of it counted up to 15 s after the visitor's last interaction (a pointer, key, touch, wheel or scroll event), or after the page loaded or was shown again. A hidden tab pauses the clock, and so do 15 s without interaction. 0 when the page was never engaged since the previous page exit.",
+      "type": "integer",
+      "minimum": 0
     },
     "SchemaVersion": {
       "description": "The wire schema's major version: this file's.",
@@ -146,11 +202,11 @@
       "maxLength": 64
     },
     "TrackedEventType": {
-      "description": "A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order. The pattern refuses exactly purchase, and has no lookahead, so that every regex engine the schema is read with takes it alike.",
+      "description": "A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order, and page_exit, which only a PageExitEvent carries, with its engagement time. The pattern refuses exactly those two, and has no lookahead, so that every regex engine the schema is read with takes it alike.",
       "type": "string",
       "minLength": 1,
       "maxLength": 64,
-      "pattern": "^(?:[^p]|p(?:[^u]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S])"
+      "pattern": "^(?:[^p]|p(?:[^ua]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S]|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^_]|$)|page_(?:[^e]|$)|page_e(?:[^x]|$)|page_ex(?:[^i]|$)|page_exi(?:[^t]|$)|page_exit[\\s\\S])"
     },
     "ConsentState": {
       "description": "One category's consent: granted, denied, unknown (not yet decided) or no_cmp (the site has no consent manager).",
@@ -167,8 +223,75 @@
         },
         "ads": {
           "$ref": "#/$defs/ConsentState"
+        },
+        "source": {
+          "$ref": "#/$defs/ConsentSource"
+        },
+        "tc_string": {
+          "$ref": "#/$defs/TcString"
         }
       }
+    },
+    "ConsentSource": {
+      "description": "The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, tcf, the page's IAB TCF v2.2 consent manager (__tcfapi), cookiebot, the page's Cookiebot consent manager read through its own API (window.Cookiebot), onetrust, the page's OneTrust consent manager read through its own API (window.OnetrustActiveGroups), usercentrics, the page's Usercentrics consent manager read through its own API (window.UC_UI), or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved.",
+      "enum": ["gpc", "manual", "gcm", "tcf", "cookiebot", "onetrust", "usercentrics"]
+    },
+    "TcString": {
+      "description": "The IAB TCF v2.2 TC string the consent manager gave with the signal the snapshot holds: present only when source is tcf, and then whenever the consent manager gave one that fits. Personal data (CJEU C-604/22). The tag never cuts it, which would make another string of it: one over the cap, or not of base64url segments joined by dots, is left out.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*$"
+    },
+    "Attribution": {
+      "description": "The landing's attribution (01 §5): the parameters of the landing page's query string, those present and not empty, read on the page load's first pageview and on no other event. Each value is verbatim, as URLSearchParams decodes it: never case-normalised, so that Summer and summer stay distinct, and never classified, which the processor does (AAI-102). The collector caps each value at 200 characters (03 §5); the 2048 here is the page URL's own cap. Click IDs go only while ads consent isn't denied: under denied ads the tag leaves out click_ids, and drops the click-ID parameters from url and referrer too, while the UTMs and custom parameters, campaign labels rather than identifiers, still go.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "utm": { "$ref": "#/$defs/AttributionUtm" },
+        "click_ids": { "$ref": "#/$defs/ClickIds" },
+        "custom": { "$ref": "#/$defs/CustomParams" }
+      }
+    },
+    "AttributionUtm": {
+      "description": "The UTM set: utm_<field> in the landing URL.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": { "$ref": "#/$defs/AttributionValue" },
+        "medium": { "$ref": "#/$defs/AttributionValue" },
+        "campaign": { "$ref": "#/$defs/AttributionValue" },
+        "term": { "$ref": "#/$defs/AttributionValue" },
+        "content": { "$ref": "#/$defs/AttributionValue" },
+        "id": { "$ref": "#/$defs/AttributionValue" },
+        "source_platform": { "$ref": "#/$defs/AttributionValue" },
+        "creative_format": { "$ref": "#/$defs/AttributionValue" },
+        "marketing_tactic": { "$ref": "#/$defs/AttributionValue" }
+      }
+    },
+    "ClickIds": {
+      "description": "The ad platforms' click IDs, by their own parameter names in the landing URL: Google Ads' gclid, gbraid and wbraid, Meta's fbclid and Microsoft Advertising's msclkid. Identifiers: sent only while ads consent isn't denied.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "gclid": { "$ref": "#/$defs/AttributionValue" },
+        "gbraid": { "$ref": "#/$defs/AttributionValue" },
+        "wbraid": { "$ref": "#/$defs/AttributionValue" },
+        "fbclid": { "$ref": "#/$defs/AttributionValue" },
+        "msclkid": { "$ref": "#/$defs/AttributionValue" }
+      }
+    },
+    "CustomParams": {
+      "description": "The site's own attribution parameters, those its config's custom_params names, by their names in the landing URL: at most 25.",
+      "type": "object",
+      "maxProperties": 25,
+      "additionalProperties": { "type": "string", "maxLength": 2048 }
+    },
+    "AttributionValue": {
+      "description": "One attribution parameter's value, verbatim.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
     },
     "Props": {
       "description": "The event's own properties (01 §4): a flat object of at most 25 keys, each value a string of at most 200 characters (03 §5), a number or a boolean. Keys starting with am_ are reserved for the tag and refused. 01 §4 also caps props at 8 KB in total, which JSON Schema can't express: the collector's payload cap is its backstop (AAI-65).",

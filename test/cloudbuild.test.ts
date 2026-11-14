@@ -55,6 +55,12 @@ const CHECKS = [
   { id: "build", args: ["pnpm", "build"] },
 ];
 
+// The release's own Node steps after the checks: the provenance, and the second build that must match it.
+const RELEASE_STEPS = [
+  { id: "provenance", args: ["pnpm", "provenance"] },
+  { id: "reproduce", args: ["pnpm", "reproduce", "dist/provenance.json"] },
+];
+
 function checkSteps(config: BuildConfig): { id: string; args: string[] | undefined }[] {
   return config.steps
     .filter((step) => step.entrypoint === "corepack")
@@ -68,13 +74,15 @@ describe.each(["pr.yaml", "release.yaml"])("cloudbuild/%s", (file) => {
 
   it("installs from the lockfile, type-checks, tests, and builds through the size gate", () => {
     const config = load(file);
-    expect(checkSteps(config)).toEqual(CHECKS);
+    expect(checkSteps(config)).toEqual(file === "release.yaml" ? [...CHECKS, ...RELEASE_STEPS] : CHECKS);
   });
 
   it("runs every Node step in the same Node image, pinned by digest", () => {
     const nodeSteps = load(file).steps.filter((step) => step.name.startsWith("node:"));
     expect(nodeSteps.map((step) => step.id)).toEqual(
-      file === "release.yaml" ? ["version", ...CHECKS.map((check) => check.id)] : CHECKS.map((check) => check.id),
+      file === "release.yaml"
+        ? ["version", ...[...CHECKS, ...RELEASE_STEPS].map((step) => step.id)]
+        : CHECKS.map((check) => check.id),
     );
     for (const step of nodeSteps) expect(step.name).toMatch(NODE_IMAGE);
     expect(new Set(nodeSteps.map((step) => step.name)).size).toBe(1);
@@ -113,8 +121,9 @@ describe("cloudbuild/release.yaml", () => {
   let fakeBin: string;
   let callLog: string;
   let buckets: string;
-  // This build's dist/a.js.
+  // This build's dist/a.js, and its provenance.
   const BUILT = "(()=>{})();\n";
+  const PROVENANCE = '{"_type":"https://in-toto.io/Statement/v1"}\n';
 
   let origin: string;
 
@@ -152,6 +161,7 @@ describe("cloudbuild/release.yaml", () => {
     }
     writeFileSync(join(workspace, "package.json"), JSON.stringify({ version: "0.3.0" }));
     writeFileSync(join(workspace, "dist/a.js"), BUILT);
+    writeFileSync(join(workspace, "dist/provenance.json"), PROVENANCE);
   }
 
   beforeEach(() => {
@@ -237,13 +247,14 @@ describe("cloudbuild/release.yaml", () => {
   }
 
   const JS = "--content-type=text/javascript; charset=utf-8";
+  const JSON_TYPE = "--content-type=application/json";
 
   const IMMUTABLE = "--cache-control=public, max-age=31536000, immutable";
 
   /** The upload of one immutable file: the copy, then its hash check, the file's and the object's. */
-  function uploadCalls(file: string, object: string): string[][] {
+  function uploadCalls(file: string, object: string, type = JS): string[][] {
     return [
-      ["storage", "cp", "--no-clobber", IMMUTABLE, JS, file, object],
+      ["storage", "cp", "--no-clobber", IMMUTABLE, type, file, object],
       ["storage", "hash", file, "--skip-md5", "--format=value(crc32c_hash)"],
       ["storage", "objects", "describe", object, "--format=value(crc32c_hash)"],
     ];
@@ -261,10 +272,10 @@ describe("cloudbuild/release.yaml", () => {
     const config = load("release.yaml");
     expect(config.substitutions).toEqual({ _ENV: "dev" });
     const ids = config.steps.map((step) => step.id);
-    expect(ids).toEqual(["version", "install", "typecheck", "test", "build", "upload", "promote"]);
+    expect(ids).toEqual(["version", "install", "typecheck", "test", "build", "provenance", "reproduce", "upload", "promote"]);
   });
 
-  it("dev: uploads the version's adapters, then a.<version>.js, promotes it to a.js and purges that", () => {
+  it("dev: uploads the version's adapters and provenance, then a.<version>.js, promotes it to a.js and purges that", () => {
     withAdapters("example-cmp", "other-cmp");
 
     const { ran, failed, calls } = release({ _ENV: "dev", TAG_NAME: "", SHORT_SHA: "abc1234" });
@@ -275,6 +286,7 @@ describe("cloudbuild/release.yaml", () => {
     expect(calls).toEqual([
       ...uploadCalls("dist/adapters/example-cmp.js", `${bucket}/adapters/${DEV_VERSION}/example-cmp.js`),
       ...uploadCalls("dist/adapters/other-cmp.js", `${bucket}/adapters/${DEV_VERSION}/other-cmp.js`),
+      ...uploadCalls("dist/provenance.json", `${bucket}/a.${DEV_VERSION}.provenance.json`, JSON_TYPE),
       ...uploadCalls("dist/a.js", `${bucket}/a.${DEV_VERSION}.js`),
       ["storage", "cp", "--cache-control=public, max-age=300", JS, `${bucket}/a.${DEV_VERSION}.js`, `${bucket}/a.js`],
       [
@@ -289,16 +301,24 @@ describe("cloudbuild/release.yaml", () => {
     ]);
     expect(object(`amandatrk-dev-data-static/a.${DEV_VERSION}.js`)).toBe(BUILT);
     expect(object("amandatrk-dev-data-static/a.js")).toBe(BUILT);
+    expect(object(`amandatrk-dev-data-static/a.${DEV_VERSION}.provenance.json`)).toBe(PROVENANCE);
     expect(object(`amandatrk-dev-data-static/adapters/${DEV_VERSION}/example-cmp.js`)).toBe(ADAPTER);
     expect(object(`amandatrk-dev-data-static/adapters/${DEV_VERSION}/other-cmp.js`)).toBe(ADAPTER);
   });
 
-  it("dev without adapters: promotes and purges a.js alone", () => {
+  it("dev without adapters: uploads the provenance and a.<version>.js, promotes and purges a.js alone", () => {
     const { failed, calls } = release({ _ENV: "dev", TAG_NAME: "", SHORT_SHA: "abc1234" });
 
     expect(failed).toBeUndefined();
     const copiesAndPurges = calls.filter((call) => call[1] !== "hash" && call[1] !== "objects");
     expect(copiesAndPurges.map((call) => call.slice(0, 3).concat(call.slice(-2)))).toEqual([
+      [
+        "storage",
+        "cp",
+        "--no-clobber",
+        "dist/provenance.json",
+        `gs://amandatrk-dev-data-static/a.${DEV_VERSION}.provenance.json`,
+      ],
       ["storage", "cp", "--no-clobber", "dist/a.js", `gs://amandatrk-dev-data-static/a.${DEV_VERSION}.js`],
       [
         "storage",
@@ -311,7 +331,7 @@ describe("cloudbuild/release.yaml", () => {
     ]);
   });
 
-  it("prod: uploads the tagged release's adapters and a.<semver>.js only, and never touches a.js", () => {
+  it("prod: uploads the tagged release's adapters, provenance and a.<semver>.js only, and never touches a.js", () => {
     withAdapters("example-cmp");
 
     const { ran, failed, calls } = release({ _ENV: "prod", TAG_NAME: "v0.3.0", SHORT_SHA: "abc1234" });
@@ -321,8 +341,10 @@ describe("cloudbuild/release.yaml", () => {
     const bucket = "gs://amandatrk-prod-data-static";
     expect(calls).toEqual([
       ...uploadCalls("dist/adapters/example-cmp.js", `${bucket}/adapters/0.3.0/example-cmp.js`),
+      ...uploadCalls("dist/provenance.json", `${bucket}/a.0.3.0.provenance.json`, JSON_TYPE),
       ...uploadCalls("dist/a.js", `${bucket}/a.0.3.0.js`),
     ]);
+    expect(object("amandatrk-prod-data-static/a.0.3.0.provenance.json")).toBe(PROVENANCE);
     expect(object("amandatrk-prod-data-static/adapters/0.3.0/example-cmp.js")).toBe(ADAPTER);
     expect(object("amandatrk-prod-data-static/a.0.3.0.js")).toBe(BUILT);
   });
@@ -337,6 +359,16 @@ describe("cloudbuild/release.yaml", () => {
     expect(stderr).toContain("adapters/0.3.0/example-cmp.js already exists with other contents: bump the version");
     expect(calls.some((call) => call.includes("dist/a.js"))).toBe(false);
     expect(object("amandatrk-prod-data-static/adapters/0.3.0/example-cmp.js")).toBe("(()=>{oldAdapter()})();\n");
+  });
+
+  it("another build of a version whose provenance differs fails before the core is uploaded", () => {
+    stored("amandatrk-prod-data-static/a.0.3.0.provenance.json", '{"other":"build"}\n');
+
+    const { failed, stderr, calls } = release({ _ENV: "prod", TAG_NAME: "v0.3.0", SHORT_SHA: "def5678" });
+
+    expect(failed).toBe("upload");
+    expect(stderr).toContain("a.0.3.0.provenance.json already exists with other contents: bump the version");
+    expect(calls.some((call) => call.includes("dist/a.js"))).toBe(false);
   });
 
   it("a retried build finds its own bytes in a.<version>.js, leaves them in place, and goes on", () => {
@@ -442,7 +474,9 @@ describe("cloudbuild/release.yaml", () => {
 
     expect(failed).toBeUndefined();
     expect(ran).toEqual(["version", "upload", "promote"]);
-    expect(calls[0]).toContain(`gs://amandatrk-dev-data-static/a.${DEV_VERSION}.js`);
+    expect(calls[0]).toContain(`gs://amandatrk-dev-data-static/a.${DEV_VERSION}.provenance.json`);
+    expect(calls[3]).toContain(`gs://amandatrk-dev-data-static/a.${DEV_VERSION}.js`);
+    expect(object(`amandatrk-dev-data-static/a.${DEV_VERSION}.provenance.json`)).toBe(PROVENANCE);
     expect(object(`amandatrk-dev-data-static/a.${DEV_VERSION}.js`)).toBe(BUILT);
   });
 

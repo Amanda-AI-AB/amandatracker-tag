@@ -111,6 +111,16 @@ export function eventsUrl(endpoint: string): string {
   return `${endpoint}/v1/e`;
 }
 
+/** Where the tag's error boundary posts its reports (schema/v1/tag-error.json). */
+export function tagErrorsUrl(endpoint: string): string {
+  return `${endpoint}/v1/t`;
+}
+
+/** The collector's anonymous jurisdiction hint for the no-CMP `geo` policy (AAI-93, no-cmp.ts). */
+export function policyUrl(endpoint: string): string {
+  return `${endpoint}/v1/policy`;
+}
+
 export { ADAPTER_NAME };
 
 /**
@@ -125,11 +135,26 @@ export function adapterUrl(endpoint: string, version: string, name: string, page
   if (!ADAPTER_NAME.test(name)) {
     throw new Error(`invalid adapter name: ${name}`);
   }
+  checkCodeOrigin(endpoint, pageOrigin, "adapters");
+  return `${endpoint}/adapters/${encodeURIComponent(version)}/${name}.js`;
+}
+
+/**
+ * The immutable core of tag version `version` as the release publishes it, a.<version>.js, which the
+ * canary pin hands off to (canary.ts). It is code run on the customer's page, as an adapter is, so it
+ * loads only from the collection host or the page's own origin; any other throws EndpointError.
+ */
+export function bundleUrl(endpoint: string, version: string, pageOrigin: string): string {
+  checkCodeOrigin(endpoint, pageOrigin, "versioned builds");
+  return `${endpoint}/a.${encodeURIComponent(version)}.js`;
+}
+
+/** Throws EndpointError unless endpoint is on the collection host or the page's own origin. */
+function checkCodeOrigin(endpoint: string, pageOrigin: string, what: string): void {
   const origin = new URL(endpoint).origin;
   if (origin !== DEFAULT_ENDPOINT && origin !== pageOrigin) {
-    throw new EndpointError(`adapters load only from ${DEFAULT_ENDPOINT} or the page's own origin, not ${origin}`);
+    throw new EndpointError(`${what} load only from ${DEFAULT_ENDPOINT} or the page's own origin, not ${origin}`);
   }
-  return `${endpoint}/adapters/${encodeURIComponent(version)}/${name}.js`;
 }
 
 /**
@@ -140,7 +165,7 @@ export function adapterUrl(endpoint: string, version: string, name: string, page
  * and so do GA4's, Meta's and any other tracker's beacons fired on the same pagehide. The tag
  * can neither see nor reserve their share, so the 4 KiB under 64 KiB is a margin for small
  * third-party beacons, not a guarantee: a pagehide fetch within this limit can still be rejected,
- * and the transport (AAI-68, AAI-893) must catch that TypeError rather than lose the batch.
+ * and the transport must catch that TypeError rather than lose the batch (AAI-951).
  */
 export const KEEPALIVE_BODY_LIMIT = 60 * 1024;
 
@@ -164,6 +189,23 @@ export const REFERRER_POLICY: ReferrerPolicy = "strict-origin";
 /** The fetch options for the site's config from configUrl. It sends no cookie, to any host. */
 export function configRequestInit(): RequestInit {
   return { credentials: "omit", referrerPolicy: REFERRER_POLICY };
+}
+
+/**
+ * The fetch options for the jurisdiction hint from policyUrl. It is asked before the visitor's
+ * consent is known, so it never carries the site's cookies; the browser may cache its answer, as
+ * the collector's Cache-Control says.
+ */
+export function policyRequestInit(): RequestInit {
+  return { credentials: "omit", referrerPolicy: REFERRER_POLICY };
+}
+
+/**
+ * The fetch options for a tag error to tagErrorsUrl; `body` is a WireTagError as JSON. It is sent
+ * whatever the visitor's consent, so, like a ping, it never carries the site's cookies.
+ */
+export function tagErrorRequestInit(body: string): RequestInit {
+  return { method: "POST", body, credentials: "omit", referrerPolicy: REFERRER_POLICY };
 }
 
 /**
