@@ -174,7 +174,8 @@ Still to come:
   (AAI-964, AAI-965);
 - the other consent source: the no-CMP policy (AAI-94);
 - the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
-- `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).
+- `data-endpoint` wired into boot, the transport and withdrawal (AAI-831);
+- the per-site toggle that turns the GA4 e-commerce auto-map on in a.js.
 
 Where this README or a guide describes what the tag does at runtime, it describes the design these
 tickets build, and says so.
@@ -223,6 +224,17 @@ truth for what the tag sends and what the collector accepts:
   captured, and there is no allowlist or setting that could capture them. Scroll depth, off by
   default, is a `scroll` whose `props` hold `percent_scrolled`, 25, 50, 75 or 90: the tag sends one
   the first time in each pageview the visitor scrolls to that share of the page's height.
+  GA4 e-commerce auto-map (`src/core/ecommerce.ts`), off unless configured, reads a GA4-tagged
+  shop's `view_item`, `add_to_cart`, `begin_checkout` and `purchase` from `window.dataLayer`, both
+  as Google Tag Manager pushes them (`{event, ecommerce}`) and as `gtag('event', ...)` does, and
+  maps each by an explicit table to an event of the same name. The first three carry `props` of
+  `currency`, `value` and `item_count`, plus `item_id` and `item_name` when the event has one item.
+  A `purchase` becomes a `PurchaseEvent`: `transaction_id` is its `order_id`, `value` its
+  `revenue` and `currency` its currency, and each item's `item_id`, `item_name`, `quantity` (1 when
+  left out) and `price` its `sku`, `name`, `qty` and `price`. Nothing is guessed: a purchase
+  without a transaction ID, a value and a currency code isn't sent, and one whose items don't all
+  map, or are over 50, goes without them, each with a console warning. Any other GA4 event is
+  ignored. a.js doesn't turn it on yet: the per-site toggle is to come.
 - `ping.json`: the anonymous ping that declined mode `pings` sends. It has no ids, no `seq` and
   nothing linkable across events. Its field list is frozen after counsel sign-off, so adding a
   field is a framework amendment, never a routine release.

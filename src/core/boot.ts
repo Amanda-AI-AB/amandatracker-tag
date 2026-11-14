@@ -23,6 +23,7 @@ import {
   type GpcHost,
   type TcfHost,
 } from "./consent-sources";
+import { ecommerceInput, watchEcommerce, type EcommerceHost, type EcommerceInput } from "./ecommerce";
 import { pageExitInput, watchEngagement, type EngagementHost, type PageExitInput } from "./engagement";
 import { currentScript, endpointFromScript } from "./endpoint";
 import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
@@ -43,6 +44,7 @@ export interface TagWindow
     EngagementHost,
     FormHost,
     ScrollHost,
+    EcommerceHost,
     CmpHost,
     PrivacyHost {
   readonly document: Document;
@@ -76,6 +78,13 @@ export interface BootOptions {
    * of the page. Without it, the default, the tag measures no scroll depth.
    */
   readonly onScrollDepth?: (input: ScrollDepthInput) => void;
+  /**
+   * Where each mapped GA4 e-commerce event goes (ecommerce.ts), as each pageview does. With it, the
+   * booted tag reads view_item, add_to_cart, begin_checkout and purchase from window.dataLayer,
+   * those already there and those pushed later, and hands over each as the event its explicit
+   * mapping makes of it. Without it, the default, the tag reads none of them.
+   */
+  readonly onEcommerce?: (input: EcommerceInput) => void;
   /**
    * The consent state machine for the booted site's config (createConsent, with the config's
    * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
@@ -163,7 +172,8 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * their ID, privacy.ts), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
  * on each route change, a form_submit for each form the page submits (forms.ts), and, when it is
- * turned on, a scroll event for each depth threshold the visitor reaches in each pageview (scroll.ts).
+ * turned on, a scroll event for each depth threshold the visitor reaches in each pageview (scroll.ts)
+ * and the GA4 e-commerce events of the dataLayer, mapped to the tag's (ecommerce.ts).
  */
 function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   const { boundary, tagVersion, onPageview } = options;
@@ -208,6 +218,12 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   if (onScrollDepth) {
     resetScroll = boundary.guard("pageview", () =>
       watchScroll(win, boundary, (threshold) => onScrollDepth(scrollDepthInput(win, tag.site, tagVersion, threshold, now()))),
+    );
+  }
+  const { onEcommerce } = options;
+  if (onEcommerce) {
+    boundary.guard("pageview", () =>
+      watchEcommerce(win, boundary, (mapping) => onEcommerce(ecommerceInput(win, tag.site, tagVersion, mapping, now()))),
     );
   }
   return tag;
