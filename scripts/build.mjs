@@ -1,7 +1,8 @@
 // Builds the tag: the core to one IIFE (dist/a.js), and each consent-manager adapter in
 // src/adapters/ to its own IIFE (dist/adapters/<name>.js), which the core loads only when a
 // site's config names it. ES2018, minified, no runtime dependencies. Then the size gate, and the
-// wire JSON Schema's release layout in dist/schema/.
+// wire JSON Schema's release layout in dist/schema/. Then the npm package, in dist/npm/
+// (build-npm.mjs), from the same source with the same version and adapter hashes.
 //
 // The adapters build first: the core is built with its version and each adapter's SRI hash baked in
 // (src/core/build-info.ts), and asks for adapters/<version>/<name>.js, where cloudbuild/release.yaml
@@ -11,6 +12,7 @@ import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import * as esbuild from "esbuild";
 import { ADAPTER_NAME } from "../src/core/adapter-name.mjs";
+import { buildNpm, NPM_PACKAGE_NAME, NpmBuildError } from "./build-npm.mjs";
 import { ROOT, runMain } from "./cli.mjs";
 import { isSemver } from "./release-version.mjs";
 import { distSchema } from "./schema-dist.mjs";
@@ -132,14 +134,17 @@ export async function build({
 await runMain(
   import.meta.url,
   async () => {
-    const { coreFile, coreGzipBytes, adapterFiles, version } = await build();
+    const { coreFile, coreGzipBytes, adapterFiles, version, adapterIntegrity } = await build();
     console.log(`${coreFile} (${version}): ${coreGzipBytes} / ${CORE_BUDGET_BYTES} bytes gzipped`);
     for (const file of adapterFiles) console.log(file);
     const { versions } = distSchema();
     console.log(`dist/schema: v${versions.join(", v")}`);
+    const { dir } = await buildNpm({ version, adapterIntegrity });
+    console.log(`${dir}: the npm package ${NPM_PACKAGE_NAME}@${version}`);
   },
   [
     [BuildError, "build failed"],
     [SizeBudgetError, "size gate failed"],
+    [NpmBuildError, "npm package build failed"],
   ],
 );

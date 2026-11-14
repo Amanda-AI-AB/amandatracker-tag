@@ -277,6 +277,37 @@ The template is published through GTM's Community Template Gallery, which reads 
 version is released. [Amanda Tracker in Google Tag Manager](docs/google-tag-manager.md) is the
 documentation the gallery links.
 
+## The npm package
+
+A site that bundles its front end can install the tag as a package instead of a script tag. It is
+the same tag as `a.js`, from the same source: both entry points start it with `startTag`
+(`src/core/tag.ts`), and the package is built with the same version and adapter hashes, so it loads
+that release's adapters.
+
+```js
+import { amanda, init } from "amandatracker-tag";
+
+amanda("consent", { analytics: "granted", ads: "denied" }); // queues until the tag has booted
+init({ site: "<SITE_PUBLIC_ID>" }); // or { site, endpoint: "/amnda" } behind a first-party proxy
+amanda("event", "signup", { plan: "pro" });
+```
+
+- `init({ site, endpoint })` starts the tag, with the site and endpoint that `data-site` and
+  `data-endpoint` give `a.js`. Call it once, in the browser. It settles with `true` once the tag has
+  booted, or `false` when it didn't: the failure was reported, `a.js` or an earlier `init` already
+  runs on the page, or the site's kill switch is on.
+- `amanda(command, ...args)` is `window.amanda`, the command queue: a call before `init`, or while
+  the config loads, queues as a call to the snippet's stub does.
+- Importing the package starts nothing (`sideEffects: false`). `init` and `amanda` throw on a server,
+  where there is no `window`; call them from browser-only code, such as an effect.
+- A config's pinned `bundle_version` is never loaded in the package's place: the site chose the
+  package's version when it bundled it.
+
+`pnpm build` builds it to `dist/npm/` (`scripts/build-npm.mjs`): one ES module, ES2018 and
+unminified (the site's bundler minifies it), its type declarations, `package.json` and `LICENSE`.
+`test/npm-package.test.ts` installs it in a site's `node_modules`, bundles a site with esbuild, and
+checks that its pageview reaches `v1/e`. The package isn't published to npm yet.
+
 ## Guides
 
 - [Amanda Tracker in Google Tag Manager](docs/google-tag-manager.md): install the tag with the
@@ -294,7 +325,7 @@ Needs Node.js 20 or later and pnpm 9.
 pnpm install
 pnpm typecheck   # TypeScript, strict; src/ alone also as browser code (tsconfig.src.json: ES2018 + DOM, no Node types)
 pnpm test        # Vitest
-pnpm build       # dist/a.js, dist/adapters/*.js, the size gate, then dist/schema/
+pnpm build       # dist/a.js, dist/adapters/*.js, the size gate, dist/schema/, then the npm package in dist/npm/
 pnpm gen:wire    # src/wire/generated.ts from the wire schema
 pnpm reproduce <a.<version>.provenance.json>   # rebuild a release and compare it byte for byte
 pnpm gtm:check   # metadata.yaml's GTM gallery versions against origin/main (--ref <ref> for another)
@@ -399,6 +430,8 @@ checks its vendored copy against hashes it records itself (the monorepo's `share
   Its `loadAdapter` loads `adapters/<version>/<name>.js`, its own
   version's file, with that hash as `integrity` and `crossOrigin = "anonymous"`, and refuses an
   adapter it wasn't built with.
+- `src/npm/index.ts` builds to **`dist/npm/`**, the npm package (see [The npm package](#the-npm-package)),
+  with the core's version and adapter hashes.
 
 ## The endpoint
 
