@@ -115,6 +115,17 @@ describe("the canary pin", () => {
     expect(appended[0]!.attributes["data-endpoint"]).toBe("/amnda");
   });
 
+  it("hands a site and endpoint from the src query on as data-site and data-endpoint", async () => {
+    const win = fakeWindow(scriptTag({ src: "https://eu.serversider.com/a.js?site=site_123&endpoint=/amnda" }), jsonResponse(PINNED_CONFIG));
+    const appended = withHead(win);
+    setup(win);
+    await settle();
+
+    expect(appended).toHaveLength(1);
+    expect(appended[0]!.src).toBe(`${PAGE}/amnda/a.${PINNED}.js`);
+    expect(appended[0]!.attributes).toEqual({ "data-site": "site_123", "data-endpoint": "/amnda", [HANDOFF_ATTRIBUTE]: RUNNING });
+  });
+
   it("never makes the extra request for an unpinned config", async () => {
     const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
     const appended = withHead(win);

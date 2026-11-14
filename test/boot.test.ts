@@ -194,6 +194,37 @@ describe("boot", () => {
     expect(target).toEqual({ endpoint: `${PAGE}/amnda`, site: "site_123" });
   });
 
+  it("boots from the src query when Google Tag Manager's injectScript could set no attributes", async () => {
+    const win = fakeWindow(scriptTag({ src: `${DEFAULT_ENDPOINT}/a.js?site=site_123&endpoint=%2Famnda` }), jsonResponse(CONFIG));
+    const target = defaultTarget();
+
+    const tag = await boot(win, { tagVersion: "0.2.0", boundary: new ErrorBoundary(() => undefined, 1), target, onPageview: () => undefined });
+
+    expect(tag).toMatchObject({ site: "site_123", endpoint: `${PAGE}/amnda` });
+    expect(target).toEqual({ endpoint: `${PAGE}/amnda`, site: "site_123" });
+    expect(win.fetchMock.mock.calls[0]![0]).toBe(`${PAGE}/amnda/cfg/site_123.json`);
+  });
+
+  it("takes data-site and data-endpoint over the src query", async () => {
+    const win = fakeWindow(
+      scriptTag({ src: `${DEFAULT_ENDPOINT}/a.js?site=other&endpoint=/elsewhere`, "data-site": "site_123", "data-endpoint": "/amnda" }),
+      jsonResponse(CONFIG),
+    );
+
+    const tag = await boot(win, { tagVersion: "0.2.0", boundary: new ErrorBoundary(() => undefined, 1), onPageview: () => undefined });
+
+    expect(tag).toMatchObject({ site: "site_123", endpoint: `${PAGE}/amnda` });
+  });
+
+  it("refuses a malformed site in the src query as it does a data-site", async () => {
+    const win = fakeWindow(scriptTag({ src: `${DEFAULT_ENDPOINT}/a.js?site=%3Cscript%3E` }), jsonResponse(CONFIG));
+    const reports: ErrorReport[] = [];
+
+    expect(await boot(win, { tagVersion: "0.2.0", boundary: new ErrorBoundary((r) => reports.push(r), 1), onPageview: () => undefined })).toBeUndefined();
+    expect(reports[0]).toMatchObject({ stage: "boot", name: "ConfigError" });
+    expect(win.fetchMock).not.toHaveBeenCalled();
+  });
+
   it("keeps the default target when data-endpoint is refused, and has no site without data-site", async () => {
     const refused = fakeWindow(scriptTag({ ...SNIPPET, "data-endpoint": "javascript:alert(1)" }));
     const noSite = fakeWindow(scriptTag({ src: SNIPPET.src, "data-endpoint": "/amnda" }));

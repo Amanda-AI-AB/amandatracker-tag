@@ -6,7 +6,9 @@ Licensed under Apache-2.0.
 ## Status
 
 The tag boots, but sends no events yet. `a.js` (`src/core/boot.ts`) reads its script tag's `data-site`
-and `data-endpoint`, fetches the site's config from `cfg/<SITE_PUBLIC_ID>.json` without cookies,
+and `data-endpoint` (or, when the tag has no such attribute, the `site` and `endpoint` parameters of
+its `src` query, `a.js?site=<SITE_PUBLIC_ID>&endpoint=<url>`, which is how the Google Tag Manager
+template installs it, since GTM's `injectScript` sets no attributes), fetches the site's config from `cfg/<SITE_PUBLIC_ID>.json` without cookies,
 replaces the snippet's `window.amanda` stub with the real command function and runs the calls it
 queued, then makes a pageview on load and on each route change of a single-page app
 (`history.pushState`, `history.replaceState` and `popstate`; a fragment-only change is not a new

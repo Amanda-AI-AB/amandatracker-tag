@@ -33,7 +33,9 @@ export class ConfigError extends Error {
 /** The site id the snippet names, checked; throws ConfigError for a missing or malformed one. */
 export function checkSiteId(value: string | null | undefined): string {
   const site = value == null ? "" : value.trim();
-  if (!SITE_ID.test(site)) throw new ConfigError(`data-site is missing or not a site id: ${JSON.stringify(value)}`);
+  if (!SITE_ID.test(site)) {
+    throw new ConfigError(`data-site (or a.js?site=) is missing or not a site id: ${JSON.stringify(value)}`);
+  }
   return site;
 }
 

@@ -87,11 +87,28 @@ export function currentScript(doc: Document): Element | null {
   return getter.call(doc) as Element | null;
 }
 
+/** What the installing script tag tells the tag: its site, and its endpoint. */
+export type BootParam = "site" | "endpoint";
+
 /**
- * The endpoint the installing script tag names; `script` is currentScript(document) at boot, and
- * `page` is location. The script must be a <script> element: anything else, or null, throws
+ * A boot parameter of the installing script tag: its data-<name> attribute, as the snippet sets it,
+ * or else the <name> parameter of its src URL's query, as Google Tag Manager's template sets it
+ * (its sandboxed injectScript can't set attributes): a.js?site=<id>&endpoint=<url>. The attribute
+ * wins when the tag has both. Null when it has neither.
+ */
+export function bootParam(script: Element, name: BootParam, page: PageLocation): string | null {
+  const attribute = script.getAttribute(`data-${name}`);
+  if (attribute !== null) return attribute;
+  const src = script.getAttribute("src");
+  if (src === null) return null;
+  return new URL(src, page.href).searchParams.get(name);
+}
+
+/**
+ * The endpoint the installing script tag names (bootParam); `script` is currentScript(document) at
+ * boot, and `page` is location. The script must be a <script> element: anything else, or null, throws
  * EndpointError, so that a clobbered or lost currentScript never silently sends a proxied site's
- * traffic to another host. Only a script without data-endpoint gets the default.
+ * traffic to another host. Only a script that names no endpoint gets the default.
  */
 export function endpointFromScript(script: Element | null, page: PageLocation): string {
   if (script === null) {
@@ -100,7 +117,7 @@ export function endpointFromScript(script: Element | null, page: PageLocation): 
   if (script.tagName !== "SCRIPT") {
     throw new EndpointError(`the current script is a <${script.tagName.toLowerCase()}>, not a <script>`);
   }
-  return resolveEndpoint(script.getAttribute("data-endpoint"), page);
+  return resolveEndpoint(bootParam(script, "endpoint", page), page);
 }
 
 export function configUrl(endpoint: string, siteId: string): string {

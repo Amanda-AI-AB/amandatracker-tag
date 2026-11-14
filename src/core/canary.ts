@@ -6,17 +6,18 @@
 // canary's telemetry separates from everyone else's.
 //
 // The pinned build boots as a.js does: from its script tag's data-site and data-endpoint, which the
-// handoff copies, and with the snippet's window.amanda stub, which the handing-off copy never
-// replaced. The handoff marks its script tag with HANDOFF_ATTRIBUTE, and a copy booted from a marked
+// handoff sets from the running build's (its attributes, or its src query when Google Tag Manager
+// installed it: endpoint.ts, bootParam), and with the snippet's window.amanda stub, which the
+// handing-off copy never replaced. The handoff marks its script tag with HANDOFF_ATTRIBUTE, and a copy booted from a marked
 // tag never hands off again, so a page loads at most one pinned build, whatever its config says.
 
-import { REFERRER_POLICY, bundleUrl } from "./endpoint";
+import { REFERRER_POLICY, bootParam, bundleUrl, type BootParam, type PageLocation } from "./endpoint";
 
 /** Set on the script tag of a handed-off build, to the version that handed off. */
 export const HANDOFF_ATTRIBUTE = "data-amanda-handoff-from";
 
-/** The installing script tag's attributes that the pinned build boots from. */
-const BOOT_ATTRIBUTES = ["data-site", "data-endpoint"] as const;
+/** The installing script tag's boot parameters that the pinned build boots from. */
+const BOOT_PARAMS: readonly BootParam[] = ["site", "endpoint"];
 
 /** Whether the build booting from `script` was loaded by a handoff, and so must not hand off again. */
 export function handedOff(script: Element): boolean {
@@ -32,10 +33,11 @@ export function shouldHandOff(pin: string | undefined, tagVersion: string, scrip
 }
 
 /**
- * Injects the pinned build a.<pin>.js from endpoint, booting from the installing script tag's
- * data-site and data-endpoint, and marked as handed off from `from`. Settles when the script has
- * loaded (the pinned build then runs, and reports its own failures), or rejects when it failed to
- * load; every failure is a rejection, never a synchronous throw, as loadAdapter's.
+ * Injects the pinned build a.<pin>.js from endpoint, booting from the installing script tag's site
+ * and endpoint, set as its data-site and data-endpoint, and marked as handed off from `from`.
+ * Settles when the script has loaded (the pinned build then runs, and reports its own failures),
+ * or rejects when it failed to load; every failure is a rejection, never a synchronous throw, as
+ * loadAdapter's.
  */
 export async function handOff(
   doc: Document,
@@ -43,14 +45,14 @@ export async function handOff(
   endpoint: string,
   pin: string,
   from: string,
-  pageOrigin: string,
+  page: PageLocation,
 ): Promise<void> {
-  const src = bundleUrl(endpoint, pin, pageOrigin);
+  const src = bundleUrl(endpoint, pin, page.origin);
   return new Promise((resolve, reject) => {
     const pinned = doc.createElement("script");
-    for (const name of BOOT_ATTRIBUTES) {
-      const value = script.getAttribute(name);
-      if (value !== null) pinned.setAttribute(name, value);
+    for (const name of BOOT_PARAMS) {
+      const value = bootParam(script, name, page);
+      if (value !== null) pinned.setAttribute(`data-${name}`, value);
     }
     pinned.setAttribute(HANDOFF_ATTRIBUTE, from);
     pinned.async = true;

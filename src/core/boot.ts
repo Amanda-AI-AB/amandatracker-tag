@@ -40,7 +40,7 @@ import {
 } from "./consent-sources";
 import { ecommerceInput, watchEcommerce, type EcommerceHost, type EcommerceInput } from "./ecommerce";
 import { pageExitInput, watchEngagement, type EngagementHost, type PageExitInput } from "./engagement";
-import { currentScript, endpointFromScript } from "./endpoint";
+import { bootParam, currentScript, endpointFromScript } from "./endpoint";
 import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
 import { IDENTIFY_COMMAND, identifyCommand, identifyInput, type IdentifyInput } from "./identify";
 import { followNoCmpPolicy, type NoCmpInput } from "./no-cmp";
@@ -180,7 +180,7 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
     // endpointFromScript has checked that current is a <script> element.
     script = current!;
     if (target) target.endpoint = endpoint;
-    const site = checkSiteId(script.getAttribute("data-site"));
+    const site = checkSiteId(bootParam(script, "site", win.location));
     if (target) target.site = site;
     return fetchConfig(win.fetch.bind(win), endpoint, site).then((config) => ({ endpoint, site, config }));
   });
@@ -207,7 +207,7 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
         if (!shouldHandOff(pin, options.tagVersion, script!)) return run(tag);
         // The pinned build boots in this one's place, with the stub this one left. When it fails to
         // load, the failure is reported and this build runs, so the page is still tracked.
-        return handOff(win.document, script!, tag.endpoint, pin!, options.tagVersion, win.location.origin).then(
+        return handOff(win.document, script!, tag.endpoint, pin!, options.tagVersion, win.location).then(
           () => undefined,
           (error: unknown) => {
             boundary.report("boot", error);
