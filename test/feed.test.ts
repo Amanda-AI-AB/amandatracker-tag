@@ -3,7 +3,8 @@
 // stand-in window whose cookies are a CookieJar. A granted visitor's pageview leaves as an event,
 // a declined one's as a ping in declined mode `pings` and not at all in mode `off`. The consent
 // sources drive the machine (AAI-965): the `consent` command and Consent Mode's dataLayer commands,
-// whose updates mid-session change the next event's snapshot.
+// whose updates mid-session change the next event's snapshot. A page_exit (AAI-968) leaves by
+// beacon as an event for a granted visitor, and never for a declined one, not even as a ping.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
@@ -59,6 +60,15 @@ function page(declinedMode: "off" | "pings", queued: unknown[][] = [], consent: 
   const beacon = vi.fn(() => true);
   const pagehide: (() => void)[] = [];
   const addEventListener = win.addEventListener.bind(win);
+  // The engagement watcher's document: visible until the test hides it.
+  let visibility: DocumentVisibilityState = "visible";
+  const visibilityChange: (() => void)[] = [];
+  Object.defineProperty(win.document, "visibilityState", { get: () => visibility });
+  Object.assign(win.document, {
+    addEventListener: (type: string, listener: () => void) => {
+      if (type === "visibilitychange") visibilityChange.push(listener);
+    },
+  });
   Object.assign(win, {
     navigator: { language: "sv-SE", sendBeacon: beacon },
     setTimeout: (handler: () => void, timeout: number) => setTimeout(handler, timeout),
@@ -79,7 +89,14 @@ function page(declinedMode: "off" | "pings", queued: unknown[][] = [], consent: 
   const boundary = new ErrorBoundary((report) => reports.push(report), 1);
   const target = defaultTarget();
   const feed = createFeed(win, boundary, target);
-  const booted = boot(win, { tagVersion: "0.2.0", boundary, target, onPageview: feed.pageview, consent: feed.consent });
+  const booted = boot(win, {
+    tagVersion: "0.2.0",
+    boundary,
+    target,
+    onPageview: feed.pageview,
+    onPageExit: feed.pageExit,
+    consent: feed.consent,
+  });
 
   const posts = () => (win.fetchMock.mock.calls as [string, RequestInit][]).filter(([url]) => url === EVENTS_URL);
   return {
@@ -96,6 +113,12 @@ function page(declinedMode: "off" | "pings", queued: unknown[][] = [], consent: 
     leave: async () => {
       for (const listener of pagehide) listener();
       await vi.advanceTimersByTimeAsync(60_000);
+    },
+    /** Hides the tab, as switching to another one does. */
+    hide: async () => {
+      visibility = "hidden";
+      for (const listener of visibilityChange) listener();
+      await vi.advanceTimersByTimeAsync(0);
     },
   };
 }
@@ -256,6 +279,118 @@ describe("the pageview feed", () => {
     expect(p.requests()).toEqual([CONFIG_URL]);
     expect(p.beacons()).toEqual([]);
     expect(p.jar.writes).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+});
+
+describe("the page_exit feed (AAI-968)", () => {
+  /** Every item sent, by fetch and by beacon, in the order of the two lists. */
+  const sent = (p: ReturnType<typeof page>): Record<string, unknown>[] =>
+    [...p.batches(), ...p.beacons()].flatMap((batch) => batch.e as Record<string, unknown>[]);
+
+  it("granted: the page's hide sends a beacon batch with the page_exit, an event with the pageview's ids", async () => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]]);
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await p.leave();
+
+    const beacons = p.beacons();
+    expect(beacons).toHaveLength(1);
+    expect(validateBatch(beacons[0]), JSON.stringify(validateBatch.errors)).toBe(true);
+    expect(beacons[0].seq).toBe(2);
+    const [exit] = beacons[0].e;
+    const [view] = p.batches()[0].e;
+    expect(exit).toMatchObject({
+      type: "page_exit",
+      site_id: "site_123",
+      url: LANDING,
+      engagement_ms: 5_000,
+      visitor_id: view.visitor_id,
+      session_id: view.session_id,
+      consent: { analytics: "granted", ads: "granted", source: "manual" },
+    });
+    expect(p.reports).toEqual([]);
+  });
+
+  it("granted: a hidden tab sends the page_exit by beacon at once, without waiting for pagehide", async () => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]]);
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(3_000);
+    await p.hide();
+
+    const exits = p.beacons().flatMap((batch) => batch.e as Record<string, unknown>[]);
+    expect(exits.map((event) => [event.type, event.engagement_ms])).toEqual([["page_exit", 3_000]]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("granted analytics under denied ads: the page_exit's url goes without its click IDs", async () => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "denied" }]]);
+    await p.booted;
+    await p.leave();
+
+    const [exit] = p.beacons()[0].e;
+    expect(exit.type).toBe("page_exit");
+    expect(exit.url).toBe(`${PAGE}/products?id=1&utm_source=news`);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("declined in mode pings: the hide sends no page_exit, not even as a ping", async () => {
+    const p = page("pings", [["consent", { analytics: "denied", ads: "denied" }]]);
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await p.hide();
+    await p.leave();
+
+    const items = sent(p);
+    expect(items.map((item) => item.type)).toEqual(["pageview"]);
+    expect(JSON.stringify(items)).not.toContain("engagement_ms");
+    expect(p.jar.writes).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("declined in mode off: the hide sends nothing, and nothing goes but the config fetch", async () => {
+    const p = page("off", [["consent", { analytics: "denied", ads: "denied" }]]);
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await p.hide();
+    await p.leave();
+
+    expect(p.requests()).toEqual([CONFIG_URL]);
+    expect(p.beacons()).toEqual([]);
+    expect(p.jar.writes).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("still unknown when the page goes, in mode pings: the pending page_exit is dropped, the pageview leaves as a ping", async () => {
+    const p = page("pings");
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await p.leave();
+
+    expect(sent(p).map((item) => item.type)).toEqual(["pageview"]);
+    expect(p.jar.writes).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("unknown while the tab is hidden, then granted: the pending page_exit leaves as an event", async () => {
+    const p = page("off");
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(4_000);
+    await p.hide();
+    expect(p.requests()).toEqual([CONFIG_URL]);
+    expect(p.beacons()).toEqual([]);
+
+    p.win.amanda!("consent", { analytics: "granted", ads: "granted" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const items = sent(p);
+    expect(items.map((item) => [item.type, item.engagement_ms])).toEqual([
+      ["pageview", undefined],
+      ["page_exit", 4_000],
+    ]);
+    const [view, exit] = items;
+    expect(exit!.visitor_id).toBe(view!.visitor_id);
+    expect(exit!.consent).toEqual({ analytics: "granted", ads: "granted", source: "manual" });
     expect(p.reports).toEqual([]);
   });
 });
