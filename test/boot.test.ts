@@ -368,6 +368,49 @@ describe("the consent sources", () => {
     ]);
   });
 
+  describe("Global Privacy Control", () => {
+    const sendGpc = (win: FakeWindow): void => {
+      (win.navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl = true;
+    };
+
+    it("is a decline under the site's declined mode, before the first pageview, overruling a grant", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      sendGpc(win);
+      win.dataLayer = [["consent", "default", { analytics_storage: "granted", ad_storage: "granted", ad_user_data: "granted" }]];
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      snippetStub(win)("consent", { analytics: "granted", ads: "granted" });
+      const { snapshots, machine, reports, booted } = bootWithConsent(win);
+      await booted;
+
+      expect(snapshots).toEqual([{ analytics: "denied", ads: "denied", source: "gpc" }]);
+      expect(machine.mode()).toBe("declined");
+      (win.dataLayer as unknown[]).push(["consent", "update", { analytics_storage: "granted" }]);
+      win.amanda!("consent", { analytics: "granted" });
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "gpc" });
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(reports).toEqual([]);
+      warn.mockRestore();
+    });
+
+    it("is ignored where the site turns gpc_honored off", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse({ ...CONFIG, consent: { ...CONFIG.consent, gpc_honored: false } }));
+      sendGpc(win);
+      snippetStub(win)("consent", { analytics: "granted", ads: "granted" });
+      const { snapshots, booted } = bootWithConsent(win);
+      await booted;
+
+      expect(snapshots).toEqual([{ analytics: "granted", ads: "granted", source: "manual" }]);
+    });
+
+    it("changes nothing for a browser that doesn't send it", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      const { snapshots, booted } = bootWithConsent(win);
+      await booted;
+
+      expect(snapshots).toEqual([{ analytics: "unknown", ads: "unknown" }]);
+    });
+  });
+
   it("follows no consent source without the consent option", async () => {
     const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
     snippetStub(win)("consent", { analytics: "granted" });

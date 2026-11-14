@@ -48,7 +48,7 @@ export const MAX_PENDING = 100;
 
 const STATES: readonly ConsentState[] = ["granted", "denied", "unknown", "no_cmp"];
 const CATEGORIES: readonly Category[] = ["analytics", "ads"];
-const SOURCES: readonly ConsentSource[] = ["manual", "gcm"];
+const SOURCES: readonly ConsentSource[] = ["gpc", "manual", "gcm"];
 
 /** Where the machine hands each item, once the state says how it goes. */
 export interface ConsentSink<T> {

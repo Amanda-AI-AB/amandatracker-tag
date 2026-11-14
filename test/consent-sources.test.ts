@@ -5,6 +5,8 @@ import {
   ConsentModeState,
   consentCommand,
   createLadder,
+  gpcEnabled,
+  honorGpc,
   isDefinitive,
   manualSignal,
   watchConsentMode,
@@ -105,6 +107,60 @@ describe("the ladder", () => {
     machine.collect(1);
     ladder.signal("gcm", { analytics: "granted", ads: "denied" });
     expect(identified).toEqual([{ analytics: "granted", ads: "denied", source: "gcm" }]);
+  });
+});
+
+describe("Global Privacy Control", () => {
+  const browser = (globalPrivacyControl?: unknown) => ({ navigator: { globalPrivacyControl } });
+
+  it("counts only a literal true as GPC", () => {
+    expect(gpcEnabled(browser(true))).toBe(true);
+    for (const value of [undefined, false, "1", 1, null]) expect(gpcEnabled(browser(value))).toBe(false);
+  });
+
+  it("denies both categories when the browser sends it, naming gpc as the source", () => {
+    const { machine, ladder } = harness();
+    expect(honorGpc(browser(true), ladder)).toBe(true);
+    expect(ladder.active()).toBe("gpc");
+    expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "gpc" });
+    expect(machine.mode()).toBe("declined");
+  });
+
+  it("does nothing when the browser doesn't send it", () => {
+    const { machine, ladder } = harness();
+    expect(honorGpc(browser(false), ladder)).toBe(false);
+    expect(ladder.active()).toBeUndefined();
+    expect(machine.snapshot()).toEqual({ analytics: "unknown", ads: "unknown" });
+  });
+
+  it("ignores legacy Do Not Track", () => {
+    const { machine, ladder } = harness();
+    expect(honorGpc({ navigator: { doNotTrack: "1" } } as never, ladder)).toBe(false);
+    expect(machine.snapshot()).toEqual({ analytics: "unknown", ads: "unknown" });
+  });
+
+  it("lets neither the manual API nor Consent Mode grant anything after it", () => {
+    const { machine, ladder } = harness();
+    honorGpc(browser(true), ladder);
+    expect(ladder.signal("gcm", { analytics: "granted", ads: "granted" })).toBe(false);
+    expect(ladder.signal("manual", { analytics: "granted", ads: "granted" })).toBe(false);
+    expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "gpc" });
+  });
+
+  it("takes over from a source that granted first", () => {
+    const { machine, ladder } = harness();
+    ladder.signal("gcm", { analytics: "granted", ads: "granted" });
+    honorGpc(browser(true), ladder);
+    expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "gpc" });
+  });
+
+  it("warns when it overrules amanda('consent', ...), which then changes nothing", () => {
+    const { machine, ladder } = harness();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    honorGpc(browser(true), ladder);
+    consentCommand(ladder)({ analytics: "granted" });
+    expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "gpc" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Global Privacy Control"));
   });
 });
 

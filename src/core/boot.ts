@@ -3,17 +3,26 @@
 // step runs inside the error boundary: a failure is reported, and the page never sees it.
 
 import type { ErrorBoundary } from "./boundary";
-import { checkSiteId, errorSampleRate, fetchConfig, type SiteConfig } from "./config";
-import { consentCommand, createLadder, watchConsentMode, type ConsentInput, type ConsentModeHost } from "./consent-sources";
+import { checkSiteId, errorSampleRate, fetchConfig, gpcHonored, type SiteConfig } from "./config";
+import {
+  consentCommand,
+  createLadder,
+  honorGpc,
+  watchConsentMode,
+  type ConsentInput,
+  type ConsentModeHost,
+  type GpcHost,
+} from "./consent-sources";
 import { currentScript, endpointFromScript } from "./endpoint";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
 import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
 import type { TagTarget } from "./telemetry";
 
 /** The browser globals the tag boots on: window, or a stand-in for it in tests. */
-export interface TagWindow extends AmandaHost, PageSource, RouteSource, ConsentModeHost {
+export interface TagWindow extends AmandaHost, PageSource, RouteSource, ConsentModeHost, GpcHost {
   readonly document: Document;
   readonly location: Location;
+  readonly navigator: PageSource["navigator"] & GpcHost["navigator"];
   fetch: typeof fetch;
 }
 
@@ -24,8 +33,9 @@ export interface BootOptions {
   readonly onPageview: (input: PageviewInput) => void;
   /**
    * The consent state machine for the booted site's config (createConsent, with the config's
-   * declined mode). With it, the consent sources drive the machine: the `consent` command and
-   * Google Consent Mode (consent-sources.ts). Without it, the tag follows no consent source.
+   * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
+   * config honors it, the `consent` command and Google Consent Mode (consent-sources.ts). Without
+   * it, the tag follows no consent source.
    */
   readonly consent?: (config: SiteConfig) => ConsentInput;
   /** Filled in as the boot resolves the endpoint and the site, for the tag errors' sink. */
@@ -74,7 +84,8 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
 }
 
 /**
- * Runs the booted tag: Consent Mode's state as the dataLayer has it so far, then the site's queued
+ * Runs the booted tag: Global Privacy Control, when the site honors it, so that nothing grants
+ * before it denies; Consent Mode's state as the dataLayer has it so far, then the site's queued
  * commands (they may set what the pageview carries, such as consent), then the first pageview,
  * then a pageview on each route change.
  */
@@ -92,6 +103,7 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   const commands: Record<string, Command> = { pageview };
   if (options.consent) {
     const ladder = createLadder(options.consent(tag.config));
+    if (gpcHonored(tag.config)) boundary.guard("consent", () => honorGpc(win, ladder));
     boundary.guard("consent", () => watchConsentMode(win, boundary, ladder));
     commands.consent = consentCommand(ladder);
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { checkSiteId, ConfigError, declinedMode, errorSampleRate, fetchConfig, parseConfig } from "../src/core/config";
+import { checkSiteId, ConfigError, declinedMode, errorSampleRate, fetchConfig, gpcHonored, parseConfig } from "../src/core/config";
 import { configRequestInit } from "../src/core/endpoint";
 
 const CONFIG = { schema_version: 1, site: "site_123", config_version: 3, paused: false };
@@ -61,8 +61,21 @@ describe("the consent section", () => {
     expect(declinedMode(parseConfig({ ...CONFIG, consent: { declined_mode: "pings" } }, "site_123"))).toBe("pings");
   });
 
+  it("honors GPC unless the site turns it off", () => {
+    expect(gpcHonored(parseConfig(CONFIG, "site_123"))).toBe(true);
+    expect(gpcHonored(parseConfig({ ...CONFIG, consent: {} }, "site_123"))).toBe(true);
+    expect(gpcHonored(parseConfig({ ...CONFIG, consent: { gpc_honored: true } }, "site_123"))).toBe(true);
+    expect(gpcHonored(parseConfig({ ...CONFIG, consent: { gpc_honored: false } }, "site_123"))).toBe(false);
+  });
+
+  it("refuses a GPC toggle that isn't a boolean", () => {
+    for (const gpc_honored of [null, 0, 1, "false", "true", {}]) {
+      expect(() => parseConfig({ ...CONFIG, consent: { gpc_honored } }, "site_123")).toThrow(ConfigError);
+    }
+  });
+
   it("keeps the section's other fields for the tickets that read them", () => {
-    const consent = { declined_mode: "pings", no_cmp_policy: "geo", gpc: true };
+    const consent = { declined_mode: "pings", no_cmp_policy: "geo", gpc_honored: true };
     expect(parseConfig({ ...CONFIG, consent }, "site_123").consent).toEqual(consent);
   });
 

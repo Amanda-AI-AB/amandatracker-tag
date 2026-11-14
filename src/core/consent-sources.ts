@@ -1,6 +1,9 @@
 // The consent sources that drive the state machine (consent.ts), and the ladder that picks one
 // (02 §3, §5). The M1 rungs, highest first:
 //
+//   gpc    -> the browser's Global Privacy Control (navigator.globalPrivacyControl), read once at
+//             boot when the site honors it (consent.gpc_honored, on by default): it denies both
+//             categories, and as the top rung nothing takes over from it for the rest of the page;
 //   manual -> the site's own banner calls amanda('consent', {analytics, ads});
 //   gcm    -> Google Consent Mode v2: gtag('consent', 'default' | 'update', {...}) entries in
 //             window.dataLayer, those already there at boot and those pushed later.
@@ -24,7 +27,7 @@ export interface ConsentInput {
 }
 
 /** Each source's rung: the lower, the higher its priority. */
-const RUNG: Readonly<Record<ConsentSource, number>> = { manual: 0, gcm: 1 };
+const RUNG: Readonly<Record<ConsentSource, number>> = { gpc: 0, manual: 1, gcm: 2 };
 
 export interface ConsentLadder {
   /** The source whose signals drive the state now; undefined until one gave a definitive signal. */
@@ -50,6 +53,38 @@ export function createLadder(machine: ConsentInput): ConsentLadder {
       return true;
     },
   };
+}
+
+// Global Privacy Control.
+//
+// GPC is a binding opt-out in California and Colorado, so a site honors it as a decline unless it
+// turns that off. The tag reads the JavaScript property; the Sec-GPC request header carries the
+// same signal, and the tag's own requests send it as the browser does. Legacy Do Not Track
+// (navigator.doNotTrack, the DNT header) is deprecated and deliberately ignored: it neither
+// denies nor grants anything.
+
+/** The browser's navigator, as far as GPC goes. */
+export interface GpcHost {
+  readonly navigator: { readonly globalPrivacyControl?: unknown };
+}
+
+/** GPC's signal: both categories denied. */
+export const GPC_SIGNAL: Readonly<ConsentSignal> = { analytics: "denied", ads: "denied" };
+
+/** Whether the browser sends Global Privacy Control: only a literal true counts. */
+export function gpcEnabled(win: GpcHost): boolean {
+  return win.navigator.globalPrivacyControl === true;
+}
+
+/**
+ * Honors Global Privacy Control: when the browser sends it, denies both categories as the ladder's
+ * top rung, so no banner, Consent Mode or later signal grants anything on this page. Call it before
+ * the other sources read anything. True when GPC was on.
+ */
+export function honorGpc(win: GpcHost, ladder: ConsentLadder): boolean {
+  if (!gpcEnabled(win)) return false;
+  ladder.signal("gpc", { ...GPC_SIGNAL });
+  return true;
 }
 
 // The manual API.
@@ -78,10 +113,15 @@ export function manualSignal(value: unknown): ConsentSignal {
   return signal;
 }
 
-/** The `consent` command: amanda('consent', {analytics, ads}). The command queue guards it. */
+/**
+ * The `consent` command: amanda('consent', {analytics, ads}). The command queue guards it. Only
+ * GPC outranks it; a call it overrules changes nothing, with a warning for the site's developers.
+ */
 export function consentCommand(ladder: ConsentLadder): Command {
   return (value: unknown) => {
-    ladder.signal("manual", manualSignal(value));
+    if (!ladder.signal("manual", manualSignal(value))) {
+      warn("amanda: the browser sends Global Privacy Control, which this site honors; amanda('consent', ...) changes nothing");
+    }
   };
 }
 

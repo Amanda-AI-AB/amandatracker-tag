@@ -62,18 +62,24 @@ export function parseConfig(json: unknown, site: string): SiteConfig {
 const DECLINED_MODES: readonly DeclinedMode[] = ["off", "pings"];
 
 /**
- * The config's optional consent section; this tag reads its declined_mode, `off` or `pings`. A
- * section of another shape, or another mode, throws ConfigError: guessing a mode could send pings
- * from a site that chose to send nothing. Its other fields are the tickets' that use them.
+ * The config's optional consent section; this tag reads its declined_mode, `off` or `pings`, and
+ * its gpc_honored, a boolean. A section of another shape, or another value, throws ConfigError:
+ * guessing a mode could send pings from a site that chose to send nothing, and guessing the GPC
+ * toggle could ignore a visitor's opt-out. Its other fields are the tickets' that use them.
  */
 function checkConsent(consent: unknown): void {
   if (consent === undefined) return;
   if (typeof consent !== "object" || consent === null || Array.isArray(consent)) {
     throw new ConfigError("the config's consent is not an object");
   }
-  const mode = (consent as Record<string, unknown>).declined_mode;
+  const section = consent as Record<string, unknown>;
+  const mode = section.declined_mode;
   if (mode !== undefined && DECLINED_MODES.indexOf(mode as DeclinedMode) < 0) {
     throw new ConfigError(`the config's consent.declined_mode is not one of ${DECLINED_MODES.join(", ")}: ${String(mode)}`);
+  }
+  const gpc = section.gpc_honored;
+  if (gpc !== undefined && typeof gpc !== "boolean") {
+    throw new ConfigError(`the config's consent.gpc_honored is not a boolean: ${String(gpc)}`);
   }
 }
 
@@ -81,6 +87,15 @@ function checkConsent(consent: unknown): void {
 export function declinedMode(config: SiteConfig): DeclinedMode {
   const consent = config.consent as { declined_mode?: DeclinedMode } | undefined;
   return (consent && consent.declined_mode) || "off";
+}
+
+/**
+ * Whether the site honors Global Privacy Control as a decline: the config's
+ * consent.gpc_honored, on when it sets none (01 §3).
+ */
+export function gpcHonored(config: SiteConfig): boolean {
+  const consent = config.consent as { gpc_honored?: boolean } | undefined;
+  return !(consent && consent.gpc_honored === false);
 }
 
 /**

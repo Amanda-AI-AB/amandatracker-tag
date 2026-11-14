@@ -38,6 +38,13 @@ linked to the visitor.
 The consent sources (`src/core/consent-sources.ts`) drive the machine once boot is given it (its
 `consent` option, not yet passed by `a.js`). They form a ladder, highest first:
 
+- **gpc**: Global Privacy Control. When the browser sends it (`navigator.globalPrivacyControl` is
+  `true`), the tag denies both `analytics` and `ads` at boot, before any other source is read, and
+  collects per the site's declined mode. Nothing grants anything on that page afterwards: neither
+  the site's banner nor Consent Mode. GPC is a binding opt-out in California and Colorado, so it is
+  honored by default. A site can turn this off with its config's `consent.gpc_honored: false`.
+  Legacy Do Not Track (`navigator.doNotTrack` and the `DNT` header) is deprecated and is
+  deliberately ignored: it neither denies nor grants.
 - **manual**: the site's own banner calls `amanda('consent', {analytics: "granted", ads: "denied"})`.
   Each category is `"granted"` or `"denied"`; a category left out keeps its state. Anything else is
   refused and reported, never guessed.
@@ -49,13 +56,13 @@ The consent sources (`src/core/consent-sources.ts`) drive the machine once boot 
 
 The first source to grant or deny a category wins, and its later signals always apply. The manual
 API takes over from Consent Mode as soon as the site calls it, and Consent Mode never takes over
-from it. The snapshot every event carries names its `source` (`manual` or `gcm`). Nothing defaults
-to granted. Still to come:
+from it. The snapshot every event carries names its `source` (`gpc`, `manual` or `gcm`). Nothing
+defaults to granted. Still to come:
 
 - the collector accepting `POST /v1/t` and the event debugger showing tag errors (amandatracker);
 - pageviews fed through the consent state machine, made into events (with the ids below) or pings,
   and handed to the transport, with the machine handed to boot so the sources drive it (AAI-964);
-- the other consent sources: GPC (AAI-89), the no-CMP policy (AAI-94), TCF and the consent-manager
+- the other consent sources: the no-CMP policy (AAI-94), TCF and the consent-manager
   adapters (M2);
 - the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
 - the `_amnda_id` and `_amnda_ses` cookies (AAI-98);
