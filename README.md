@@ -235,6 +235,32 @@ Still to come:
 Where this README or a guide describes what the tag does at runtime, it describes the design these
 tickets build, and says so.
 
+## Google Tag Manager
+
+`template.tpl` is the tag's Google Tag Manager Community Template: a loader and a consent bridge,
+never a second tracker. It injects the same `a.js` as the snippet, as
+`https://eu.serversider.com/a.js?site=<Site ID>` (GTM's `injectScript` sets no attributes, so the
+site goes in the query), and forwards to `window.amanda`, whose calls queue until `a.js` has loaded.
+
+- **Fields:** the Site ID, the only required one; the event type, which is Initialization by default,
+  or a custom event (`amanda('event', name, props)`) or a purchase (`amanda('purchase', order)`,
+  which reads GA4's `item_id`, `item_name` and `quantity` as `sku`, `name` and `qty`); an endpoint
+  override, for a first-party proxy; and the consent bridge, on by default.
+- **Trigger:** fire the Initialization type on *Initialization - All Pages*, never on a
+  consent-gated trigger: the tag decides what it may send itself, and gating it would silently turn
+  off declined-mode pings.
+- **The consent bridge** forwards `analytics_storage`, and `ad_storage` with `ad_user_data`, to
+  `amanda('consent', ...)`: each type GTM has set to denied, at once, and each change GTM's consent
+  listener reports. GTM's `isConsentGranted` is also true for a type it has no state for, so it is
+  never forwarded as a grant. A grant GTM writes to the dataLayer also reaches the tag through its
+  own Consent Mode source.
+- **Permissions, and nothing beyond them:** `inject_script` for `https://eu.serversider.com/a.js*`
+  only; `access_globals` for `amanda` and `amanda.q` only; `access_consent`, reading those three
+  consent types and writing none; and `logging`, in debug mode only.
+
+`test/gtm-template.test.ts` runs the template's code against the tag's real command queue and
+commands, and checks its permissions. The template's own `___TESTS___` run in GTM's template editor.
+
 ## Guides
 
 - [First-party reverse proxy](docs/first-party-proxy.md): serve the tag and its collection endpoint from
