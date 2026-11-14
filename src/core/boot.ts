@@ -25,12 +25,22 @@ import {
 } from "./consent-sources";
 import { pageExitInput, watchEngagement, type EngagementHost, type PageExitInput } from "./engagement";
 import { currentScript, endpointFromScript } from "./endpoint";
+import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
 import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
 import type { TagTarget } from "./telemetry";
 
 /** The browser globals the tag boots on: window, or a stand-in for it in tests. */
-export interface TagWindow extends AmandaHost, PageSource, RouteSource, ConsentModeHost, TcfHost, GpcHost, EngagementHost, CmpHost {
+export interface TagWindow
+  extends AmandaHost,
+    PageSource,
+    RouteSource,
+    ConsentModeHost,
+    TcfHost,
+    GpcHost,
+    EngagementHost,
+    FormHost,
+    CmpHost {
   readonly document: Document;
   readonly location: Location;
   readonly navigator: PageSource["navigator"] & GpcHost["navigator"];
@@ -50,6 +60,12 @@ export interface BootOptions {
    * page_exits of hides after the tag booted. Without it, the tag tracks no engagement.
    */
   readonly onPageExit?: (input: PageExitInput) => void;
+  /**
+   * Where each form_submit goes (forms.ts), as each pageview does. With it, the booted tag hands
+   * over a form_submit, with the form's id, name and action and never its fields' values, for each
+   * form the page submits. Without it, the tag captures no form submission.
+   */
+  readonly onFormSubmit?: (input: FormSubmitInput) => void;
   /**
    * The consent state machine for the booted site's config (createConsent, with the config's
    * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
@@ -135,7 +151,7 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * which signals once it has loaded and connected through the `adapter` command, then the site's queued
  * commands (they may set what the pageview carries, such as consent), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
- * on each route change.
+ * on each route change, and a form_submit for each form the page submits (forms.ts).
  */
 function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   const { boundary, tagVersion, onPageview } = options;
@@ -165,5 +181,11 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   installCommands(win, commands, boundary);
   pageview();
   watchRoutes(win, boundary, pageview);
+  const { onFormSubmit } = options;
+  if (onFormSubmit) {
+    boundary.guard("pageview", () =>
+      watchForms(win, boundary, (props) => onFormSubmit(formSubmitInput(win, tag.site, tagVersion, props, now()))),
+    );
+  }
   return tag;
 }

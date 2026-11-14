@@ -9,8 +9,9 @@
 // (src/core/transport.ts, createTransport) (AAI-964), whose withdrawEvents is the machine sink's
 // withdraw, so that nothing goes after a decline (AAI-86; test/declined-off.test.ts wires them all
 // as a.js is to). A page_exit (src/core/engagement.ts) goes the same way, as an event only: it never
-// becomes a ping, whose field list has no engagement time. Until then, a pageview and a page_exit
-// go nowhere. The
+// becomes a ping, whose field list has no engagement time. A form_submit (src/core/forms.ts) goes
+// as a page_exit does, an event only. Until then, a pageview, a page_exit and a form_submit go
+// nowhere. The
 // machine is to be handed to boot as its `consent` option, which makes the consent sources
 // (src/core/consent-sources.ts: GPC, the `consent` command, Google Consent Mode, TCF and the
 // adapters of the consent managers it detects, such as Cookiebot's, OneTrust's and Usercentrics') drive it; until
@@ -39,5 +40,6 @@ boundary.guard("boot", () =>
     target,
     onPageview: () => undefined,
     onPageExit: () => undefined,
+    onFormSubmit: () => undefined,
   }),
 );

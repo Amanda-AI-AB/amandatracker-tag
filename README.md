@@ -208,7 +208,10 @@ truth for what the tag sends and what the collector accepts:
   a `PageExitEvent`: `type: "page_exit"` and `engagement_ms`, the engagement time since the page
   load's previous page exit (visible time, each span counted up to 15 s after the last
   interaction). The tag sends one by beacon each time the page is hidden after engagement, and at
-  least one per page load. No other event carries `engagement_ms`.
+  least one per page load. No other event carries `engagement_ms`. A form submission is a
+  `form_submit` whose `props` hold only the form's `form_id`, `form_name` and `form_action` (the
+  action attribute without its query string and fragment), those it has. Field values are never
+  captured, and there is no allowlist or setting that could capture them.
 - `ping.json`: the anonymous ping that declined mode `pings` sends. It has no ids, no `seq` and
   nothing linkable across events. Its field list is frozen after counsel sign-off, so adding a
   field is a framework amendment, never a routine release.
