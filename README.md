@@ -211,7 +211,9 @@ truth for what the tag sends and what the collector accepts:
   least one per page load. No other event carries `engagement_ms`. A form submission is a
   `form_submit` whose `props` hold only the form's `form_id`, `form_name` and `form_action` (the
   action attribute without its query string and fragment), those it has. Field values are never
-  captured, and there is no allowlist or setting that could capture them.
+  captured, and there is no allowlist or setting that could capture them. Scroll depth, off by
+  default, is a `scroll` whose `props` hold `percent_scrolled`, 25, 50, 75 or 90: the tag sends one
+  the first time in each pageview the visitor scrolls to that share of the page's height.
 - `ping.json`: the anonymous ping that declined mode `pings` sends. It has no ids, no `seq` and
   nothing linkable across events. Its field list is frozen after counsel sign-off, so adding a
   field is a framework amendment, never a routine release.

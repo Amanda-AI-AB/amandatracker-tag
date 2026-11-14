@@ -28,6 +28,7 @@ import { currentScript, endpointFromScript } from "./endpoint";
 import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
 import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
+import { scrollDepthInput, watchScroll, type ScrollDepthInput, type ScrollHost, type ScrollReset } from "./scroll";
 import type { TagTarget } from "./telemetry";
 
 /** The browser globals the tag boots on: window, or a stand-in for it in tests. */
@@ -40,12 +41,13 @@ export interface TagWindow
     GpcHost,
     EngagementHost,
     FormHost,
+    ScrollHost,
     CmpHost {
   readonly document: Document;
   readonly location: Location;
   readonly navigator: PageSource["navigator"] & GpcHost["navigator"];
   fetch: typeof fetch;
-  /** popstate, pagehide and pageshow, and the events of the consent managers the tag has adapters for. */
+  /** popstate, pagehide, pageshow and scroll, and the events of the consent managers the tag has adapters for. */
   addEventListener(type: string, listener: () => void): void;
 }
 
@@ -66,6 +68,12 @@ export interface BootOptions {
    * form the page submits. Without it, the tag captures no form submission.
    */
   readonly onFormSubmit?: (input: FormSubmitInput) => void;
+  /**
+   * Where each scroll event goes (scroll.ts), as each pageview does. With it, the booted tag hands
+   * over a scroll event the first time, in each pageview, the visitor scrolls to 25, 50, 75 and 90 %
+   * of the page. Without it, the default, the tag measures no scroll depth.
+   */
+  readonly onScrollDepth?: (input: ScrollDepthInput) => void;
   /**
    * The consent state machine for the booted site's config (createConsent, with the config's
    * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
@@ -151,17 +159,22 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * which signals once it has loaded and connected through the `adapter` command, then the site's queued
  * commands (they may set what the pageview carries, such as consent), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
- * on each route change, and a form_submit for each form the page submits (forms.ts).
+ * on each route change, a form_submit for each form the page submits (forms.ts), and, when it is
+ * turned on, a scroll event for each depth threshold the visitor reaches in each pageview (scroll.ts).
  */
 function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   const { boundary, tagVersion, onPageview } = options;
   const now = options.now || Date.now;
   let lastUrl: string | undefined;
+  /** Starts the scroll depth's count over, once the watcher runs (onScrollDepth). */
+  let resetScroll: ScrollReset | undefined;
   const pageview = (): void => {
     boundary.guard("pageview", () => {
       const landing = lastUrl === undefined;
       const input = pageviewInput(win, tag.site, tagVersion, lastUrl === undefined ? win.document.referrer : lastUrl, now());
       lastUrl = input.url;
+      // A new pageview's thresholds fire again, even if handing over its pageview fails.
+      if (resetScroll) resetScroll();
       const attribution = landing ? attributionOf(input.url, customParams(tag.config)) : undefined;
       onPageview(attribution === undefined ? input : { ...input, attribution });
     });
@@ -185,6 +198,12 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   if (onFormSubmit) {
     boundary.guard("pageview", () =>
       watchForms(win, boundary, (props) => onFormSubmit(formSubmitInput(win, tag.site, tagVersion, props, now()))),
+    );
+  }
+  const { onScrollDepth } = options;
+  if (onScrollDepth) {
+    resetScroll = boundary.guard("pageview", () =>
+      watchScroll(win, boundary, (threshold) => onScrollDepth(scrollDepthInput(win, tag.site, tagVersion, threshold, now()))),
     );
   }
   return tag;

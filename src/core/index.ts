@@ -11,7 +11,8 @@
 // as a.js is to). A page_exit (src/core/engagement.ts) goes the same way, as an event only: it never
 // becomes a ping, whose field list has no engagement time. A form_submit (src/core/forms.ts) goes
 // as a page_exit does, an event only. Until then, a pageview, a page_exit and a form_submit go
-// nowhere. The
+// nowhere. Scroll depth (src/core/scroll.ts) is off by default, and a.js passes no onScrollDepth: the
+// per-site toggle that turns it on is AAI-791's. The
 // machine is to be handed to boot as its `consent` option, which makes the consent sources
 // (src/core/consent-sources.ts: GPC, the `consent` command, Google Consent Mode, TCF and the
 // adapters of the consent managers it detects, such as Cookiebot's, OneTrust's and Usercentrics') drive it; until
