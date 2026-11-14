@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/withdrawal.json",
+  "title": "WireWithdrawal",
+  "description": "The withdrawal signal, the request body of POST /v1/w (AAI-785): a visitor who had granted analytics consent withdrew it, on a site whose config turns purge on withdrawal on (consent.purge_on_withdrawal, AAI-226). The tag sends it once, with the visitor id of its _amnda_id cookie, just before it deletes the visitor's cookies; the processor then erases that visitor's stored data through the DSAR cascade delete and writes an audit row. It carries nothing about the page (no URL, referrer, session or consent snapshot): only what the erasure needs. It is sent without cookies, so that no collector behind a first-party proxy can re-issue the cookies being deleted. A site with the option off never sends it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "tag_version", "site_id", "visitor_id", "client_ts"],
+  "properties": {
+    "schema_version": {
+      "description": "The wire schema's major version: this file's.",
+      "const": 1
+    },
+    "event_id": {
+      "description": "Minted by the tag for each signal; with site_id, the key that makes redelivery idempotent.",
+      "$ref": "event.json#/$defs/Uuidv7"
+    },
+    "tag_version": {
+      "$ref": "event.json#/$defs/TagVersion"
+    },
+    "site_id": {
+      "$ref": "event.json#/$defs/SiteId"
+    },
+    "visitor_id": {
+      "description": "The visitor whose stored data the site's option erases: the id of the _amnda_id cookie the tag is about to delete.",
+      "$ref": "event.json#/$defs/Uuidv7"
+    },
+    "client_ts": {
+      "description": "When the visitor withdrew, by the browser's clock: Unix epoch milliseconds.",
+      "$ref": "event.json#/$defs/ClientTs"
+    }
+  }
+}

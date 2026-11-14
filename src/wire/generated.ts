@@ -493,7 +493,7 @@ export const WIRE_PING_MAX_LENGTH = { site_id: 64, type: 64, path: 2048, referre
 /** The coarse device class the collector derives from the user agent. */
 export type DeviceClass = "desktop" | "mobile" | "tablet" | "other";
 
-/** What the collector publishes to Pub/Sub for each accepted event or ping, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it. */
+/** What the collector publishes to Pub/Sub for each accepted event, ping or withdrawal signal, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it. */
 export interface PubSubMessage {
   /** The wire schema's major version: this file's. */
   schema_version: 1;
@@ -512,8 +512,8 @@ export interface PubSubMessage {
   browser_major?: number;
   /** The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message. */
   os_family?: string;
-  /** The client's payload: an event, or an anonymous ping. */
-  event: WireEvent | WirePing;
+  /** The client's payload: an event, an anonymous ping, or a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data. A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. */
+  event: WireEvent | WirePing | WireWithdrawal;
 }
 
 export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "subdivision", "device_class", "browser_family", "browser_major", "os_family", "event"] as const;
@@ -561,6 +561,54 @@ export const WIRE_TAG_ERROR_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-
 
 export const WIRE_TAG_ERROR_MAX_LENGTH = { tag_version: 64, site_id: 64, name: 64, message: 256 } as const;
 
+// withdrawal.json
+
+/** The withdrawal signal, the request body of POST /v1/w (AAI-785): a visitor who had granted analytics consent withdrew it, on a site whose config turns purge on withdrawal on (consent.purge_on_withdrawal, AAI-226). The tag sends it once, with the visitor id of its _amnda_id cookie, just before it deletes the visitor's cookies; the processor then erases that visitor's stored data through the DSAR cascade delete and writes an audit row. It carries nothing about the page (no URL, referrer, session or consent snapshot): only what the erasure needs. It is sent without cookies, so that no collector behind a first-party proxy can re-issue the cookies being deleted. A site with the option off never sends it. */
+export interface WireWithdrawal {
+  /** The wire schema's major version: this file's. */
+  schema_version: 1;
+  /** Minted by the tag for each signal; with site_id, the key that makes redelivery idempotent. */
+  event_id: Uuidv7;
+  tag_version: TagVersion;
+  site_id: SiteId;
+  /** The visitor whose stored data the site's option erases: the id of the _amnda_id cookie the tag is about to delete. */
+  visitor_id: Uuidv7;
+  /** When the visitor withdrew, by the browser's clock: Unix epoch milliseconds. */
+  client_ts: ClientTs;
+  type?: never;
+  url?: never;
+  referrer?: never;
+  page_title?: never;
+  language?: never;
+  session_id?: never;
+  consent?: never;
+  attribution?: never;
+  props?: never;
+  user_ref?: never;
+  link_host?: never;
+  purchase?: never;
+  engagement_ms?: never;
+  link_scheme?: never;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
+  click_ids?: never;
+}
+
+export const WIRE_WITHDRAWAL_FIELDS = ["schema_version", "event_id", "tag_version", "site_id", "visitor_id", "client_ts"] as const;
+
+export const WIRE_WITHDRAWAL_REQUIRED = ["schema_version", "event_id", "tag_version", "site_id", "visitor_id", "client_ts"] as const;
+
+export const WIRE_WITHDRAWAL_TYPES = { schema_version: "integer", event_id: "string", tag_version: "string", site_id: "string", visitor_id: "string", client_ts: "integer" } as const;
+
+export const WIRE_WITHDRAWAL_VALUES = { schema_version: [1] } as const;
+
+export const WIRE_WITHDRAWAL_MINIMUM = { client_ts: 0 } as const;
+
+export const WIRE_WITHDRAWAL_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+
+export const WIRE_WITHDRAWAL_MAX_LENGTH = { tag_version: 64, site_id: 64 } as const;
+
 // Each object's shape: its field list, its required fields, its fields' types, const or enum values, minimums
 // and patterns, its strings' and arrays' caps, its arrays' item minimums, its nested objects' shapes, its arrays' item shapes and its maps' rules.
 // An object with a field no shape can check (a oneOf of objects, an array of scalars) has none.
@@ -592,5 +640,7 @@ export const PAGE_EXIT_EVENT_SHAPE = { fields: PAGE_EXIT_EVENT_FIELDS, required:
 export const CLICK_SPECIAL_EVENT_SHAPE = { fields: CLICK_SPECIAL_EVENT_FIELDS, required: CLICK_SPECIAL_EVENT_REQUIRED, types: CLICK_SPECIAL_EVENT_TYPES, values: CLICK_SPECIAL_EVENT_VALUES, minimum: CLICK_SPECIAL_EVENT_MINIMUM, pattern: CLICK_SPECIAL_EVENT_PATTERN, maxLength: CLICK_SPECIAL_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
 export const WIRE_TAG_ERROR_SHAPE = { fields: WIRE_TAG_ERROR_FIELDS, required: WIRE_TAG_ERROR_REQUIRED, types: WIRE_TAG_ERROR_TYPES, values: WIRE_TAG_ERROR_VALUES, minimum: {}, pattern: WIRE_TAG_ERROR_PATTERN, maxLength: WIRE_TAG_ERROR_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+
+export const WIRE_WITHDRAWAL_SHAPE = { fields: WIRE_WITHDRAWAL_FIELDS, required: WIRE_WITHDRAWAL_REQUIRED, types: WIRE_WITHDRAWAL_TYPES, values: WIRE_WITHDRAWAL_VALUES, minimum: WIRE_WITHDRAWAL_MINIMUM, pattern: WIRE_WITHDRAWAL_PATTERN, maxLength: WIRE_WITHDRAWAL_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const SCHEMA_VERSION = 1;

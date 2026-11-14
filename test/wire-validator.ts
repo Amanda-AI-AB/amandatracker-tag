@@ -80,7 +80,17 @@ export const PING = {
   utm: { source: "newsletter", medium: "email", campaign: "nov" },
 } as const;
 
-export type SchemaFile = "batch.json" | "event.json" | "ping.json" | "pubsub-message.json" | "tag-error.json";
+/** A valid withdrawal signal (AAI-785). */
+export const WITHDRAWAL = {
+  schema_version: SCHEMA_VERSION,
+  event_id: UUID7,
+  tag_version: "0.1.0",
+  site_id: "site_123",
+  visitor_id: "01934f6c-8d2a-7b3c-8d4e-5f6a7b8c9d01",
+  client_ts: 1_731_400_000_000,
+} as const;
+
+export type SchemaFile = "batch.json" | "event.json" | "ping.json" | "pubsub-message.json" | "tag-error.json" | "withdrawal.json";
 
 export function loadSchemas(version: number = SCHEMA_VERSION): Record<string, Record<string, unknown>> {
   return Object.fromEntries(schemaFiles.loadSchemas(join(schemaFiles.SCHEMA_ROOT, `v${version}`)));
