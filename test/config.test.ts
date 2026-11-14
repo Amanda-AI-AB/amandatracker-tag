@@ -8,6 +8,7 @@ import {
   errorSampleRate,
   fetchConfig,
   gpcHonored,
+  hasCmp,
   MAX_CUSTOM_PARAMS,
   noCmpPolicy,
   parseConfig,
@@ -106,6 +107,19 @@ describe("the consent section", () => {
     expect(noCmpPolicy(parseConfig({ ...CONFIG, consent: {} }, "site_123"))).toBe("geo");
     for (const no_cmp_policy of ["geo", "assume_denied", "assume_granted"] as const) {
       expect(noCmpPolicy(parseConfig({ ...CONFIG, consent: { no_cmp_policy } }, "site_123"))).toBe(no_cmp_policy);
+    }
+  });
+
+  it("reads whether the site has a consent manager, yes when it sets nothing", () => {
+    expect(hasCmp(parseConfig(CONFIG, "site_123"))).toBe(true);
+    expect(hasCmp(parseConfig({ ...CONFIG, consent: {} }, "site_123"))).toBe(true);
+    expect(hasCmp(parseConfig({ ...CONFIG, consent: { has_cmp: true } }, "site_123"))).toBe(true);
+    expect(hasCmp(parseConfig({ ...CONFIG, consent: { has_cmp: false } }, "site_123"))).toBe(false);
+  });
+
+  it("refuses a has_cmp that isn't a boolean", () => {
+    for (const has_cmp of [null, 0, "false", "none", {}]) {
+      expect(() => parseConfig({ ...CONFIG, consent: { has_cmp } }, "site_123")).toThrow(ConfigError);
     }
   });
 

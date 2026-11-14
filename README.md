@@ -107,6 +107,24 @@ source takes over from a lower one as soon as it signals (the manual API from Co
 Mode from TCF, TCF from Cookiebot, Cookiebot from OneTrust, OneTrust from Usercentrics), and a lower one never takes over from a higher one. The snapshot
 every event carries names its `source` (`gpc`, `manual`, `gcm`, `tcf`, `cookiebot`,
 `onetrust` or `usercentrics`), and only a `tcf` snapshot has a `tc_string`.
+
+A site with no consent manager at all says so in its config, `consent.has_cmp: false`; without
+that key the tag takes it that the site has one. On such a site both categories start in `no_cmp`,
+items wait as they do while `unknown`, and the site's no-CMP policy (`src/core/no-cmp.ts`, the
+config's `consent.no_cmp_policy`) decides them:
+
+- **`geo`**, the default: the collector's anonymous jurisdiction hint, `GET /v1/policy`, asked
+  without cookies; denied in the EEA, the UK and Switzerland, granted elsewhere. Any answer but a
+  well-formed `200` denies, and a server error, a malformed body or a network failure is also
+  reported as a tag error (a `429` rate limit is not).
+- **`assume_denied`**: always denied, with no request; the safest.
+- **`assume_granted`**: always granted, with no request. Badged "check local law" in the control
+  plane, which turns it on only with its explicit acknowledgment; never the default, and never the
+  recommendation in Germany.
+
+The sources above stay live on such a site: GPC still denies first, and a banner or Consent Mode
+that signals after all takes over from the policy's decision. The snapshot of a decided `no_cmp`
+keeps `no_cmp` as its states and has no `source`.
 Nothing defaults to granted.
 
 The visitor's identity (`src/core/identity.ts`) is built, and driven by the consent machine, but not
@@ -198,7 +216,8 @@ Still to come:
 - pageviews fed through the consent state machine, made into events (with the identity's ids) or
   pings, and handed to the transport, with the machine handed to boot so the sources drive it
   (AAI-964, AAI-965);
-- the other consent source: the no-CMP policy (AAI-94);
+- the config publisher writing `consent.has_cmp` (amandatracker, AAI-94's follow-up): until it
+  does, every site counts as having a consent manager and the no-CMP policy is never followed;
 - the per-site toggle that turns the GA4 e-commerce auto-map on in a.js.
 
 Where this README or a guide describes what the tag does at runtime, it describes the design these

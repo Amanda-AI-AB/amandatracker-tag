@@ -10,7 +10,19 @@ import { loadAdapter } from "./adapter-loader";
 import { attributionOf } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
 import { handOff, shouldHandOff } from "./canary";
-import { bundleVersion, checkSiteId, customParams, errorSampleRate, fetchConfig, gpcHonored, identifyEnabled, paused, type SiteConfig } from "./config";
+import {
+  bundleVersion,
+  checkSiteId,
+  customParams,
+  errorSampleRate,
+  fetchConfig,
+  gpcHonored,
+  hasCmp,
+  identifyEnabled,
+  noCmpPolicy,
+  paused,
+  type SiteConfig,
+} from "./config";
 import {
   consentCommand,
   createLadder,
@@ -29,6 +41,7 @@ import { pageExitInput, watchEngagement, type EngagementHost, type PageExitInput
 import { currentScript, endpointFromScript } from "./endpoint";
 import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
 import { IDENTIFY_COMMAND, identifyCommand, identifyInput, type IdentifyInput } from "./identify";
+import { followNoCmpPolicy, type NoCmpInput } from "./no-cmp";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
 import { PRIVACY_COMMAND, privacyCommand, type PrivacyHost } from "./privacy";
 import { PURCHASE_COMMAND, purchaseCommand, purchaseInput, type PurchaseInput } from "./purchase";
@@ -106,10 +119,11 @@ export interface BootOptions {
    * The consent state machine for the booted site's config (createConsent, with the config's
    * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
    * config honors it, the `consent` command, Google Consent Mode, TCF v2.2 and the adapters of
-   * consent managers it detects, loaded from the endpoint (consent-sources.ts). Without
-   * it, the tag follows no consent source.
+   * consent managers it detects, loaded from the endpoint (consent-sources.ts); and, on a site
+   * whose config says it has no consent manager (consent.has_cmp: false), its no-CMP policy first
+   * (no-cmp.ts). Without it, the tag follows no consent source.
    */
-  readonly consent?: (config: SiteConfig) => ConsentInput;
+  readonly consent?: (config: SiteConfig) => ConsentInput & NoCmpInput;
   /** Filled in as the boot resolves the endpoint and the site, for the tag errors' sink. */
   readonly target?: TagTarget;
   readonly now?: () => number;
@@ -188,7 +202,8 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
 }
 
 /**
- * Runs the booted tag: Global Privacy Control, when the site honors it, so that nothing grants
+ * Runs the booted tag: on a site without a consent manager, its no-CMP policy, which puts both
+ * categories in no_cmp at once and decides them when it resolves; Global Privacy Control, when the site honors it, so that nothing grants
  * before it denies; Consent Mode's state as the dataLayer has it so far, the TCF consent manager's
  * when the page has one, the adapter of a consent manager the page has or loads later (Cookiebot, OneTrust, Usercentrics),
  * which signals once it has loaded and connected through the `adapter` command, then the site's queued
@@ -220,7 +235,13 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   // The privacy helper is there in every consent state: it only reads the visitor's ID (privacy.ts).
   const commands: Record<string, Command> = { pageview, [PRIVACY_COMMAND]: privacyCommand(win, boundary) };
   if (options.consent) {
-    const ladder = createLadder(options.consent(tag.config));
+    const machine = options.consent(tag.config);
+    const ladder = createLadder(machine);
+    if (!hasCmp(tag.config)) {
+      boundary.guard("consent", () =>
+        followNoCmpPolicy(machine, noCmpPolicy(tag.config), win.fetch.bind(win), tag.endpoint, boundary),
+      );
+    }
     if (gpcHonored(tag.config)) boundary.guard("consent", () => honorGpc(win, ladder));
     boundary.guard("consent", () => watchConsentMode(win, boundary, ladder));
     boundary.guard("consent", () => watchTcf(win, boundary, ladder));

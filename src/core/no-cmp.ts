@@ -10,9 +10,14 @@
 // geo never assumes a grant: any answer but a well-formed 200 resolves to denied, and a failure
 // that isn't the collector's own refusal (a network error, a 5xx, a malformed body) is reported
 // to the error boundary as well. The hint is asked without cookies, before any consent is known.
+//
+// Only a site whose config says it has no consent manager (consent.has_cmp: false) follows its
+// policy: its categories start in no_cmp, and items wait in the machine's buffer until the policy
+// resolves. The consent sources stay live on such a site: GPC still denies, and a banner or Consent
+// Mode that signals after all takes over from the policy, as a source takes over from no_cmp.
 
 import type { ErrorBoundary } from "./boundary";
-import type { NoCmpDecision, NoCmpPolicy } from "./consent";
+import type { ConsentSignal, NoCmpDecision, NoCmpPolicy } from "./consent";
 import { policyRequestInit, policyUrl } from "./endpoint";
 
 export class PolicyError extends Error {
@@ -71,5 +76,34 @@ export function resolveNoCmpPolicy(
       boundary.report("consent", error);
     }
     return "denied" as const;
+  });
+}
+
+/** What following the policy drives: the state machine (ConsentMachine). */
+export interface NoCmpInput {
+  update(signal: ConsentSignal): void;
+  resolveNoCmp(decision: NoCmpDecision): void;
+}
+
+/** A site without a consent manager: both categories in no_cmp. */
+export const NO_CMP_SIGNAL: Readonly<ConsentSignal> = { analytics: "no_cmp", ads: "no_cmp" };
+
+/**
+ * Follows the no-CMP policy of a site without a consent manager: puts both categories in no_cmp at
+ * once, so items wait, then hands the policy's decision to the machine inside the boundary. Call
+ * it before the consent sources read anything, so that a source's signal, GPC's first of all, is
+ * applied over no_cmp and never overwritten by it. Settles when the decision is applied; never
+ * rejects.
+ */
+export function followNoCmpPolicy(
+  machine: NoCmpInput,
+  policy: NoCmpPolicy,
+  fetchFn: typeof fetch,
+  endpoint: string,
+  boundary: ErrorBoundary,
+): Promise<void> {
+  machine.update({ ...NO_CMP_SIGNAL });
+  return resolveNoCmpPolicy(policy, fetchFn, endpoint, boundary).then((decision) => {
+    boundary.guard("consent", () => machine.resolveNoCmp(decision));
   });
 }

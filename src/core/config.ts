@@ -170,7 +170,7 @@ const NO_CMP_POLICIES: readonly NoCmpPolicy[] = ["geo", "assume_denied", "assume
 
 /**
  * The config's optional consent section; this tag reads its declined_mode, `off` or `pings`, its
- * gpc_honored, a boolean, and its no_cmp_policy (NO_CMP_POLICIES). A section of another shape, or
+ * gpc_honored and has_cmp, booleans, and its no_cmp_policy (NO_CMP_POLICIES). A section of another shape, or
  * another value, throws ConfigError: guessing a mode could send pings from a site that chose to
  * send nothing, guessing the GPC toggle could ignore a visitor's opt-out, and guessing a no-CMP
  * policy could grant what the site chose to deny. Its other fields are the tickets' that use them.
@@ -193,6 +193,20 @@ function checkConsent(consent: unknown): void {
   if (policy !== undefined && NO_CMP_POLICIES.indexOf(policy as NoCmpPolicy) < 0) {
     throw new ConfigError(`the config's consent.no_cmp_policy is not one of ${NO_CMP_POLICIES.join(", ")}: ${String(policy)}`);
   }
+  const cmp = section.has_cmp;
+  if (cmp !== undefined && typeof cmp !== "boolean") {
+    throw new ConfigError(`the config's consent.has_cmp is not a boolean: ${String(cmp)}`);
+  }
+}
+
+/**
+ * Whether the site has a consent manager: the config's consent.has_cmp, on when it sets none. Only
+ * a site that says it has none (has_cmp: false) starts in no_cmp, for its no-CMP policy to decide;
+ * guessing that a site has none could let the policy grant before its banner answers.
+ */
+export function hasCmp(config: SiteConfig): boolean {
+  const consent = config.consent as { has_cmp?: boolean } | undefined;
+  return !(consent && consent.has_cmp === false);
 }
 
 /** The site's no-CMP policy: the config's consent.no_cmp_policy, or `geo` when it sets none. */

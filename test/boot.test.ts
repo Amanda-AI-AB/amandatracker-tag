@@ -6,7 +6,7 @@ import { connectAdapter } from "../src/core/adapter-api";
 import { boot, type TagWindow } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
 import { createConsent, type Consent } from "../src/core/consent";
-import { configRequestInit, DEFAULT_ENDPOINT } from "../src/core/endpoint";
+import { configRequestInit, DEFAULT_ENDPOINT, policyRequestInit } from "../src/core/endpoint";
 import type { PageExitInput } from "../src/core/engagement";
 import type { PageviewInput } from "../src/core/pageview";
 import type { AmandaFunction } from "../src/core/queue";
@@ -895,6 +895,91 @@ describe("the consent sources", () => {
       await booted;
 
       expect(snapshots).toEqual([{ analytics: "unknown", ads: "unknown" }]);
+    });
+  });
+
+  describe("the no-CMP policy", () => {
+    const NO_CMP = { ...CONFIG, consent: { ...CONFIG.consent, has_cmp: false } };
+    const POLICY_URL = `${DEFAULT_ENDPOINT}/v1/policy`;
+
+    /** A window whose fetch serves config, and answers GET /v1/policy with policy. */
+    function noCmpWindow(config: unknown, policy: unknown, status = 200): FakeWindow {
+      return fakeWindow(scriptTag(SNIPPET), async (...args: unknown[]) =>
+        args[0] === POLICY_URL ? jsonResponse(policy, status) : jsonResponse(config),
+      );
+    }
+
+    const policyCalls = (win: FakeWindow): unknown[] => win.fetchMock.mock.calls.filter(([url]) => url === POLICY_URL);
+
+    it.each(["granted", "denied"] as const)(
+      "geo: holds the first pageview in no_cmp, then follows the collector's hint, %s",
+      async (consent) => {
+        const win = noCmpWindow(NO_CMP, { consent });
+        const { snapshots, machine, reports, booted } = bootWithConsent(win);
+        await booted;
+
+        expect(snapshots[0]).toEqual({ analytics: "no_cmp", ads: "no_cmp" });
+        await vi.waitFor(() => expect(machine.mode()).toBe(consent === "granted" ? "identified" : "declined"));
+        expect(machine.snapshot()).toEqual({ analytics: "no_cmp", ads: "no_cmp" });
+        expect(policyCalls(win)).toEqual([[POLICY_URL, policyRequestInit()]]);
+        expect(reports).toEqual([]);
+      },
+    );
+
+    it("geo is the policy when the config names none, and a failed hint denies", async () => {
+      const win = noCmpWindow(NO_CMP, {}, 503);
+      const { machine, reports, booted } = bootWithConsent(win);
+      await booted;
+
+      await vi.waitFor(() => expect(machine.mode()).toBe("declined"));
+      expect(reports).toEqual([{ stage: "consent", name: "PolicyError", message: expect.stringContaining("HTTP 503") }]);
+    });
+
+    it.each([
+      ["assume_denied", "declined"],
+      ["assume_granted", "identified"],
+    ] as const)("%s decides without asking the collector", async (no_cmp_policy, mode) => {
+      const win = noCmpWindow({ ...NO_CMP, consent: { ...NO_CMP.consent, no_cmp_policy } }, { consent: "granted" });
+      const { machine, booted } = bootWithConsent(win);
+      await booted;
+
+      await vi.waitFor(() => expect(machine.mode()).toBe(mode));
+      expect(policyCalls(win)).toEqual([]);
+    });
+
+    it("is never followed on a site with a consent manager, the default", async () => {
+      for (const config of [CONFIG, { ...CONFIG, consent: { ...CONFIG.consent, has_cmp: true, no_cmp_policy: "assume_granted" } }]) {
+        const win = noCmpWindow(config, { consent: "granted" });
+        const { snapshots, machine, booted } = bootWithConsent(win);
+        await booted;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(snapshots).toEqual([{ analytics: "unknown", ads: "unknown" }]);
+        expect(machine.mode()).toBe("pending");
+        expect(policyCalls(win)).toEqual([]);
+      }
+    });
+
+    it("lets GPC deny over a granting policy", async () => {
+      const win = noCmpWindow({ ...NO_CMP, consent: { ...NO_CMP.consent, no_cmp_policy: "assume_granted" } }, {});
+      (win.navigator as { globalPrivacyControl?: boolean }).globalPrivacyControl = true;
+      const { snapshots, machine, booted } = bootWithConsent(win);
+      await booted;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(snapshots).toEqual([{ analytics: "denied", ads: "denied", source: "gpc" }]);
+      expect(machine.mode()).toBe("declined");
+    });
+
+    it("lets a banner that signals after all take over from the policy's decision", async () => {
+      const win = noCmpWindow({ ...NO_CMP, consent: { ...NO_CMP.consent, no_cmp_policy: "assume_granted" } }, {});
+      const { machine, booted } = bootWithConsent(win);
+      await booted;
+      await vi.waitFor(() => expect(machine.mode()).toBe("identified"));
+
+      win.amanda!("consent", { analytics: "denied", ads: "denied" });
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "manual" });
+      expect(machine.mode()).toBe("declined");
     });
   });
 
