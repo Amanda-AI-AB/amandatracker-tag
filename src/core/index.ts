@@ -9,7 +9,9 @@
 // sources (src/core/consent-sources.ts: GPC, the `consent` command, Google Consent Mode, TCF and the
 // adapters of the consent managers it detects, such as Cookiebot's, OneTrust's and Usercentrics')
 // drive it (AAI-965). A page_exit (src/core/engagement.ts) goes through the feed too, as an event
-// only: it never becomes a ping, whose field list has no engagement time (AAI-968).
+// only: it never becomes a ping, whose field list has no engagement time (AAI-968). So does the
+// site's own custom event, amanda('event', name, props) (src/core/custom-event.ts, AAI-979), whose
+// props the ping's field list has no room for either.
 //
 // Still to come: a form_submit (src/core/forms.ts) goes as a page_exit does, an event only, and so do a click_special
 // (src/core/special-clicks.ts), a click_outbound (src/core/outbound.ts) and an identify event (src/core/identify.ts), whose command refuses
@@ -45,6 +47,7 @@ boundary.guard("boot", () => {
     onPageview: feed.pageview,
     consent: feed.consent,
     onPageExit: feed.pageExit,
+    onEvent: feed.event,
     onFormSubmit: () => undefined,
     onClickSpecial: () => undefined,
     onClickOutbound: () => undefined,

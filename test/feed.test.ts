@@ -4,7 +4,8 @@
 // a declined one's as a ping in declined mode `pings` and not at all in mode `off`. The consent
 // sources drive the machine (AAI-965): the `consent` command and Consent Mode's dataLayer commands,
 // whose updates mid-session change the next event's snapshot. A page_exit (AAI-968) leaves by
-// beacon as an event for a granted visitor, and never for a declined one, not even as a ping.
+// beacon as an event for a granted visitor, and never for a declined one, not even as a ping. So
+// does a custom event (AAI-979), which goes in the next batch rather than by beacon.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
@@ -95,6 +96,7 @@ function page(declinedMode: "off" | "pings", queued: unknown[][] = [], consent: 
     target,
     onPageview: feed.pageview,
     onPageExit: feed.pageExit,
+    onEvent: feed.event,
     consent: feed.consent,
   });
 
@@ -392,5 +394,93 @@ describe("the page_exit feed (AAI-968)", () => {
     expect(exit!.visitor_id).toBe(view!.visitor_id);
     expect(exit!.consent).toEqual({ analytics: "granted", ads: "granted", source: "manual" });
     expect(p.reports).toEqual([]);
+  });
+});
+
+describe("the custom event feed (AAI-979)", () => {
+  /** Every item sent, by fetch and by beacon, in the order of the two lists. */
+  const sent = (p: ReturnType<typeof page>): Record<string, unknown>[] =>
+    [...p.batches(), ...p.beacons()].flatMap((batch) => batch.e as Record<string, unknown>[]);
+
+  it("granted: amanda('event', 'signup', {plan: 'pro'}) leaves as an event valid against the schema, with the pageview's ids", async () => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]]);
+    await p.booted;
+    p.win.amanda!("event", "signup", { plan: "pro" });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const batches = p.batches();
+    for (const batch of batches) expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
+    const [view, signup] = batches.flatMap((batch) => batch.e as Record<string, unknown>[]);
+    expect(signup).toMatchObject({
+      type: "signup",
+      props: { plan: "pro" },
+      site_id: "site_123",
+      url: LANDING,
+      visitor_id: view!.visitor_id,
+      session_id: view!.session_id,
+      consent: { analytics: "granted", ads: "granted", source: "manual" },
+    });
+    expect(signup).not.toHaveProperty("attribution");
+    expect(p.reports).toEqual([]);
+  });
+
+  it("unknown, then granted: the pending custom event leaves as an event once consent comes", async () => {
+    const p = page("off");
+    await p.booted;
+    p.win.amanda!("event", "signup");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(p.requests()).toEqual([CONFIG_URL]);
+
+    p.win.amanda!("consent", { analytics: "granted", ads: "granted" });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(sent(p).map((item) => item.type)).toEqual(["pageview", "signup"]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("declined in mode pings: the custom event sends nothing, not even as a ping", async () => {
+    const p = page("pings", [["consent", { analytics: "denied", ads: "denied" }]]);
+    await p.booted;
+    p.win.amanda!("event", "signup", { plan: "pro" });
+    await p.leave();
+
+    const items = sent(p);
+    expect(items.map((item) => item.type)).toEqual(["pageview"]);
+    expect(JSON.stringify(items)).not.toMatch(/signup|plan/);
+    expect(p.jar.writes).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("still unknown in mode pings when the page goes: the pending custom event is dropped", async () => {
+    const p = page("pings");
+    await p.booted;
+    p.win.amanda!("event", "signup");
+    await p.leave();
+
+    expect(sent(p).map((item) => item.type)).toEqual(["pageview"]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("declined in mode off: nothing goes but the config fetch", async () => {
+    const p = page("off", [["consent", { analytics: "denied", ads: "denied" }]]);
+    await p.booted;
+    p.win.amanda!("event", "signup", { plan: "pro" });
+    await p.leave();
+
+    expect(p.requests()).toEqual([CONFIG_URL]);
+    expect(p.beacons()).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("granted: refused props are reported and nothing of the call is sent", async () => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]]);
+    await p.booted;
+    p.win.amanda!("event", "signup", { user: { plan: "pro" } });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(sent(p).map((item) => item.type)).toEqual(["pageview"]);
+    expect(p.reports).toEqual([
+      { stage: "command", name: "CommandError", message: "amanda('event', name, props) refuses props.user: not a string, a finite number or a boolean" },
+    ]);
   });
 });

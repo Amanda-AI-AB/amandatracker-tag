@@ -39,6 +39,7 @@ import {
   type GpcHost,
   type TcfHost,
 } from "./consent-sources";
+import { EVENT_COMMAND, customEventInput, eventCommand, type CustomEventInput } from "./custom-event";
 import { ecommerceInput, watchEcommerce, type EcommerceHost, type EcommerceInput } from "./ecommerce";
 import { pageExitInput, watchEngagement, type EngagementHost, type EngagementWatch, type PageExitInput } from "./engagement";
 import { bootParam, currentScript, endpointFromScript } from "./endpoint";
@@ -140,6 +141,13 @@ export interface BootOptions {
    */
   readonly onPurchase?: (input: PurchaseInput) => void;
   /**
+   * Where each custom event goes (custom-event.ts), as each pageview does: an event only, never a
+   * ping. With it, the booted tag has the `event` command, which hands over one event, its name as
+   * its type and its props, for each call with a name and props it accepts. Without it, the tag has
+   * no `event` command.
+   */
+  readonly onEvent?: (input: CustomEventInput) => void;
+  /**
    * The consent state machine for the booted site's config (createConsent, with the config's
    * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
    * config honors it, the `consent` command, Google Consent Mode, TCF v2.2 and the adapters of
@@ -235,7 +243,8 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * which signals once it has loaded and connected through the `adapter` command, then the site's queued
  * commands (they may set what the pageview carries, such as consent; `privacy` shows the visitor
  * their ID, privacy.ts; `identify`, when the site turns it on, links the visitor to the site's
- * pseudonymous ref, identify.ts; `purchase` records an order, purchase.ts), then the first pageview,
+ * pseudonymous ref, identify.ts; `purchase` records an order, purchase.ts; `event` sends the site's
+ * own custom event, custom-event.ts), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
  * on each route change, after the page_exit of the route left (engagement.ts), a form_submit for each form the page submits (forms.ts), a click_special
  * for each click on a tel: or mailto: link, with its scheme alone (special-clicks.ts), a
@@ -304,6 +313,10 @@ function start(win: TagWindow, tag: Tag, options: BootOptions, engagement: Engag
   const { onPurchase } = options;
   if (onPurchase) {
     commands[PURCHASE_COMMAND] = purchaseCommand((purchase) => onPurchase(purchaseInput(win, tag.site, tagVersion, purchase, now())));
+  }
+  const { onEvent } = options;
+  if (onEvent) {
+    commands[EVENT_COMMAND] = eventCommand((event) => onEvent(customEventInput(win, tag.site, tagVersion, event, now())));
   }
   installCommands(win, commands, boundary);
   pageview();

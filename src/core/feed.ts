@@ -1,5 +1,5 @@
-// The pageview feed (AAI-964): where a.js sends each pageview the boot hands over, and each
-// page_exit (engagement.ts, AAI-968). For the booted site's config it makes one consent state
+// The pageview feed (AAI-964): where a.js sends each pageview the boot hands over, each
+// page_exit (engagement.ts, AAI-968) and each custom event (custom-event.ts, AAI-979). For the booted site's config it makes one consent state
 // machine (consent.ts, with the config's declined mode), the visitor's identity (identity.ts) and
 // one transport to the booted tag's endpoint (transport.ts), and feeds each item through the machine:
 //
@@ -9,9 +9,10 @@
 //   declined   -> in declined mode `pings`, a pageview's anonymous ping (ping.ts, pingOf), with the
 //                 page's click IDs only when the config's consent.pings_include_click_ids is on,
 //                 sent with transport.ping; in mode `off`, nothing. A page_exit never becomes a ping,
-//                 whose frozen field list has no engagement time: it is dropped in either mode;
+//                 whose frozen field list has no engagement time, and neither does a custom event
+//                 (custom-event.ts, AAI-979), whose list has no props: each is dropped in either mode;
 //   pending    -> held by the machine until consent is decided, or the page goes: on pagehide a
-//                 pending page_exit goes as a declined one does, which is nowhere.
+//                 pending page_exit or custom event goes as a declined one does, which is nowhere.
 //
 // The machine's withdraw is the transport's withdrawEvents, so that nothing goes after a decline
 // (AAI-86), and its pagehide is registered before the transport's, so that the pings it hands over
@@ -22,6 +23,7 @@ import { gateClickIds } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
 import { declinedMode, pingsIncludeClickIds, type SiteConfig } from "./config";
 import { createConsent, type ConsentMachine } from "./consent";
+import type { CustomEventInput } from "./custom-event";
 import type { PageExitInput } from "./engagement";
 import { createIdentity, type IdentityHost } from "./identity";
 import type { PageviewInput } from "./pageview";
@@ -33,7 +35,7 @@ import { createTransport, type TransportWindow } from "./transport";
 export interface FeedWindow extends TransportWindow, IdentityHost {}
 
 /** What goes through the feed's machine. */
-export type FeedItem = PageviewInput | PageExitInput;
+export type FeedItem = PageviewInput | PageExitInput | CustomEventInput;
 
 export interface Feed {
   /**
@@ -45,6 +47,8 @@ export interface Feed {
   pageview(input: PageviewInput): void;
   /** Feeds a page_exit through the machine, as an event only: boot's `onPageExit` option. */
   pageExit(input: PageExitInput): void;
+  /** Feeds a custom event through the machine, as an event only: boot's `onEvent` option. */
+  event(input: CustomEventInput): void;
 }
 
 /**
@@ -74,8 +78,10 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
             transport.event(buildEvent({ ...gateClickIds(input, consent), visitor_id: visitorId, session_id: sessionId, consent }));
           },
           anonymous: (input) => {
-            // A page_exit is an event only: the ping's frozen field list has no engagement time.
-            if (input.type === "page_exit") return;
+            // Only a pageview becomes a ping. A page_exit and a custom event are events only: the
+            // ping's frozen field list has no engagement time and no props, and a custom event's
+            // type, never a pageview's (TAG_EVENT_TYPES), is the site's own free text.
+            if (input.type !== "pageview") return;
             transport.ping(pingOf(input, pingId(), pingOptions));
           },
           withdraw: () => transport.withdrawEvents(),
@@ -86,5 +92,6 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
     },
     pageview: collect,
     pageExit: collect,
+    event: collect,
   };
 }

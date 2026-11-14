@@ -185,6 +185,16 @@ keeps the first one the browser accepts (a browser refuses a cookie on a public 
   doesn't list is left out, with a console warning. Purchases are deduplicated by `order_id`, so a
   reloaded confirmation page counts once. In declined mode `pings` the purchase goes as a count-only
   anonymous ping, without any of the order's fields.
+- **Custom events.** `amanda('event', name, props)` (`src/core/custom-event.ts`) sends one event of
+  the site's own, such as `amanda('event', 'signup', {plan: 'pro'})`: its `type` is the name and its
+  `props` the props. The name is a non-empty string of at most 64 characters, and never the type of
+  an event the tag sends itself (`pageview`, `page_exit`, `form_submit`, `click_special`,
+  `click_outbound`, `scroll`, `identify`, `purchase`, `view_item`, `add_to_cart`, `begin_checkout`).
+  `props` is optional: a flat object of at most 25 keys, none starting with `am_`, each value a
+  string of at most 200 characters, a finite number or a boolean; a key whose value is `undefined` is
+  left out. Anything else is refused in the browser and reported, never cut or coerced. A custom
+  event goes only under granted analytics, and never as a ping: in declined mode `pings` it sends
+  nothing. It is the command the GTM template's custom event type calls.
 
 Attribution (`src/core/attribution.ts`) is captured on each landing, the page load's first
 pageview, from the landing URL's query string: the UTM set (`utm_source`, `utm_medium`,
