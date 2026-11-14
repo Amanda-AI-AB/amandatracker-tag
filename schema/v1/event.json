@@ -167,8 +167,15 @@
         },
         "ads": {
           "$ref": "#/$defs/ConsentState"
+        },
+        "source": {
+          "$ref": "#/$defs/ConsentSource"
         }
       }
+    },
+    "ConsentSource": {
+      "description": "The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, or gcm, Google Consent Mode v2. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved.",
+      "enum": ["manual", "gcm"]
     },
     "Props": {
       "description": "The event's own properties (01 §4): a flat object of at most 25 keys, each value a string of at most 200 characters (03 §5), a number or a boolean. Keys starting with am_ are reserved for the tag and refused. 01 §4 also caps props at 8 KB in total, which JSON Schema can't express: the collector's payload cap is its backstop (AAI-65).",

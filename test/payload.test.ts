@@ -356,6 +356,15 @@ describe("buildEvent nested consent", () => {
     expect(Object.keys(event.consent).sort()).toEqual(["ads", "analytics"]);
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
   });
+
+  it("carries the snapshot's source, and refuses one off its list", () => {
+    const input = eventInput();
+    const event = buildEvent({ ...input, consent: { ...input.consent, source: "gcm" } });
+    expect(event.consent.source).toBe("gcm");
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    const consent = { ...input.consent, source: "cookiebot" } as unknown as EventInput["consent"];
+    expect(() => buildEvent({ ...input, consent })).toThrow(new WirePayloadError("event.consent.source", "is not one of manual, gcm"));
+  });
 });
 
 describe("buildEvent props", () => {

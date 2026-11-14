@@ -167,15 +167,19 @@ export type ConsentState = "granted" | "denied" | "unknown" | "no_cmp";
 export interface Consent {
   analytics: ConsentState;
   ads: ConsentState;
+  source?: ConsentSource;
 }
 
-export const CONSENT_FIELDS = ["analytics", "ads"] as const;
+export const CONSENT_FIELDS = ["analytics", "ads", "source"] as const;
 
 export const CONSENT_REQUIRED = ["analytics", "ads"] as const;
 
-export const CONSENT_TYPES = { analytics: "string", ads: "string" } as const;
+export const CONSENT_TYPES = { analytics: "string", ads: "string", source: "string" } as const;
 
-export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"] } as const;
+export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"], source: ["manual", "gcm"] } as const;
+
+/** The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, or gcm, Google Consent Mode v2. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved. */
+export type ConsentSource = "manual" | "gcm";
 
 /** The event's own properties (01 §4): a flat object of at most 25 keys, each value a string of at most 200 characters (03 §5), a number or a boolean. Keys starting with am_ are reserved for the tag and refused. 01 §4 also caps props at 8 KB in total, which JSON Schema can't express: the collector's payload cap is its backstop (AAI-65). */
 export type Props = Record<string, PropValue>;
@@ -348,8 +352,8 @@ export interface WireTagError {
   tag_version: TagVersion;
   /** The site the tag was installed for; absent when the failure is that the snippet names no valid site. */
   site_id?: SiteId;
-  /** Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, a route change, or the transport that posts batches to POST /v1/e (a batch the collector refused, or a failure in a flush). */
-  stage: "boot" | "config" | "command" | "pageview" | "route" | "transport";
+  /** Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, a route change, the transport that posts batches to POST /v1/e (a batch the collector refused, or a failure in a flush), or a consent source the tag follows (an update read from Google Consent Mode's dataLayer). */
+  stage: "boot" | "config" | "command" | "pageview" | "route" | "transport" | "consent";
   /** The error's name, such as TypeError or ConfigError. */
   name: string;
   /** The error's message, scrubbed by the tag: each URL in it cut to its scheme and host, and each email address replaced. */
@@ -362,7 +366,7 @@ export const WIRE_TAG_ERROR_REQUIRED = ["schema_version", "event_id", "tag_versi
 
 export const WIRE_TAG_ERROR_TYPES = { schema_version: "integer", event_id: "string", tag_version: "string", site_id: "string", stage: "string", name: "string", message: "string" } as const;
 
-export const WIRE_TAG_ERROR_VALUES = { schema_version: [1], stage: ["boot", "config", "command", "pageview", "route", "transport"] } as const;
+export const WIRE_TAG_ERROR_VALUES = { schema_version: [1], stage: ["boot", "config", "command", "pageview", "route", "transport", "consent"] } as const;
 
 export const WIRE_TAG_ERROR_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$" } as const;
 
