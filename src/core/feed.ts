@@ -1,6 +1,7 @@
 // The pageview feed (AAI-964): where a.js sends each pageview the boot hands over, each
-// page_exit (engagement.ts, AAI-968), each custom event (custom-event.ts, AAI-979) and each GA4
-// e-commerce event the auto-map makes (ecommerce.ts, AAI-974). For the booted site's config it makes one consent state
+// page_exit (engagement.ts, AAI-968), each custom event (custom-event.ts, AAI-979), each GA4
+// e-commerce event the auto-map makes (ecommerce.ts, AAI-974) and each purchase the site's own
+// amanda('purchase', order) makes (purchase.ts, AAI-985). For the booted site's config it makes one consent state
 // machine (consent.ts, with the config's declined mode), the visitor's identity (identity.ts) and
 // one transport to the booted tag's endpoint (transport.ts), and feeds each item through the machine:
 //
@@ -12,7 +13,7 @@
 //                 sent with transport.ping; in mode `off`, nothing. A page_exit never becomes a ping,
 //                 whose frozen field list has no engagement time, and neither does a custom event
 //                 (custom-event.ts, AAI-979), whose list has no props: each is dropped in either mode.
-//                 Of the e-commerce events, a purchase becomes a count-only ping, as a pageview
+//                 A purchase, the site's own or the auto-map's, becomes a count-only ping, as a pageview
 //                 does (pingOf reads its type and page, never its order); a view_item, an
 //                 add_to_cart and a begin_checkout, whose props the list has no room for, are
 //                 dropped, as a custom event is;
@@ -36,6 +37,7 @@ import type { PageExitInput } from "./engagement";
 import { createIdentity, type IdentityHost } from "./identity";
 import type { PageviewInput } from "./pageview";
 import { pingOf } from "./ping";
+import type { PurchaseInput } from "./purchase";
 import type { TagTarget } from "./telemetry";
 import { createTransport, type TransportWindow } from "./transport";
 import { withdrawalSender } from "./withdrawal";
@@ -44,7 +46,7 @@ import { withdrawalSender } from "./withdrawal";
 export interface FeedWindow extends TransportWindow, IdentityHost {}
 
 /** What goes through the feed's machine. */
-export type FeedItem = PageviewInput | PageExitInput | CustomEventInput | EcommerceInput;
+export type FeedItem = PageviewInput | PageExitInput | CustomEventInput | EcommerceInput | PurchaseInput;
 
 export interface Feed {
   /**
@@ -63,6 +65,11 @@ export interface Feed {
    * event or a count-only ping; the others as events only. Boot's `onEcommerce` option.
    */
   ecommerce(input: EcommerceInput): void;
+  /**
+   * Feeds the site's own purchase, amanda('purchase', order), through the machine as the auto-map's
+   * purchase goes: an event or a count-only ping. Boot's `onPurchase` option.
+   */
+  purchase(input: PurchaseInput): void;
 }
 
 /**
@@ -115,5 +122,6 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
     pageExit: collect,
     event: collect,
     ecommerce: collect,
+    purchase: collect,
   };
 }

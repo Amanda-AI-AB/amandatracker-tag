@@ -8,6 +8,7 @@
 // does a custom event (AAI-979), which goes in the next batch rather than by beacon. The GA4
 // e-commerce auto-map's events (AAI-974), on a site whose config turns it on, go as a granted
 // visitor's events; a declined one's purchase goes as a count-only ping, and the others not at all.
+// The site's own amanda('purchase', order) (AAI-985) goes as the auto-map's purchase does.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
@@ -106,6 +107,7 @@ function page(
     onPageExit: feed.pageExit,
     onEvent: feed.event,
     onEcommerce: feed.ecommerce,
+    onPurchase: feed.purchase,
     consent: feed.consent,
   });
 
@@ -581,6 +583,80 @@ describe("the GA4 e-commerce feed (AAI-974)", () => {
     await vi.advanceTimersByTimeAsync(60_000);
 
     expect(sent(p).map((item) => item.type)).toEqual(["pageview"]);
+    expect(p.reports).toEqual([]);
+  });
+});
+
+describe("the purchase feed (AAI-985)", () => {
+  const ORDER = { order_id: "ORD-1001", revenue: 199.9, currency: "sek", items: [{ sku: "TSH-RED-M", name: "Tee", qty: 2, price: 99.95 }] };
+  const sent = (p: ReturnType<typeof page>): Record<string, unknown>[] =>
+    [...p.batches(), ...p.beacons()].flatMap((batch) => batch.e as Record<string, unknown>[]);
+
+  it("granted: amanda('purchase', order) leaves as an event valid against the schema, with the pageview's ids", async () => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]]);
+    await p.booted;
+    p.win.amanda!("purchase", ORDER);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const batches = p.batches();
+    for (const batch of batches) expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
+    const [view, purchase] = batches.flatMap((batch) => batch.e as Record<string, unknown>[]);
+    expect(purchase).toMatchObject({
+      type: "purchase",
+      site_id: "site_123",
+      url: LANDING,
+      visitor_id: view!.visitor_id,
+      session_id: view!.session_id,
+      consent: { analytics: "granted", ads: "granted", source: "manual" },
+      purchase: { order_id: "ORD-1001", revenue: 199.9, currency: "SEK", items: [{ sku: "TSH-RED-M", name: "Tee", qty: 2, price: 99.95 }] },
+    });
+    expect(p.reports).toEqual([]);
+  });
+
+  it("unknown, then granted: the pending purchase leaves as an event once consent comes", async () => {
+    const p = page("off");
+    await p.booted;
+    p.win.amanda!("purchase", ORDER);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(p.requests()).toEqual([CONFIG_URL]);
+
+    p.win.amanda!("consent", { analytics: "granted", ads: "granted" });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const items = sent(p);
+    expect(items.map((item) => item.type)).toEqual(["pageview", "purchase"]);
+    expect(items[1]).toMatchObject({ purchase: { order_id: "ORD-1001" }, consent: { analytics: "granted", ads: "granted", source: "manual" } });
+    expect(p.reports).toEqual([]);
+  });
+
+  it("declined in mode pings: the purchase goes as a count-only ping, without the order", async () => {
+    const p = page("pings", [["consent", { analytics: "denied", ads: "denied" }]]);
+    await p.booted;
+    p.win.amanda!("purchase", ORDER);
+    await p.leave();
+
+    const batches = p.batches();
+    for (const batch of batches) expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
+    const pings = sent(p);
+    expect(pings.map((ping) => [ping.type, ping.path])).toEqual([
+      ["pageview", "/products"],
+      ["purchase", "/products"],
+    ]);
+    expect(pings[1]).not.toHaveProperty("purchase");
+    expect(pings[1]!.visitor_id).toBeUndefined();
+    expect(JSON.stringify(pings)).not.toMatch(/ORD-1001|TSH-RED-M|SEK|revenue|order_id/);
+    expect(p.jar.writes).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("declined in mode off: nothing goes but the config fetch", async () => {
+    const p = page("off", [["consent", { analytics: "denied", ads: "denied" }]]);
+    await p.booted;
+    p.win.amanda!("purchase", ORDER);
+    await p.leave();
+
+    expect(p.requests()).toEqual([CONFIG_URL]);
+    expect(p.beacons()).toEqual([]);
     expect(p.reports).toEqual([]);
   });
 });

@@ -16,14 +16,13 @@
 // has no room for either. So do the GA4 e-commerce events the auto-map reads from the dataLayer
 // (ecommerce.ts), on a site whose config turns it on (features.ga4_ecommerce_enabled, AAI-974): a
 // purchase as a pageview goes, an event or a count-only ping; a view_item, an add_to_cart and a
-// begin_checkout as events only.
+// begin_checkout as events only. The site's own purchase, amanda('purchase', order) (purchase.ts,
+// AAI-985), goes as the auto-map's does: an event, or a count-only ping in declined mode `pings`.
 //
 // Still to come: a form_submit (forms.ts) goes as a page_exit does, an event only, and so do a
 // click_special (special-clicks.ts), a click_outbound (outbound.ts) and an identify event
-// (identify.ts), whose command refuses unless the site's config turns identify on. A purchase event
-// (purchase.ts) goes as a pageview does: an event, or a count-only ping in declined mode `pings`.
-// Until then, a form_submit, a click_special, a click_outbound, an identify event and a purchase
-// event go nowhere. Scroll depth (scroll.ts) is off by default, and the tag passes no
+// (identify.ts), whose command refuses unless the site's config turns identify on. Until then, a
+// form_submit, a click_special, a click_outbound and an identify event go nowhere. Scroll depth (scroll.ts) is off by default, and the tag passes no
 // onScrollDepth: the per-site toggle that turns it on is AAI-791's.
 import { boot, type Install, type Tag, type TagWindow } from "./boot";
 import { ErrorBoundary, warn } from "./boundary";
@@ -66,7 +65,7 @@ export function startTag(install?: Install): Promise<Tag | undefined> | undefine
       onClickSpecial: () => undefined,
       onClickOutbound: () => undefined,
       onIdentify: () => undefined,
-      onPurchase: () => undefined,
+      onPurchase: feed.purchase,
     });
   });
 }
