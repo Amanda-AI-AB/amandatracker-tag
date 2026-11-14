@@ -62,6 +62,13 @@ export const CLICK_SPECIAL = {
   link_scheme: "tel",
 } as const;
 
+/** A valid click_outbound: an ordinary event with the hostname of the link it left by. */
+export const CLICK_OUTBOUND = {
+  ...EVENT,
+  type: "click_outbound",
+  link_host: "partner.example.org",
+} as const;
+
 /** A valid ping with every field. */
 export const PING = {
   schema_version: SCHEMA_VERSION,

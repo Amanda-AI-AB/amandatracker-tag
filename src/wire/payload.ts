@@ -429,11 +429,13 @@ function shape<T extends object>(input: T, spec: Shape, path: string): T {
  * Builds an event: a purchase when the input carries a purchase, which then needs type purchase;
  * a page exit when it carries engagement_ms, which then needs type page_exit; a click_special when
  * it carries link_scheme, which then needs type click_special; and any other event otherwise, whose
- * type is none of them. Throws WirePayloadError when a required field is missing or empty (an event
- * of type purchase without its purchase, of type page_exit without its engagement_ms, or of type
- * click_special without its link_scheme, included), the purchase isn't an object (null included),
- * or a value breaks a rule the tag can't keep for it (shape: a link_scheme other than tel or mailto
- * included).
+ * type is none of them, and which carries a link_host when, and only when, its type is
+ * click_outbound. Throws WirePayloadError when a required field is missing or empty (an event of
+ * type purchase without its purchase, of type page_exit without its engagement_ms, of type
+ * click_special without its link_scheme, or of type click_outbound without its link_host,
+ * included), the purchase isn't an object (null included), or a value breaks a rule the tag can't
+ * keep for it (shape: a link_scheme other than tel or mailto, and a link_host over its cap or off
+ * its pattern, which a cut would make another host, included).
  */
 export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireEvent {
   if ("purchase" in input && input.purchase !== undefined) {
@@ -455,6 +457,10 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
   if (input.type === "purchase") throw new WirePayloadError("event.purchase");
   if (input.type === "page_exit") throw new WirePayloadError("event.engagement_ms");
   if (input.type === "click_special") throw new WirePayloadError("event.link_scheme");
+  const outbound = input.type === "click_outbound";
+  const host = "link_host" in input && input.link_host !== undefined;
+  if (host && !outbound) throw new WirePayloadError("event.type", 'is not "click_outbound" on an event with a link_host');
+  if (outbound && !host) throw new WirePayloadError("event.link_host");
   const event: TrackedEvent = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
   return shape(event, TRACKED_EVENT_SHAPE, "event");
 }

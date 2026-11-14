@@ -11,7 +11,7 @@
   ],
   "$defs": {
     "TrackedEvent": {
-      "description": "An event that is neither a purchase, a page exit nor a click_special, such as a pageview or a custom event.",
+      "description": "An event that is neither a purchase, a page exit nor a click_special, such as a pageview, a click_outbound or a custom event. Only a TrackedEvent may carry link_host, and the tag sets it on a click_outbound alone.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -42,7 +42,8 @@
         "consent": { "$ref": "#/$defs/Consent" },
         "attribution": { "$ref": "#/$defs/Attribution" },
         "props": { "$ref": "#/$defs/Props" },
-        "user_ref": { "$ref": "#/$defs/UserRef" }
+        "user_ref": { "$ref": "#/$defs/UserRef" },
+        "link_host": { "$ref": "#/$defs/LinkHost" }
       }
     },
     "PurchaseEvent": {
@@ -168,6 +169,13 @@
     "LinkScheme": {
       "description": "The scheme of a clicked tel: or mailto: link, without its colon: tel or mailto, and nothing else. A closed list, so that no part of the link's address (a phone number, an email address, a subject) can be sent in its place.",
       "enum": ["tel", "mailto"]
+    },
+    "LinkHost": {
+      "description": "The hostname of the link a click_outbound leaves the site's own domains by (01 §4), as a browser's URL parser gives it: lower case, an internationalised name in its punycode form, without a trailing dot, or an IPv6 address in brackets. The hostname is all the tag sends of the destination: never its scheme, port, path, query or fragment. The tag sets it on a click_outbound alone, which always carries it.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^(?:[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*|\\[[0-9a-f:.]+\\])$"
     },
     "UserRef": {
       "description": "The site's own pseudonymous reference for the logged-in visitor, such as a hashed customer number, as the site gave it to amanda('identify', ref) (01 §3): it links the visitor to the site's user for logged-in stitching. The tag sends it on the identify event alone, only when the site's config turns identify on, and only on the identified path (granted analytics), never in a ping. Never a raw email address: a value holding an @, the shape of every email address, is refused here, by the tag before it leaves the browser, and by the collector (AAI-197). An identifier, never cut: one over the cap is refused.",

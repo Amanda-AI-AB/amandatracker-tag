@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CLICK_SPECIAL, EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
+import { CLICK_OUTBOUND, CLICK_SPECIAL, EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
 
 describe("wire schema v1: event", () => {
   const validate = validator("event.json");
@@ -173,7 +173,8 @@ describe("wire schema v1: purchase", () => {
     const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, unknown>; required: string[] }>;
     const tracked = defs.TrackedEvent!;
     const purchase = defs.PurchaseEvent!;
-    const { type: trackedType, ...trackedRest } = tracked.properties;
+    // link_host is the ordinary event's own: a click_outbound's (AAI-167).
+    const { type: trackedType, link_host: linkHost, ...trackedRest } = tracked.properties;
     const { type: purchaseType, purchase: order, ...purchaseRest } = purchase.properties;
     expect(purchaseRest).toEqual(trackedRest);
     expect(purchaseType).toMatchObject({ const: "purchase" });
@@ -235,7 +236,8 @@ describe("wire schema v1: page_exit (AAI-105)", () => {
     const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, unknown>; required: string[] }>;
     const tracked = defs.TrackedEvent!;
     const exit = defs.PageExitEvent!;
-    const { type: trackedType, ...trackedRest } = tracked.properties;
+    // link_host is the ordinary event's own: a click_outbound's (AAI-167).
+    const { type: trackedType, link_host: linkHost, ...trackedRest } = tracked.properties;
     const { type: exitType, engagement_ms: engagement, ...exitRest } = exit.properties;
     expect(exitRest).toEqual(trackedRest);
     expect(exitType).toMatchObject({ const: "page_exit" });
@@ -295,7 +297,8 @@ describe("wire schema v1: click_special (AAI-169)", () => {
     const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, unknown>; required: string[] }>;
     const tracked = defs.TrackedEvent!;
     const click = defs.ClickSpecialEvent!;
-    const { type: trackedType, ...trackedRest } = tracked.properties;
+    // link_host is the ordinary event's own: a click_outbound's (AAI-167).
+    const { type: trackedType, link_host: linkHost, ...trackedRest } = tracked.properties;
     const { type: clickType, link_scheme: scheme, ...clickRest } = click.properties;
     expect(clickRest).toEqual(trackedRest);
     expect(clickType).toMatchObject({ const: "click_special" });
@@ -305,6 +308,43 @@ describe("wire schema v1: click_special (AAI-169)", () => {
   it("rides in a batch and a Pub/Sub message", () => {
     expect(validator("batch.json")({ seq: 1, e: [EVENT, CLICK_SPECIAL] })).toBe(true);
     const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: CLICK_SPECIAL };
+    expect(validator("pubsub-message.json")(message)).toBe(true);
+  });
+});
+
+describe("wire schema v1: click_outbound (AAI-167)", () => {
+  const validate = validator("event.json");
+
+  it.each(["partner.example.org", "example.com", "xn--bcher-kva.de", "a_b.example", "192.0.2.1", "[2001:db8::1]", "localhost"])(
+    "accepts a click_outbound to the host %s",
+    (host) => {
+      expect(validate({ ...CLICK_OUTBOUND, link_host: host }), JSON.stringify(validate.errors)).toBe(true);
+    },
+  );
+
+  it.each([
+    ["a full URL", "https://partner.example.org/offer?id=1"],
+    ["a host with its path", "partner.example.org/offer"],
+    ["a host with its port", "partner.example.org:8443"],
+    ["a host with credentials", "user@partner.example.org"],
+    ["an upper-case host", "Partner.Example.org"],
+    ["a host with a trailing dot", "example.com."],
+    ["an empty label", "partner..example.org"],
+    ["an empty host", ""],
+    ["a host over 253 characters", `${"a".repeat(250)}.com`],
+  ])("rejects %s as the link's host", (_, host) => {
+    expect(validate({ ...CLICK_OUTBOUND, link_host: host })).toBe(false);
+  });
+
+  it("rejects a link's host on a purchase, a page_exit and a click_special", () => {
+    expect(validate({ ...PURCHASE, link_host: "example.org" })).toBe(false);
+    expect(validate({ ...PAGE_EXIT, link_host: "example.org" })).toBe(false);
+    expect(validate({ ...CLICK_SPECIAL, link_host: "example.org" })).toBe(false);
+  });
+
+  it("rides in a batch and a Pub/Sub message", () => {
+    expect(validator("batch.json")({ seq: 1, e: [EVENT, CLICK_OUTBOUND] })).toBe(true);
+    const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: CLICK_OUTBOUND };
     expect(validator("pubsub-message.json")(message)).toBe(true);
   });
 });

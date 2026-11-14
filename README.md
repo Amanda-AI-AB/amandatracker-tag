@@ -271,6 +271,10 @@ truth for what the tag sends and what the collector accepts:
   `type: "click_special"` and `link_scheme`, `tel` or `mailto`. The scheme is all the tag reads of
   the link: never its address, so neither a phone number nor an email address leaves the browser.
   No other event carries `link_scheme`.
+  A click (or middle click) on an `http:` or `https:` link that leaves the site's own domains is a
+  `click_outbound` carrying `link_host`, the link's hostname alone (lower case, punycode, no trailing
+  dot): never its path, query, fragment, port or full URL. Only a `click_outbound` carries
+  `link_host`, and it always does.
   GA4 e-commerce auto-map (`src/core/ecommerce.ts`), off unless configured, reads a GA4-tagged
   shop's `view_item`, `add_to_cart`, `begin_checkout` and `purchase` from `window.dataLayer`, both
   as Google Tag Manager pushes them (`{event, ecommerce}`) and as `gtag('event', ...)` does, and

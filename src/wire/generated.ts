@@ -50,7 +50,7 @@ export type WireBatch = EventBatch | PingBatch;
 
 // event.json
 
-/** An event that is neither a purchase, a page exit nor a click_special, such as a pageview or a custom event. */
+/** An event that is neither a purchase, a page exit nor a click_special, such as a pageview, a click_outbound or a custom event. Only a TrackedEvent may carry link_host, and the tag sets it on a click_outbound alone. */
 export interface TrackedEvent {
   schema_version: SchemaVersion;
   tag_version: TagVersion;
@@ -68,6 +68,7 @@ export interface TrackedEvent {
   attribution?: Attribution;
   props?: Props;
   user_ref?: UserRef;
+  link_host?: LinkHost;
   purchase?: never;
   engagement_ms?: never;
   link_scheme?: never;
@@ -77,19 +78,19 @@ export interface TrackedEvent {
   click_ids?: never;
 }
 
-export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref"] as const;
+export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "link_host"] as const;
 
 export const TRACKED_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent"] as const;
 
-export const TRACKED_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", attribution: "object", props: "object", user_ref: "string" } as const;
+export const TRACKED_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", attribution: "object", props: "object", user_ref: "string", link_host: "string" } as const;
 
 export const TRACKED_EVENT_VALUES = { schema_version: [1] } as const;
 
 export const TRACKED_EVENT_MINIMUM = { client_ts: 0 } as const;
 
-export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", type: "^(?:[^pc]|p(?:[^ua]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S]|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^_]|$)|page_(?:[^e]|$)|page_e(?:[^x]|$)|page_ex(?:[^i]|$)|page_exi(?:[^t]|$)|page_exit[\\s\\S]|c(?:[^l]|$)|cl(?:[^i]|$)|cli(?:[^c]|$)|clic(?:[^k]|$)|click(?:[^_]|$)|click_(?:[^s]|$)|click_s(?:[^p]|$)|click_sp(?:[^e]|$)|click_spe(?:[^c]|$)|click_spec(?:[^i]|$)|click_speci(?:[^a]|$)|click_specia(?:[^l]|$)|click_special[\\s\\S])", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", user_ref: "^[^@]+$" } as const;
+export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", type: "^(?:[^pc]|p(?:[^ua]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S]|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^_]|$)|page_(?:[^e]|$)|page_e(?:[^x]|$)|page_ex(?:[^i]|$)|page_exi(?:[^t]|$)|page_exit[\\s\\S]|c(?:[^l]|$)|cl(?:[^i]|$)|cli(?:[^c]|$)|clic(?:[^k]|$)|click(?:[^_]|$)|click_(?:[^s]|$)|click_s(?:[^p]|$)|click_sp(?:[^e]|$)|click_spe(?:[^c]|$)|click_spec(?:[^i]|$)|click_speci(?:[^a]|$)|click_specia(?:[^l]|$)|click_special[\\s\\S])", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", user_ref: "^[^@]+$", link_host: "^(?:[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*|\\[[0-9a-f:.]+\\])$" } as const;
 
-export const TRACKED_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35, user_ref: 128 } as const;
+export const TRACKED_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35, user_ref: 128, link_host: 253 } as const;
 
 /** A purchase: the envelope every event carries, type purchase, and the order in purchase (01 §4). */
 export interface PurchaseEvent {
@@ -111,6 +112,7 @@ export interface PurchaseEvent {
   props?: Props;
   user_ref?: UserRef;
   purchase: Purchase;
+  link_host?: never;
   engagement_ms?: never;
   link_scheme?: never;
   path?: never;
@@ -153,6 +155,7 @@ export interface PageExitEvent {
   props?: Props;
   user_ref?: UserRef;
   engagement_ms: EngagementMs;
+  link_host?: never;
   purchase?: never;
   link_scheme?: never;
   path?: never;
@@ -195,6 +198,7 @@ export interface ClickSpecialEvent {
   props?: Props;
   user_ref?: UserRef;
   link_scheme: LinkScheme;
+  link_host?: never;
   purchase?: never;
   engagement_ms?: never;
   path?: never;
@@ -219,6 +223,9 @@ export const CLICK_SPECIAL_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, ur
 
 /** The scheme of a clicked tel: or mailto: link, without its colon: tel or mailto, and nothing else. A closed list, so that no part of the link's address (a phone number, an email address, a subject) can be sent in its place. */
 export type LinkScheme = "tel" | "mailto";
+
+/** The hostname of the link a click_outbound leaves the site's own domains by (01 §4), as a browser's URL parser gives it: lower case, an internationalised name in its punycode form, without a trailing dot, or an IPv6 address in brackets. The hostname is all the tag sends of the destination: never its scheme, port, path, query or fragment. The tag sets it on a click_outbound alone, which always carries it. */
+export type LinkHost = string;
 
 /** The site's own pseudonymous reference for the logged-in visitor, such as a hashed customer number, as the site gave it to amanda('identify', ref) (01 §3): it links the visitor to the site's user for logged-in stitching. The tag sends it on the identify event alone, only when the site's config turns identify on, and only on the identified path (granted analytics), never in a ping. Never a raw email address: a value holding an @, the shape of every email address, is refused here, by the tag before it leaves the browser, and by the collector (AAI-197). An identifier, never cut: one over the cap is refused. */
 export type UserRef = string;
@@ -463,6 +470,7 @@ export interface WirePing {
   attribution?: never;
   props?: never;
   user_ref?: never;
+  link_host?: never;
   purchase?: never;
   engagement_ms?: never;
   link_scheme?: never;

@@ -22,7 +22,7 @@ import {
   type PingInput,
   type TrackedEventInput,
 } from "../src/wire/payload";
-import { CLICK_SPECIAL, EVENT, PAGE_EXIT, PING, PURCHASE, validator } from "./wire-validator";
+import { CLICK_OUTBOUND, CLICK_SPECIAL, EVENT, PAGE_EXIT, PING, PURCHASE, validator } from "./wire-validator";
 
 type Items = NonNullable<PurchaseEventInput["purchase"]["items"]>;
 
@@ -535,6 +535,38 @@ describe("buildEvent click_special (AAI-169)", () => {
   it("throws on an event of type click_special without its scheme", () => {
     const { link_scheme, ...rest } = clickSpecialInput();
     expect(() => buildEvent(rest as unknown as EventInput)).toThrow(new WirePayloadError("event.link_scheme"));
+  });
+});
+
+describe("buildEvent click_outbound (AAI-167)", () => {
+  const validate = validator("event.json");
+
+  function clickOutboundInput(): TrackedEventInput {
+    const { schema_version, event_id, ...input } = CLICK_OUTBOUND;
+    return { ...input, consent: { ...input.consent }, props: { ...input.props } };
+  }
+
+  it("builds a valid click_outbound with the link's host", () => {
+    const event = buildEvent(clickOutboundInput());
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    expect(event).toMatchObject({ type: "click_outbound", link_host: "partner.example.org" });
+  });
+
+  it("throws on a link's host on another type of event", () => {
+    const input = { ...clickOutboundInput(), type: "click" };
+    expect(() => buildEvent(input)).toThrow(new WirePayloadError("event.type", 'is not "click_outbound" on an event with a link_host'));
+  });
+
+  it("throws on an event of type click_outbound without its host", () => {
+    const { link_host, ...rest } = clickOutboundInput();
+    expect(() => buildEvent(rest)).toThrow(new WirePayloadError("event.link_host"));
+  });
+
+  it.each([
+    ["a full URL", "https://partner.example.org/offer"],
+    ["a host over its cap, which a cut would make another host", `${"a".repeat(250)}.com`],
+  ])("refuses %s as the link's host", (_, host) => {
+    expect(() => buildEvent({ ...clickOutboundInput(), link_host: host })).toThrow(WirePayloadError);
   });
 });
 
