@@ -348,8 +348,8 @@ export interface WireTagError {
   tag_version: TagVersion;
   /** The site the tag was installed for; absent when the failure is that the snippet names no valid site. */
   site_id?: SiteId;
-  /** Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, or a route change. */
-  stage: "boot" | "config" | "command" | "pageview" | "route";
+  /** Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, a route change, or the transport that posts batches to POST /v1/e (a batch the collector refused, or a failure in a flush). */
+  stage: "boot" | "config" | "command" | "pageview" | "route" | "transport";
   /** The error's name, such as TypeError or ConfigError. */
   name: string;
   /** The error's message, scrubbed by the tag: each URL in it cut to its scheme and host, and each email address replaced. */
@@ -362,7 +362,7 @@ export const WIRE_TAG_ERROR_REQUIRED = ["schema_version", "event_id", "tag_versi
 
 export const WIRE_TAG_ERROR_TYPES = { schema_version: "integer", event_id: "string", tag_version: "string", site_id: "string", stage: "string", name: "string", message: "string" } as const;
 
-export const WIRE_TAG_ERROR_VALUES = { schema_version: [1], stage: ["boot", "config", "command", "pageview", "route"] } as const;
+export const WIRE_TAG_ERROR_VALUES = { schema_version: [1], stage: ["boot", "config", "command", "pageview", "route", "transport"] } as const;
 
 export const WIRE_TAG_ERROR_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$" } as const;
 

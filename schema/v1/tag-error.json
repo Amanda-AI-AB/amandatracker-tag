@@ -23,8 +23,8 @@
       "$ref": "event.json#/$defs/SiteId"
     },
     "stage": {
-      "description": "Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, or a route change.",
-      "enum": ["boot", "config", "command", "pageview", "route"]
+      "description": "Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, a route change, or the transport that posts batches to POST /v1/e (a batch the collector refused, or a failure in a flush).",
+      "enum": ["boot", "config", "command", "pageview", "route", "transport"]
     },
     "name": {
       "description": "The error's name, such as TypeError or ConfigError.",
