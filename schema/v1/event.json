@@ -223,8 +223,8 @@
       }
     },
     "ConsentSource": {
-      "description": "The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, tcf, the page's IAB TCF v2.2 consent manager (__tcfapi), cookiebot, the page's Cookiebot consent manager read through its own API (window.Cookiebot), or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved.",
-      "enum": ["gpc", "manual", "gcm", "tcf", "cookiebot"]
+      "description": "The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, tcf, the page's IAB TCF v2.2 consent manager (__tcfapi), cookiebot, the page's Cookiebot consent manager read through its own API (window.Cookiebot), onetrust, the page's OneTrust consent manager read through its own API (window.OnetrustActiveGroups), or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved.",
+      "enum": ["gpc", "manual", "gcm", "tcf", "cookiebot", "onetrust"]
     },
     "TcString": {
       "description": "The IAB TCF v2.2 TC string the consent manager gave with the signal the snapshot holds: present only when source is tcf, and then whenever the consent manager gave one that fits. Personal data (CJEU C-604/22). The tag never cuts it, which would make another string of it: one over the cap, or not of base64url segments joined by dots, is left out.",

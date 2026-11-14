@@ -155,6 +155,29 @@ describe("browser target", () => {
     expect(signals).toEqual([{ analytics: "granted", ads: "denied" }]);
   });
 
+  it("runs the built OneTrust adapter: it connects, signals OneTrust's answer, and hooks OptanonWrapper", async () => {
+    const { adapterFiles } = await build({ outdir: join(dir, "dist") });
+    const file = adapterFiles.find((f) => f.endsWith("onetrust.js"))!;
+    const context = browserContext();
+    const calls: unknown[][] = [];
+    context.amanda = (...args: unknown[]) => calls.push(args);
+    context.OneTrust = { IsAlertBoxClosed: () => true };
+    context.OnetrustActiveGroups = ",C0001,C0004,";
+
+    runInContext(readFileSync(file, "utf8"), context, { filename: file });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.slice(0, 2)).toEqual(["adapter", "onetrust"]);
+    const signals: unknown[] = [];
+    (calls[0]![2] as (api: unknown) => void)({ signal: (s: unknown) => signals.push(s), guard: (fn: () => void) => fn() });
+    context.OnetrustActiveGroups = ",C0001,C0002,";
+    (context.OptanonWrapper as () => void)();
+    expect(signals).toEqual([
+      { analytics: "denied", ads: "granted" },
+      { analytics: "granted", ads: "denied" },
+    ]);
+  });
+
   it("boots the built core: it fetches the site's config and installs window.amanda", async () => {
     const { coreFile } = await build({ outdir: join(dir, "dist") });
     const fetched: string[] = [];

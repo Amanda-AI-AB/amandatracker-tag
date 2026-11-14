@@ -11,7 +11,8 @@
 //             signals carry the TC string to the snapshot (AAI-160);
 //   cookiebot -> a consent manager set up without Consent Mode or TCF, read through its own API
 //             by an adapter the core loads only once it detects that consent manager
-//             (watchCmpAdapters; Cookiebot, AAI-163).
+//             (watchCmpAdapters; Cookiebot, AAI-163);
+//   onetrust -> the same, for OneTrust (AAI-164), below Cookiebot: a page has one or the other.
 //
 // The first source to give a definitive signal (a category granted or denied) wins, and the
 // winner's later signals always apply. A higher rung takes over when it signals: once the site
@@ -33,7 +34,7 @@ export interface ConsentInput {
 }
 
 /** Each source's rung: the lower, the higher its priority. */
-const RUNG: Readonly<Record<ConsentSource, number>> = { gpc: 0, manual: 1, gcm: 2, tcf: 3, cookiebot: 4 };
+const RUNG: Readonly<Record<ConsentSource, number>> = { gpc: 0, manual: 1, gcm: 2, tcf: 3, cookiebot: 4, onetrust: 5 };
 
 export interface ConsentLadder {
   /** The source whose signals drive the state now; undefined until one gave a definitive signal. */
@@ -331,6 +332,7 @@ export interface CmpAdapter {
 
 export const CMP_ADAPTERS: readonly CmpAdapter[] = [
   { name: "cookiebot", global: "Cookiebot", events: ["CookiebotOnLoad", "CookiebotOnConsentReady"] },
+  { name: "onetrust", global: "OneTrust", events: ["OneTrustGroupsUpdated"] },
 ];
 
 /**

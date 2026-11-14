@@ -42,6 +42,10 @@ export interface FakeWindow extends TagWindow {
   readonly fetchMock: ReturnType<typeof vi.fn>;
   /** The page's Cookiebot, when a test installs one. */
   Cookiebot?: unknown;
+  /** The page's OneTrust, its active groups and OptanonWrapper, when a test installs them. */
+  OneTrust?: unknown;
+  OnetrustActiveGroups?: unknown;
+  OptanonWrapper?: unknown;
   /** Moves location to url, as the back button does, and fires popstate. */
   back(url: string): void;
   /** Fires the window event `type`, such as one a consent manager dispatches. */

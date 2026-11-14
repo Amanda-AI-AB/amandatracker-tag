@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { watchCookiebot } from "../src/cmp/cookiebot";
+import { watchOneTrust } from "../src/cmp/onetrust";
 import { connectAdapter } from "../src/core/adapter-api";
 import { boot, type TagWindow } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
@@ -533,25 +534,25 @@ describe("the consent sources", () => {
     expect(reports).toEqual([]);
   });
 
+  interface InjectedScript {
+    src?: string;
+    integrity?: string;
+    crossOrigin?: string;
+    onload?: () => void;
+    onerror?: () => void;
+  }
+
+  /** Gives win's document createElement and a head, and returns the scripts appended to it. */
+  function injected(win: FakeWindow): InjectedScript[] {
+    const appended: InjectedScript[] = [];
+    Object.assign(win.document, {
+      createElement: () => ({}) as InjectedScript,
+      head: { appendChild: (script: InjectedScript) => appended.push(script) },
+    });
+    return appended;
+  }
+
   describe("Cookiebot", () => {
-    interface InjectedScript {
-      src?: string;
-      integrity?: string;
-      crossOrigin?: string;
-      onload?: () => void;
-      onerror?: () => void;
-    }
-
-    /** Gives win's document createElement and a head, and returns the scripts appended to it. */
-    function injected(win: FakeWindow): InjectedScript[] {
-      const appended: InjectedScript[] = [];
-      Object.assign(win.document, {
-        createElement: () => ({}) as InjectedScript,
-        head: { appendChild: (script: InjectedScript) => appended.push(script) },
-      });
-      return appended;
-    }
-
     /** window.Cookiebot: answered with these categories, or not answered yet. */
     const cookiebot = (answer?: { statistics: boolean; marketing: boolean }) =>
       answer
@@ -655,6 +656,96 @@ describe("the consent sources", () => {
         },
       ]);
       expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "unknown", source: "manual" });
+    });
+  });
+
+  describe("OneTrust", () => {
+    /** Sets win's OneTrust: answered with these active groups, or not answered yet. */
+    function setOneTrust(win: FakeWindow, answered: boolean, groups: string): void {
+      win.OneTrust = { IsAlertBoxClosed: () => answered };
+      win.OnetrustActiveGroups = groups;
+    }
+
+    /** OneTrust's visitor answers: the groups change, then OneTrust calls OptanonWrapper. */
+    function answer(win: FakeWindow, groups: string): void {
+      setOneTrust(win, true, groups);
+      (win.OptanonWrapper as () => void)();
+    }
+
+    /** The browser runs the adapter's script: what src/adapters/onetrust.ts does at its top level. */
+    function runAdapter(win: FakeWindow, script: InjectedScript): void {
+      connectAdapter(win, "onetrust", (api) => watchOneTrust(win, api));
+      script.onload!();
+    }
+
+    it("loads the adapter only on a page with OneTrust, pinned to this core's version", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      setOneTrust(win, false, ",C0001,");
+      const appended = injected(win);
+      await bootWithConsent(win).booted;
+      expect(appended).toHaveLength(1);
+      expect(appended[0]).toMatchObject({
+        src: `${DEFAULT_ENDPOINT}/adapters/0.0.0-test/onetrust.js`,
+        integrity: "sha384-test-onetrust",
+        crossOrigin: "anonymous",
+      });
+    });
+
+    it("drives the state machine across accept, reject and change, waiting while the visitor hasn't answered", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      // an opt-out region's defaults: every group active before the visitor answers
+      setOneTrust(win, false, ",C0001,C0002,C0003,C0004,");
+      const site = vi.fn();
+      win.OptanonWrapper = site;
+      const appended = injected(win);
+      const { snapshots, machine, reports, booted } = bootWithConsent(win);
+      await booted;
+      expect(snapshots).toEqual([{ analytics: "unknown", ads: "unknown" }]);
+
+      runAdapter(win, appended[0]!);
+      (win.OptanonWrapper as () => void)();
+      expect(machine.snapshot()).toEqual({ analytics: "unknown", ads: "unknown" });
+
+      answer(win, ",C0001,C0002,C0003,C0004,");
+      expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "granted", source: "onetrust" });
+      expect(machine.mode()).toBe("identified");
+
+      answer(win, ",C0001,");
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "onetrust" });
+      expect(machine.mode()).toBe("declined");
+
+      answer(win, ",C0001,C0002,");
+      expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "denied", source: "onetrust" });
+      expect(site).toHaveBeenCalledTimes(4);
+      expect(reports).toEqual([]);
+    });
+
+    it("loads the adapter for a OneTrust loaded after the tag, and reads the answer it already had", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      const appended = injected(win);
+      const { machine, booted } = bootWithConsent(win);
+      await booted;
+      expect(appended).toEqual([]);
+
+      setOneTrust(win, true, ",C0001,C0004,");
+      win.fire("OneTrustGroupsUpdated");
+      win.fire("OneTrustGroupsUpdated");
+      expect(appended).toHaveLength(1);
+
+      runAdapter(win, appended[0]!);
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "granted", source: "onetrust" });
+    });
+
+    it("leaves OneTrust behind Consent Mode, on a OneTrust set up with it", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      win.dataLayer = [["consent", "update", { analytics_storage: "denied", ad_storage: "denied", ad_user_data: "denied" }]];
+      setOneTrust(win, true, ",C0001,C0002,C0004,");
+      const appended = injected(win);
+      const { machine, booted } = bootWithConsent(win);
+      await booted;
+
+      runAdapter(win, appended[0]!);
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "gcm" });
     });
   });
 

@@ -37,8 +37,11 @@ afterEach(() => {
 });
 
 describe("CMP_ADAPTERS", () => {
-  it("has Cookiebot, detected by its global or its load and consent events", () => {
-    expect(CMP_ADAPTERS).toEqual([{ name: "cookiebot", global: "Cookiebot", events: ["CookiebotOnLoad", "CookiebotOnConsentReady"] }]);
+  it("has Cookiebot and OneTrust, each detected by its global or the events it fires", () => {
+    expect(CMP_ADAPTERS).toEqual([
+      { name: "cookiebot", global: "Cookiebot", events: ["CookiebotOnLoad", "CookiebotOnConsentReady"] },
+      { name: "onetrust", global: "OneTrust", events: ["OneTrustGroupsUpdated"] },
+    ]);
   });
 });
 

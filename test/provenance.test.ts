@@ -140,6 +140,7 @@ describe("reproduce", () => {
 
     // the core and each of the repo's adapters
     expect(provenance.subject.map((s) => s.name)).toContain("adapters/0.3.0/cookiebot.js");
+    expect(provenance.subject.map((s) => s.name)).toContain("adapters/0.3.0/onetrust.js");
     await expect(reproduce(provenance)).resolves.toEqual({ version: "0.3.0", subjects: provenance.subject.length });
   });
 

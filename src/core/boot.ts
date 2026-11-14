@@ -131,7 +131,7 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
 /**
  * Runs the booted tag: Global Privacy Control, when the site honors it, so that nothing grants
  * before it denies; Consent Mode's state as the dataLayer has it so far, the TCF consent manager's
- * when the page has one, the adapter of a consent manager the page has or loads later (Cookiebot),
+ * when the page has one, the adapter of a consent manager the page has or loads later (Cookiebot, OneTrust),
  * which signals once it has loaded and connected through the `adapter` command, then the site's queued
  * commands (they may set what the pageview carries, such as consent), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
