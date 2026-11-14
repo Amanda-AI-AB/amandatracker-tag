@@ -374,4 +374,32 @@ describe("a refused signal", () => {
     expect(machine.pendingCount()).toBe(1);
     expect(out).toEqual([]);
   });
+
+  it("changes nothing for a source off the list", () => {
+    const { machine } = harness("off");
+    expect(() => machine.update({ analytics: "granted" }, "tcf" as "gcm")).toThrow(ConsentError);
+    expect(machine.snapshot()).toEqual(initialConsent());
+  });
+});
+
+describe("the snapshot's source", () => {
+  it("names the source of the signal applied, and follows a change of source", () => {
+    const { machine, out } = harness("off");
+    machine.update({ analytics: "granted" }, "gcm");
+    machine.collect(1);
+    machine.update({ ads: "denied" }, "manual");
+    machine.collect(2);
+    expect(out).toEqual([
+      ["identified", 1, { analytics: "granted", ads: "unknown", source: "gcm" }],
+      ["identified", 2, { analytics: "granted", ads: "denied", source: "manual" }],
+    ]);
+  });
+
+  it("is absent until a source signals, and kept by a no-CMP decision", () => {
+    const { machine } = harness("off");
+    expect(machine.snapshot().source).toBeUndefined();
+    machine.update({ analytics: "no_cmp" }, "gcm");
+    machine.resolveNoCmp("granted");
+    expect(machine.snapshot()).toEqual({ analytics: "no_cmp", ads: "unknown", source: "gcm" });
+  });
 });

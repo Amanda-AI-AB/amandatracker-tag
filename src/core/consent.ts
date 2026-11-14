@@ -21,13 +21,16 @@
 // Register its pagehide before the transport's (createTransport), so that the pings it hands over
 // leave with the transport's own pagehide flush.
 
-import type { Consent, ConsentState } from "../wire/generated";
+import type { Consent, ConsentSource, ConsentState } from "../wire/generated";
 import { warn } from "./boundary";
 
-export type { Consent, ConsentState };
+export type { Consent, ConsentSource, ConsentState };
 
 /** A consent category. */
-export type Category = keyof Consent;
+export type Category = "analytics" | "ads";
+
+/** A consent signal: the categories it decides, and their states. */
+export type ConsentSignal = Partial<Pick<Consent, Category>>;
 
 /** What a site sends while analytics is denied: anonymous pings, or nothing (the default). */
 export type DeclinedMode = "off" | "pings";
@@ -43,6 +46,7 @@ export const MAX_PENDING = 100;
 
 const STATES: readonly ConsentState[] = ["granted", "denied", "unknown", "no_cmp"];
 const CATEGORIES: readonly Category[] = ["analytics", "ads"];
+const SOURCES: readonly ConsentSource[] = ["manual", "gcm"];
 
 /** Where the machine hands each item, once the state says how it goes. */
 export interface ConsentSink<T> {
@@ -75,9 +79,11 @@ export interface ConsentMachine<T> {
   pendingCount(): number;
   /**
    * Applies a consent signal: the categories it names take their new states, the others keep
-   * theirs. Throws ConsentError, changing nothing, on a category or a state off the lists.
+   * theirs, and the snapshot names `source` as its source from then on. Throws ConsentError,
+   * changing nothing, on a category or a state off the lists. Which source may signal is the
+   * ladder's to decide (consent-sources.ts), not the machine's.
    */
-  update(signal: Partial<Consent>): void;
+  update(signal: ConsentSignal, source?: ConsentSource): void;
   /** Applies the site's no-CMP policy's decision (AAI-94) to the categories in no_cmp. */
   resolveNoCmp(decision: NoCmpDecision): void;
   /** Collects item as the current mode says: identified, declined or pending. */
@@ -104,11 +110,11 @@ export function collectionMode(analytics: ConsentState, noCmp: NoCmpDecision | u
 }
 
 /** A consent signal checked: only the categories and states the wire schema lists. */
-export function checkSignal(signal: unknown): Partial<Consent> {
+export function checkSignal(signal: unknown): ConsentSignal {
   if (typeof signal !== "object" || signal === null || Array.isArray(signal)) {
     throw new ConsentError("a consent signal is not an object");
   }
-  const checked: Partial<Consent> = {};
+  const checked: ConsentSignal = {};
   for (const key of Object.keys(signal)) {
     if (CATEGORIES.indexOf(key as Category) < 0) throw new ConsentError(`unknown consent category: ${key}`);
     const state = (signal as Record<string, unknown>)[key];
@@ -161,13 +167,17 @@ export function createConsent<T>(options: ConsentOptions<T>): ConsentMachine<T> 
     snapshot: () => ({ ...consent }),
     mode: current,
     pendingCount: () => pending.length,
-    update(signal) {
+    update(signal, source) {
       const checked = checkSignal(signal);
+      if (source !== undefined && SOURCES.indexOf(source) < 0) {
+        throw new ConsentError(`consent source is not one of ${SOURCES.join(", ")}: ${String(source)}`);
+      }
       const from = current();
       for (const key of CATEGORIES) {
         const state = checked[key];
         if (state !== undefined) consent[key] = state;
       }
+      if (source !== undefined) consent.source = source;
       transition(from);
     },
     resolveNoCmp(decision) {

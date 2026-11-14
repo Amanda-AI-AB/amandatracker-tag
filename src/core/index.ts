@@ -5,7 +5,10 @@
 // Still to come: a pageview goes through the consent state machine (src/core/consent.ts,
 // createConsent), which makes it an event with the visitor and session ids (AAI-98) and the
 // consent snapshot, or a ping in declined mode; then it goes to the transport
-// (src/core/transport.ts, createTransport) (AAI-964). Until then, a pageview goes nowhere.
+// (src/core/transport.ts, createTransport) (AAI-964). Until then, a pageview goes nowhere. The
+// machine is to be handed to boot as its `consent` option, which makes the consent sources
+// (src/core/consent-sources.ts: the `consent` command and Google Consent Mode) drive it; until
+// then the tag follows no consent source.
 import { boot, type TagWindow } from "./boot";
 import { ErrorBoundary, warn } from "./boundary";
 import { TAG_VERSION } from "./build-info";

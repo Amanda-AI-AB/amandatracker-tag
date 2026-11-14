@@ -1,0 +1,180 @@
+// The consent sources that drive the state machine (consent.ts), and the ladder that picks one
+// (02 §3, §5). The M1 rungs, highest first:
+//
+//   manual -> the site's own banner calls amanda('consent', {analytics, ads});
+//   gcm    -> Google Consent Mode v2: gtag('consent', 'default' | 'update', {...}) entries in
+//             window.dataLayer, those already there at boot and those pushed later.
+//
+// The first source to give a definitive signal (a category granted or denied) wins, and the
+// winner's later signals always apply. A higher rung takes over when it signals: once the site
+// calls amanda('consent', ...), Consent Mode no longer moves the state. A lower rung never takes
+// over from a winner. Each applied signal names its source in the snapshot every event carries.
+//
+// No source assumes a signal: a category it doesn't decide stays as it is, and nothing here
+// defaults to granted (08 R11).
+
+import type { ErrorBoundary } from "./boundary";
+import { warn } from "./boundary";
+import { ConsentError, type Category, type ConsentSignal, type ConsentSource } from "./consent";
+import type { Command } from "./queue";
+
+/** What the ladder drives: the state machine's update (ConsentMachine). */
+export interface ConsentInput {
+  update(signal: ConsentSignal, source: ConsentSource): void;
+}
+
+/** Each source's rung: the lower, the higher its priority. */
+const RUNG: Readonly<Record<ConsentSource, number>> = { manual: 0, gcm: 1 };
+
+export interface ConsentLadder {
+  /** The source whose signals drive the state now; undefined until one gave a definitive signal. */
+  active(): ConsentSource | undefined;
+  /** Applies a source's signal if the ladder lets it through; true when it did. */
+  signal(source: ConsentSource, signal: ConsentSignal): boolean;
+}
+
+/** Whether signal decides a category: grants or denies it. */
+export function isDefinitive(signal: ConsentSignal): boolean {
+  return [signal.analytics, signal.ads].some((state) => state === "granted" || state === "denied");
+}
+
+export function createLadder(machine: ConsentInput): ConsentLadder {
+  let active: ConsentSource | undefined;
+  return {
+    active: () => active,
+    signal(source, signal) {
+      if (!isDefinitive(signal)) return false;
+      if (active !== undefined && source !== active && RUNG[source] > RUNG[active]) return false;
+      machine.update(signal, source);
+      active = source;
+      return true;
+    },
+  };
+}
+
+// The manual API.
+
+const MANUAL_STATES = ["granted", "denied"];
+
+/**
+ * The site's amanda('consent', value) checked: an object of `analytics` and `ads`, each "granted"
+ * or "denied", deciding at least one. Throws ConsentError for anything else: a banner can't send
+ * unknown or no_cmp, and a misspelt signal must not pass for one.
+ */
+export function manualSignal(value: unknown): ConsentSignal {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new ConsentError("amanda('consent', ...) takes an object: {analytics, ads}");
+  }
+  const signal: ConsentSignal = {};
+  for (const key of Object.keys(value)) {
+    if (key !== "analytics" && key !== "ads") throw new ConsentError(`unknown consent category: ${key}`);
+    const state = (value as Record<string, unknown>)[key];
+    if (MANUAL_STATES.indexOf(state as string) < 0) {
+      throw new ConsentError(`consent ${key} is granted or denied, not ${String(state)}`);
+    }
+    signal[key as Category] = state as "granted" | "denied";
+  }
+  if (!isDefinitive(signal)) throw new ConsentError("amanda('consent', ...) decides neither analytics nor ads");
+  return signal;
+}
+
+/** The `consent` command: amanda('consent', {analytics, ads}). The command queue guards it. */
+export function consentCommand(ladder: ConsentLadder): Command {
+  return (value: unknown) => {
+    ladder.signal("manual", manualSignal(value));
+  };
+}
+
+// Google Consent Mode v2.
+
+/** The page's window.dataLayer, which gtag() and Google Tag Manager push to. */
+export interface ConsentModeHost {
+  dataLayer?: unknown;
+}
+
+type GcmState = "granted" | "denied";
+
+/** The Consent Mode types the tag reads: analytics from analytics_storage, ads from the other two. */
+const GCM_TYPES = ["analytics_storage", "ad_storage", "ad_user_data"] as const;
+type GcmType = (typeof GCM_TYPES)[number];
+
+/**
+ * Consent Mode's state as the dataLayer's consent commands build it. An `update` always sets the
+ * types it names; a `default` sets only those no update has set yet. A default scoped to regions
+ * is skipped: the tag doesn't know the visitor's region, and must not assume it is in one.
+ */
+export class ConsentModeState {
+  private readonly state: Partial<Record<GcmType, GcmState>> = {};
+  private readonly updated: Partial<Record<GcmType, true>> = {};
+
+  /** Reads one dataLayer entry; true when it was a consent command the state took in. */
+  read(entry: unknown): boolean {
+    if (typeof entry !== "object" || entry === null) return false;
+    const command = entry as ArrayLike<unknown>;
+    if (typeof command.length !== "number" || command[0] !== "consent") return false;
+    const kind = command[1];
+    const params = command[2];
+    if (kind !== "default" && kind !== "update") return false;
+    if (typeof params !== "object" || params === null) {
+      warn(`amanda: gtag('consent', '${kind}') without its parameters is ignored`);
+      return false;
+    }
+    const values = params as Record<string, unknown>;
+    if (kind === "default" && values.region !== undefined) return false;
+    let read = false;
+    for (const type of GCM_TYPES) {
+      const value = values[type];
+      if (value === undefined) continue;
+      if (value !== "granted" && value !== "denied") {
+        warn(`amanda: gtag('consent', '${kind}') sets ${type} to ${String(value)}, not granted or denied; ignored`);
+        continue;
+      }
+      if (kind === "default" && this.updated[type]) continue;
+      this.state[type] = value;
+      if (kind === "update") this.updated[type] = true;
+      read = true;
+    }
+    return read;
+  }
+
+  /**
+   * The signal the state gives: analytics is analytics_storage; ads is denied when ad_storage or
+   * ad_user_data is, and granted only when both are, since Consent Mode v2 needs both to use data
+   * for ads. A category Consent Mode hasn't decided is left out.
+   */
+  signal(): ConsentSignal {
+    const signal: ConsentSignal = {};
+    const { analytics_storage: analytics, ad_storage: storage, ad_user_data: userData } = this.state;
+    if (analytics) signal.analytics = analytics;
+    if (storage === "denied" || userData === "denied") signal.ads = "denied";
+    else if (storage === "granted" && userData === "granted") signal.ads = "granted";
+    return signal;
+  }
+}
+
+/**
+ * Follows Google Consent Mode on win: reads the consent commands already in window.dataLayer, as
+ * one signal, then each later push to it. Defines window.dataLayer as gtag's snippet does when the
+ * page has none yet, so a gtag loaded later pushes to the array the tag watches. Each push is
+ * handed to the page's push first, and its consent commands are read inside the boundary: a
+ * failure there is reported and never reaches whoever pushed. Throws ConsentError when
+ * window.dataLayer is not an array.
+ */
+export function watchConsentMode(win: ConsentModeHost, boundary: ErrorBoundary, ladder: ConsentLadder): void {
+  if (win.dataLayer === undefined) win.dataLayer = [];
+  const layer = win.dataLayer;
+  if (!Array.isArray(layer)) throw new ConsentError("window.dataLayer is not an array; Consent Mode is not followed");
+  const gcm = new ConsentModeState();
+  const readAll = (entries: ArrayLike<unknown>): void => {
+    let read = false;
+    for (let i = 0; i < entries.length; i++) read = gcm.read(entries[i]) || read;
+    if (read) ladder.signal("gcm", gcm.signal());
+  };
+  readAll(layer.slice());
+  const push = layer.push;
+  layer.push = function (this: unknown, ...items: unknown[]): number {
+    const length = push.apply(this as unknown[], items);
+    boundary.guard("consent", () => readAll(items));
+    return length;
+  };
+}

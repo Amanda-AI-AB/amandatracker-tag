@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boot, type TagWindow } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
+import { createConsent, type Consent } from "../src/core/consent";
 import { configRequestInit, DEFAULT_ENDPOINT } from "../src/core/endpoint";
 import type { PageviewInput } from "../src/core/pageview";
 import type { AmandaFunction } from "../src/core/queue";
@@ -286,5 +287,94 @@ describe("pageviews on route changes", () => {
     // The stand-in history didn't move location, so neither call is a route change.
     expect(pageviews).toHaveLength(1);
     expect(reports).toEqual([]);
+  });
+});
+
+describe("the consent sources", () => {
+  function bootWithConsent(win: FakeWindow) {
+    const reports: ErrorReport[] = [];
+    const boundary = new ErrorBoundary((report) => reports.push(report), 1);
+    const configs: unknown[] = [];
+    const machine = createConsent<PageviewInput>({
+      declinedMode: "off",
+      sink: { identified: () => undefined, anonymous: () => undefined },
+      identity: { forget: () => undefined, renew: () => undefined },
+    });
+    const snapshots: Consent[] = [];
+    const booted = boot(win, {
+      tagVersion: "0.2.0",
+      boundary,
+      onPageview: () => snapshots.push(machine.snapshot()),
+      consent: (config) => {
+        configs.push(config);
+        return machine;
+      },
+    });
+    return { reports, machine, snapshots, configs, booted };
+  }
+
+  it("hands the booted site's config to the consent option", async () => {
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+    const { configs, booted } = bootWithConsent(win);
+    await booted;
+    expect(configs).toEqual([CONFIG]);
+  });
+
+  it("applies a queued amanda('consent', ...) before the first pageview, naming the manual source", async () => {
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+    snippetStub(win)("consent", { analytics: "granted", ads: "denied" });
+    const { snapshots, reports, booted } = bootWithConsent(win);
+    await booted;
+
+    expect(snapshots).toEqual([{ analytics: "granted", ads: "denied", source: "manual" }]);
+    expect(reports).toEqual([]);
+  });
+
+  it("reads Consent Mode's state before the first pageview, and follows its updates after", async () => {
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+    win.dataLayer = [["consent", "default", { analytics_storage: "denied", ad_storage: "denied", ad_user_data: "denied" }]];
+    const { snapshots, machine, booted } = bootWithConsent(win);
+    await booted;
+    expect(snapshots).toEqual([{ analytics: "denied", ads: "denied", source: "gcm" }]);
+
+    (win.dataLayer as unknown[]).push(["consent", "update", { analytics_storage: "granted" }]);
+    expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "denied", source: "gcm" });
+  });
+
+  it("lets the manual API win over Consent Mode, before and after boot", async () => {
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+    win.dataLayer = [["consent", "default", { analytics_storage: "granted" }]];
+    snippetStub(win)("consent", { analytics: "denied" });
+    const { snapshots, machine, booted } = bootWithConsent(win);
+    await booted;
+    expect(snapshots).toEqual([{ analytics: "denied", ads: "unknown", source: "manual" }]);
+
+    (win.dataLayer as unknown[]).push(["consent", "update", { analytics_storage: "granted" }]);
+    win.amanda!("consent", { ads: "granted" });
+    expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "granted", source: "manual" });
+  });
+
+  it("reports a refused amanda('consent', ...) and a dataLayer it can't follow, and still boots", async () => {
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+    win.dataLayer = { not: "an array" };
+    snippetStub(win)("consent", { analytics: "yes" });
+    const { snapshots, reports, booted } = bootWithConsent(win);
+    await booted;
+
+    expect(snapshots).toEqual([{ analytics: "unknown", ads: "unknown" }]);
+    expect(reports).toEqual([
+      { stage: "consent", name: "ConsentError", message: "window.dataLayer is not an array; Consent Mode is not followed" },
+      { stage: "command", name: "ConsentError", message: "consent analytics is granted or denied, not yes" },
+    ]);
+  });
+
+  it("follows no consent source without the consent option", async () => {
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+    snippetStub(win)("consent", { analytics: "granted" });
+    const { reports, booted } = setup(win);
+    await booted;
+
+    expect(win.dataLayer).toBeUndefined();
+    expect(reports).toEqual([{ stage: "command", name: "CommandError", message: "unknown command: consent" }]);
   });
 });

@@ -4,13 +4,14 @@
 
 import type { ErrorBoundary } from "./boundary";
 import { checkSiteId, errorSampleRate, fetchConfig, type SiteConfig } from "./config";
+import { consentCommand, createLadder, watchConsentMode, type ConsentInput, type ConsentModeHost } from "./consent-sources";
 import { currentScript, endpointFromScript } from "./endpoint";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
 import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
 import type { TagTarget } from "./telemetry";
 
 /** The browser globals the tag boots on: window, or a stand-in for it in tests. */
-export interface TagWindow extends AmandaHost, PageSource, RouteSource {
+export interface TagWindow extends AmandaHost, PageSource, RouteSource, ConsentModeHost {
   readonly document: Document;
   readonly location: Location;
   fetch: typeof fetch;
@@ -21,6 +22,12 @@ export interface BootOptions {
   readonly boundary: ErrorBoundary;
   /** Where each pageview goes: the transport (createTransport), once identity and consent make it an event. */
   readonly onPageview: (input: PageviewInput) => void;
+  /**
+   * The consent state machine for the booted site's config (createConsent, with the config's
+   * declined mode). With it, the consent sources drive the machine: the `consent` command and
+   * Google Consent Mode (consent-sources.ts). Without it, the tag follows no consent source.
+   */
+  readonly consent?: (config: SiteConfig) => ConsentInput;
   /** Filled in as the boot resolves the endpoint and the site, for the tag errors' sink. */
   readonly target?: TagTarget;
   readonly now?: () => number;
@@ -67,8 +74,9 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
 }
 
 /**
- * Runs the booted tag: the site's queued commands first (they may set what the pageview carries,
- * such as consent), then the first pageview, then a pageview on each route change.
+ * Runs the booted tag: Consent Mode's state as the dataLayer has it so far, then the site's queued
+ * commands (they may set what the pageview carries, such as consent), then the first pageview,
+ * then a pageview on each route change.
  */
 function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   const { boundary, tagVersion, onPageview } = options;
@@ -82,6 +90,11 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
     });
   };
   const commands: Record<string, Command> = { pageview };
+  if (options.consent) {
+    const ladder = createLadder(options.consent(tag.config));
+    boundary.guard("consent", () => watchConsentMode(win, boundary, ladder));
+    commands.consent = consentCommand(ladder);
+  }
   installCommands(win, commands, boundary);
   pageview();
   watchRoutes(win, boundary, pageview);

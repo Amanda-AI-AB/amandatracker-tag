@@ -33,13 +33,30 @@ for `no_cmp`, as the site's no-CMP policy resolves it, held until it does. The a
 event's consent snapshot. Held items go with the ids on a grant, and per the declined mode on a
 denial or on `pagehide` while still undecided, so an `off` site drops them. A denial deletes the
 visitor's ids at once, and a grant after a denial mints fresh ones, so earlier pings are never
-linked to the visitor. Still to come:
+linked to the visitor.
+
+The consent sources (`src/core/consent-sources.ts`) drive the machine once boot is given it (its
+`consent` option, not yet passed by `a.js`). They form a ladder, highest first:
+
+- **manual**: the site's own banner calls `amanda('consent', {analytics: "granted", ads: "denied"})`.
+  Each category is `"granted"` or `"denied"`; a category left out keeps its state. Anything else is
+  refused and reported, never guessed.
+- **gcm**: Google Consent Mode v2, read from `window.dataLayer`: the `gtag('consent', 'default' |
+  'update', ...)` entries already there at boot, then each one pushed later. `analytics` follows
+  `analytics_storage`; `ads` is denied when `ad_storage` or `ad_user_data` is, and granted only when
+  both are. An update overrides a default, a later default never overrides an update, and a default
+  scoped to `region`s is skipped, as the tag doesn't know the visitor's region.
+
+The first source to grant or deny a category wins, and its later signals always apply. The manual
+API takes over from Consent Mode as soon as the site calls it, and Consent Mode never takes over
+from it. The snapshot every event carries names its `source` (`manual` or `gcm`). Nothing defaults
+to granted. Still to come:
 
 - the collector accepting `POST /v1/t` and the event debugger showing tag errors (amandatracker);
 - pageviews fed through the consent state machine, made into events (with the ids below) or pings,
-  and handed to the transport (AAI-964);
-- the consent sources that drive the state machine: the manual `amanda('consent', ...)` API and
-  Google Consent Mode v2 (AAI-85), GPC (AAI-89) and the no-CMP policy (AAI-94);
+  and handed to the transport, with the machine handed to boot so the sources drive it (AAI-964);
+- the other consent sources: GPC (AAI-89), the no-CMP policy (AAI-94), TCF and the consent-manager
+  adapters (M2);
 - the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
 - the `_amnda_id` and `_amnda_ses` cookies (AAI-98);
 - `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).
@@ -71,7 +88,8 @@ truth for what the tag sends and what the collector accepts:
 
 - `event.json`: the event envelope. It carries the schema and tag versions, `site_id`, a UUIDv7
   `event_id`, `client_ts` in epoch milliseconds, the page fields, the visitor and session ids, and
-  the consent snapshot. Its `props` are flat: at most 25 keys, none starting with `am_`, each value
+  the consent snapshot (each category's state, and the `source` that set it: `manual` or `gcm`,
+  absent when none has). Its `props` are flat: at most 25 keys, none starting with `am_`, each value
   a string of at most 200 characters, a number or a boolean. A purchase is a `PurchaseEvent`:
   `type: "purchase"` and a `purchase` object (`order_id`, `revenue`, `currency`, and up to 50
   `items` of `sku`, `name`, `qty` and `price`). No other event carries `purchase`.
@@ -82,7 +100,8 @@ truth for what the tag sends and what the collector accepts:
   events or pings, never both. A batch of events always carries `seq`, the page's batch counter,
   which the collector reads for loss. A batch of pings never carries it.
 - `tag-error.json`: the request body of `POST /v1/t`, one failure the tag's error boundary caught:
-  the tag version, the site (when the snippet names a valid one), the stage it failed in, and the
+  the tag version, the site (when the snippet names a valid one), the stage it failed in (`consent`
+  for a consent source it follows, such as Consent Mode's dataLayer), and the
   error's name and message, each URL in the message cut to its scheme and host and each email
   address replaced. It is sent in every consent state, so it carries nothing about the visitor or
   the page: no ids, no URL, no `client_ts`, and an `event_id` whose time is only the hour.
