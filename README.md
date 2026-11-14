@@ -120,6 +120,8 @@ tickets build, and says so.
 
 - [First-party reverse proxy](docs/first-party-proxy.md): serve the tag and its collection endpoint from
   your own site, so Safari keeps the tracker's cookies for their full lifetime.
+- [Verifying a release](docs/verifying-a-release.md): rebuild a published `a.<version>.js` from its
+  tag and provenance, and check that it is byte for byte what is served.
 
 ## Development
 
@@ -131,6 +133,7 @@ pnpm typecheck   # TypeScript, strict; src/ alone also as browser code (tsconfig
 pnpm test        # Vitest
 pnpm build       # dist/a.js, dist/adapters/*.js, the size gate, then dist/schema/
 pnpm gen:wire    # src/wire/generated.ts from the wire schema
+pnpm reproduce <a.<version>.provenance.json>   # rebuild a release and compare it byte for byte
 ```
 
 ## The wire schema
@@ -192,7 +195,8 @@ checks its vendored copy against hashes it records itself (the monorepo's `share
   missing.
 - The adapters build first. The core is built with its version (`.release-version`, which the
   release writes, or else `package.json`'s) and each adapter's SHA-384 baked in
-  (`src/core/build-info.ts`). Its `loadAdapter` loads `adapters/<version>/<name>.js`, its own
+  (`src/core/build-info.ts`), and its first line names it: `/*! amandatracker-tag <version> */`.
+  Its `loadAdapter` loads `adapters/<version>/<name>.js`, its own
   version's file, with that hash as `integrity` and `crossOrigin = "anonymous"`, and refuses an
   adapter it wasn't built with.
 
@@ -236,9 +240,13 @@ Cloud Build runs the pipelines in `cloudbuild/`:
   `pnpm typecheck`, `pnpm test` and `pnpm build`, so a core over its size budget fails the check. It
   uploads nothing. The Node image is pinned by digest and pnpm by `packageManager`'s hash: when you
   bump either, update every step's digest, or the hash, in the same commit.
-- `release.yaml` runs the same checks, then uploads the adapters as the immutable
-  `adapters/<version>/<name>.js` and, after them, the core as the immutable `a.<version>.js` to the
-  environment's static bucket. `scripts/release-version.mjs` picks the version: `package.json`'s on a
+- `release.yaml` runs the same checks, writes the release's provenance (`pnpm provenance`:
+  `dist/provenance.json`, an in-toto statement with a SLSA v1 predicate) and rebuilds from it in a
+  directory of its own (`pnpm reproduce`), failing unless the second build matches byte for byte.
+  Then it uploads the adapters as the immutable `adapters/<version>/<name>.js`, the provenance as
+  `a.<version>.provenance.json` and, after them, the core as the immutable `a.<version>.js` to the
+  environment's static bucket. Anyone can repeat the check: see
+  [Verifying a release](docs/verifying-a-release.md). `scripts/release-version.mjs` picks the version: `package.json`'s on a
   release tag `v<version>` (the two must agree), or `<next patch>-dev.<commit time>.g<short sha>`
   for a build from `main`, such as `0.2.1-dev.20261113185300.gabc1234` after `0.2.0`, so dev builds
   sort after the release they follow and by the commit's UTC time. A prerelease `package.json`
