@@ -153,6 +153,7 @@ export const OVERFLOW: Readonly<Record<string, "cut" | "subtags" | "drop">> = {
   "ping.utm.campaign": "cut",
   "ping.utm.term": "cut",
   "ping.utm.content": "cut",
+  ...overflowCuts("ping.click_ids", CLICK_IDS_FIELDS),
   "tag_error.name": "cut",
   "tag_error.message": "cut",
 };

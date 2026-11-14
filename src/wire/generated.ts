@@ -74,6 +74,7 @@ export interface TrackedEvent {
   path?: never;
   referrer_host?: never;
   utm?: never;
+  click_ids?: never;
 }
 
 export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref"] as const;
@@ -115,6 +116,7 @@ export interface PurchaseEvent {
   path?: never;
   referrer_host?: never;
   utm?: never;
+  click_ids?: never;
 }
 
 export const PURCHASE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "purchase"] as const;
@@ -156,6 +158,7 @@ export interface PageExitEvent {
   path?: never;
   referrer_host?: never;
   utm?: never;
+  click_ids?: never;
 }
 
 export const PAGE_EXIT_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "engagement_ms"] as const;
@@ -197,6 +200,7 @@ export interface ClickSpecialEvent {
   path?: never;
   referrer_host?: never;
   utm?: never;
+  click_ids?: never;
 }
 
 export const CLICK_SPECIAL_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "link_scheme"] as const;
@@ -445,6 +449,8 @@ export interface WirePing {
   /** The referrer's hostname alone, when there is a referrer. */
   referrer_host?: string;
   utm?: Utm;
+  /** The page URL's click IDs, those present, only when the site turned on consent.pings_include_click_ids (default off; AAI-88, AAI-801). A click ID makes the ping click-linkable, which the site's owner must explicitly accept; the collector strips this field from the pings of a site that hasn't. */
+  click_ids?: ClickIds;
   tag_version?: never;
   client_ts?: never;
   url?: never;
@@ -462,11 +468,11 @@ export interface WirePing {
   link_scheme?: never;
 }
 
-export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm"] as const;
+export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm", "click_ids"] as const;
 
 export const WIRE_PING_REQUIRED = ["schema_version", "event_id", "site_id", "type", "path"] as const;
 
-export const WIRE_PING_TYPES = { schema_version: "integer", event_id: "string", site_id: "string", type: "string", path: "string", referrer_host: "string", utm: "object" } as const;
+export const WIRE_PING_TYPES = { schema_version: "integer", event_id: "string", site_id: "string", type: "string", path: "string", referrer_host: "string", utm: "object", click_ids: "object" } as const;
 
 export const WIRE_PING_VALUES = { schema_version: [1] } as const;
 
@@ -553,15 +559,15 @@ export const WIRE_TAG_ERROR_MAX_LENGTH = { tag_version: 64, site_id: 64, name: 6
 
 export const UTM_SHAPE = { fields: UTM_FIELDS, required: UTM_REQUIRED, types: UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: UTM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, types: WIRE_PING_TYPES, values: WIRE_PING_VALUES, minimum: {}, pattern: WIRE_PING_PATTERN, maxLength: WIRE_PING_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { utm: UTM_SHAPE }, items: {}, maps: {} } as const;
+export const CLICK_IDS_SHAPE = { fields: CLICK_IDS_FIELDS, required: CLICK_IDS_REQUIRED, types: CLICK_IDS_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: CLICK_IDS_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+
+export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, types: WIRE_PING_TYPES, values: WIRE_PING_VALUES, minimum: {}, pattern: WIRE_PING_PATTERN, maxLength: WIRE_PING_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { utm: UTM_SHAPE, click_ids: CLICK_IDS_SHAPE }, items: {}, maps: {} } as const;
 
 export const PING_BATCH_SHAPE = { fields: PING_BATCH_FIELDS, required: PING_BATCH_REQUIRED, types: PING_BATCH_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: {}, minItems: PING_BATCH_MIN_ITEMS, maxItems: PING_BATCH_MAX_ITEMS, nested: {}, items: { e: WIRE_PING_SHAPE }, maps: {} } as const;
 
 export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, types: CONSENT_TYPES, values: CONSENT_VALUES, minimum: {}, pattern: CONSENT_PATTERN, maxLength: CONSENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const ATTRIBUTION_UTM_SHAPE = { fields: ATTRIBUTION_UTM_FIELDS, required: ATTRIBUTION_UTM_REQUIRED, types: ATTRIBUTION_UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: ATTRIBUTION_UTM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
-
-export const CLICK_IDS_SHAPE = { fields: CLICK_IDS_FIELDS, required: CLICK_IDS_REQUIRED, types: CLICK_IDS_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: CLICK_IDS_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const ATTRIBUTION_SHAPE = { fields: ATTRIBUTION_FIELDS, required: ATTRIBUTION_REQUIRED, types: ATTRIBUTION_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: {}, minItems: {}, maxItems: {}, nested: { utm: ATTRIBUTION_UTM_SHAPE, click_ids: CLICK_IDS_SHAPE }, items: {}, maps: { custom: CUSTOM_PARAMS_MAP } } as const;
 

@@ -316,7 +316,7 @@ describe("wire schema v1: anonymous ping", () => {
     expect(validate(PING), JSON.stringify(validate.errors)).toBe(true);
   });
 
-  it("has exactly the frozen field list", () => {
+  it("has exactly the frozen field list, and the click_ids of a site that turned them on (AAI-801)", () => {
     const ping = loadSchemas()["ping.json"]!;
     expect(Object.keys(ping.properties as object)).toEqual([
       "schema_version",
@@ -326,8 +326,16 @@ describe("wire schema v1: anonymous ping", () => {
       "path",
       "referrer_host",
       "utm",
+      "click_ids",
     ]);
     expect(ping.additionalProperties).toBe(false);
+    expect(ping.required).not.toContain("click_ids");
+  });
+
+  it("accepts the ad platforms' click IDs in click_ids, and nothing else there", () => {
+    expect(validate({ ...PING, click_ids: { gclid: "a", gbraid: "b", wbraid: "c", fbclid: "d", msclkid: "e" } })).toBe(true);
+    expect(validate({ ...PING, click_ids: { dclid: "x" } })).toBe(false);
+    expect(validate({ ...PING, click_ids: { gclid: "" } })).toBe(false);
   });
 
   it.each([
@@ -335,7 +343,6 @@ describe("wire schema v1: anonymous ping", () => {
     ["session_id", EVENT.session_id],
     ["seq", 3],
     ["gclid", "abc"],
-    ["click_ids", { gclid: "abc" }],
     ["order_id", "1001"],
     ["revenue", 99],
     ["language", "sv"],
