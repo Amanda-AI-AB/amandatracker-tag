@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { watchCookiebot } from "../src/cmp/cookiebot";
 import { watchOneTrust } from "../src/cmp/onetrust";
+import { watchUsercentrics } from "../src/cmp/usercentrics";
 import { connectAdapter } from "../src/core/adapter-api";
 import { boot, type TagWindow } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
@@ -740,6 +741,97 @@ describe("the consent sources", () => {
       const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
       win.dataLayer = [["consent", "update", { analytics_storage: "denied", ad_storage: "denied", ad_user_data: "denied" }]];
       setOneTrust(win, true, ",C0001,C0002,C0004,");
+      const appended = injected(win);
+      const { machine, booted } = bootWithConsent(win);
+      await booted;
+
+      runAdapter(win, appended[0]!);
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "gcm" });
+    });
+  });
+
+  describe("Usercentrics", () => {
+    /** window.UC_UI: answered with the functional and marketing categories granted or not, or not answered yet. */
+    function usercentrics(answer?: { functional: boolean; marketing: boolean }) {
+      const consent = (status: boolean) => ({ status, history: [{ type: answer ? "explicit" : "implicit", status }] });
+      return {
+        isConsentRequired: () => answer === undefined,
+        getServicesBaseInfo: () => [
+          { categorySlug: "essential", consent: { status: true, history: [{ type: "implicit", status: true }] } },
+          // an opt-out default before the visitor answers: every service on
+          { categorySlug: "functional", consent: consent(answer ? answer.functional : true) },
+          { categorySlug: "marketing", consent: consent(answer ? answer.marketing : true) },
+        ],
+      };
+    }
+
+    /** The browser runs the adapter's script: what src/adapters/usercentrics.ts does at its top level. */
+    function runAdapter(win: FakeWindow, script: InjectedScript): void {
+      connectAdapter(win, "usercentrics", (api) => watchUsercentrics(win, api));
+      script.onload!();
+    }
+
+    it("loads the adapter only on a page with Usercentrics, pinned to this core's version", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      win.UC_UI = usercentrics();
+      const appended = injected(win);
+      await bootWithConsent(win).booted;
+      expect(appended).toHaveLength(1);
+      expect(appended[0]).toMatchObject({
+        src: `${DEFAULT_ENDPOINT}/adapters/0.0.0-test/usercentrics.js`,
+        integrity: "sha384-test-usercentrics",
+        crossOrigin: "anonymous",
+      });
+    });
+
+    it("drives the state machine across accept, reject and change, waiting while the visitor hasn't answered", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      win.UC_UI = usercentrics();
+      const appended = injected(win);
+      const { snapshots, machine, reports, booted } = bootWithConsent(win);
+      await booted;
+      expect(snapshots).toEqual([{ analytics: "unknown", ads: "unknown" }]);
+
+      runAdapter(win, appended[0]!);
+      win.fire("UC_UI_INITIALIZED");
+      expect(machine.snapshot()).toEqual({ analytics: "unknown", ads: "unknown" });
+
+      win.UC_UI = usercentrics({ functional: true, marketing: true });
+      win.fire("UC_UI_CMP_EVENT");
+      expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "granted", source: "usercentrics" });
+      expect(machine.mode()).toBe("identified");
+
+      win.UC_UI = usercentrics({ functional: false, marketing: false });
+      win.fire("UC_UI_CMP_EVENT");
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "usercentrics" });
+      expect(machine.mode()).toBe("declined");
+
+      win.UC_UI = usercentrics({ functional: true, marketing: false });
+      win.fire("UC_UI_CMP_EVENT");
+      expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "denied", source: "usercentrics" });
+      expect(reports).toEqual([]);
+    });
+
+    it("loads the adapter for a Usercentrics initialized after the tag, and reads the answer it already had", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      const appended = injected(win);
+      const { machine, booted } = bootWithConsent(win);
+      await booted;
+      expect(appended).toEqual([]);
+
+      win.UC_UI = usercentrics({ functional: false, marketing: true });
+      win.fire("UC_UI_INITIALIZED");
+      win.fire("UC_UI_INITIALIZED");
+      expect(appended).toHaveLength(1);
+
+      runAdapter(win, appended[0]!);
+      expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "granted", source: "usercentrics" });
+    });
+
+    it("leaves Usercentrics behind Consent Mode, on a Usercentrics set up with it", async () => {
+      const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+      win.dataLayer = [["consent", "update", { analytics_storage: "denied", ad_storage: "denied", ad_user_data: "denied" }]];
+      win.UC_UI = usercentrics({ functional: true, marketing: true });
       const appended = injected(win);
       const { machine, booted } = bootWithConsent(win);
       await booted;

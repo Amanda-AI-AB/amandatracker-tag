@@ -178,6 +178,34 @@ describe("browser target", () => {
     ]);
   });
 
+  it("runs the built Usercentrics adapter: it connects, signals Usercentrics' answer, and follows UC_UI_CMP_EVENT", async () => {
+    const { adapterFiles } = await build({ outdir: join(dir, "dist") });
+    const file = adapterFiles.find((f) => f.endsWith("usercentrics.js"))!;
+    const context = browserContext();
+    const listeners: Record<string, () => void> = {};
+    context.addEventListener = (type: string, listener: () => void) => (listeners[type] = listener);
+    const calls: unknown[][] = [];
+    context.amanda = (...args: unknown[]) => calls.push(args);
+    const services = (functional: boolean, marketing: boolean) => [
+      { categorySlug: "functional", consent: { status: functional, history: [{ type: "explicit" }] } },
+      { categorySlug: "marketing", consent: { status: marketing, history: [{ type: "explicit" }] } },
+    ];
+    context.UC_UI = { isConsentRequired: () => false, getServicesBaseInfo: () => services(false, true) };
+
+    runInContext(readFileSync(file, "utf8"), context, { filename: file });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.slice(0, 2)).toEqual(["adapter", "usercentrics"]);
+    const signals: unknown[] = [];
+    (calls[0]![2] as (api: unknown) => void)({ signal: (s: unknown) => signals.push(s), guard: (fn: () => void) => fn() });
+    context.UC_UI = { isConsentRequired: () => false, getServicesBaseInfo: () => services(true, false) };
+    listeners.UC_UI_CMP_EVENT!();
+    expect(signals).toEqual([
+      { analytics: "denied", ads: "granted" },
+      { analytics: "granted", ads: "denied" },
+    ]);
+  });
+
   it("boots the built core: it fetches the site's config and installs window.amanda", async () => {
     const { coreFile } = await build({ outdir: join(dir, "dist") });
     const fetched: string[] = [];

@@ -82,12 +82,23 @@ The consent sources (`src/core/consent-sources.ts`) drive the machine once boot 
   Until the visitor has answered (`OneTrust.IsAlertBoxClosed()` is not `true`), it signals nothing,
   whatever groups OneTrust holds active by default. It ranks below Cookiebot; a page has one or the
   other.
+- **usercentrics**: a Usercentrics (its Browser UI, v2) set up without Consent Mode or TCF, read
+  through its own API by the Usercentrics adapter (`dist/adapters/usercentrics.js`). The core loads
+  the adapter only on a page that has Usercentrics: `window.UC_UI` is there at boot, or Usercentrics
+  fires `UC_UI_INITIALIZED` later. The adapter connects back through
+  `amanda('adapter', 'usercentrics', ...)`, reads `UC_UI.getServicesBaseInfo()` at once, and again on
+  each `UC_UI_INITIALIZED` and `UC_UI_CMP_EVENT`: accept, reject and change. `analytics` follows
+  Usercentrics' default Functional category (`functional`), and `ads` its Marketing one
+  (`marketing`): a category is granted only when it has services and the visitor explicitly
+  consented to each of them, and is denied otherwise. Until the visitor has answered
+  (`UC_UI.isConsentRequired()` is not `false`), it signals nothing, whatever the services' defaults.
+  It ranks below OneTrust.
 
 The first source to grant or deny a category wins, and its later signals always apply. A higher
 source takes over from a lower one as soon as it signals (the manual API from Consent Mode, Consent
-Mode from TCF, TCF from Cookiebot, Cookiebot from OneTrust), and a lower one never takes over from a higher one. The snapshot
-every event carries names its `source` (`gpc`, `manual`, `gcm`, `tcf`, `cookiebot` or
-`onetrust`), and only a `tcf` snapshot has a `tc_string`.
+Mode from TCF, TCF from Cookiebot, Cookiebot from OneTrust, OneTrust from Usercentrics), and a lower one never takes over from a higher one. The snapshot
+every event carries names its `source` (`gpc`, `manual`, `gcm`, `tcf`, `cookiebot`,
+`onetrust` or `usercentrics`), and only a `tcf` snapshot has a `tc_string`.
 Nothing defaults to granted.
 
 The visitor's identity (`src/core/identity.ts`) is built, and driven by the consent machine, but not
@@ -152,8 +163,7 @@ Still to come:
 - pageviews fed through the consent state machine, made into events (with the identity's ids) or
   pings, and handed to the transport, with the machine handed to boot so the sources drive it
   (AAI-964, AAI-965);
-- the other consent sources: the no-CMP policy (AAI-94) and the Usercentrics adapter
-  (AAI-165);
+- the other consent source: the no-CMP policy (AAI-94);
 - the pagehide flush split by size to stay within the keepalive quota (AAI-893, AAI-951);
 - `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).
 
@@ -188,7 +198,7 @@ truth for what the tag sends and what the collector accepts:
 - `event.json`: the event envelope. It carries the schema and tag versions, `site_id`, a UUIDv7
   `event_id`, `client_ts` in epoch milliseconds, the page fields, the visitor and session ids, and
   the consent snapshot (each category's state, and the `source` that set it: `gpc`, `manual`,
-  `gcm`, `tcf`, `cookiebot` or `onetrust`, absent when none has). The page load's first pageview carries the landing URL's `attribution`:
+  `gcm`, `tcf`, `cookiebot`, `onetrust` or `usercentrics`, absent when none has). The page load's first pageview carries the landing URL's `attribution`:
   its `utm` set (`source`, `medium`, `campaign`, `term`, `content`, `id`, `source_platform`,
   `creative_format`, `marketing_tactic`), its `click_ids` (`gclid`, `gbraid`, `wbraid`, `fbclid`,
   `msclkid`) and the site's `custom` parameters, each verbatim. Its `props` are flat: at most 25 keys, none starting with `am_`, each value
@@ -235,7 +245,7 @@ checks its vendored copy against hashes it records itself (the monorepo's `share
 - Each consent-manager adapter `src/adapters/<name>.ts` builds to its own IIFE,
   `dist/adapters/<name>.js`, which the core loads only on a page where it detects that consent
   manager (`CMP_ADAPTERS` in `src/core/consent-sources.ts`). The adapter's own code may live
-  outside `src/adapters/` (Cookiebot's is `src/cmp/cookiebot.ts`, OneTrust's `src/cmp/onetrust.ts`); the core never imports it. It
+  outside `src/adapters/` (Cookiebot's is `src/cmp/cookiebot.ts`, OneTrust's `src/cmp/onetrust.ts`, Usercentrics' `src/cmp/usercentrics.ts`); the core never imports it. It
   connects back through `amanda('adapter', <name>, connect)` (`src/core/adapter-api.ts`). A name is
   lowercase letters, digits and `-`; the build refuses any other, and fails when `src/adapters/` is
   missing.

@@ -46,6 +46,8 @@ export interface FakeWindow extends TagWindow {
   OneTrust?: unknown;
   OnetrustActiveGroups?: unknown;
   OptanonWrapper?: unknown;
+  /** The page's Usercentrics (its Browser UI), when a test installs one. */
+  UC_UI?: unknown;
   /** Moves location to url, as the back button does, and fires popstate. */
   back(url: string): void;
   /** Fires the window event `type`, such as one a consent manager dispatches. */
