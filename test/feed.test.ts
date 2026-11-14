@@ -1,7 +1,9 @@
 // The pageview feed end to end (AAI-964): the boot, the consent sources, the consent machine, the
 // identity and the transport wired by createFeed as a.js wires them (src/core/index.ts), on a
 // stand-in window whose cookies are a CookieJar. A granted visitor's pageview leaves as an event,
-// a declined one's as a ping in declined mode `pings` and not at all in mode `off`.
+// a declined one's as a ping in declined mode `pings` and not at all in mode `off`. The consent
+// sources drive the machine (AAI-965): the `consent` command and Consent Mode's dataLayer commands,
+// whose updates mid-session change the next event's snapshot.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
@@ -39,14 +41,20 @@ function snippetStub(win: FakeWindow): AmandaFunction {
   return stub;
 }
 
+/** A gtag('consent', ...) call as gtag.js pushes it to the dataLayer: its arguments object. */
+function gtag(..._args: unknown[]): IArguments {
+  return arguments;
+}
+
 /**
- * A page on LANDING whose config sets declinedMode (and any other consent settings), and the tag
- * booted on it as a.js boots it.
+ * A page on LANDING whose config sets declinedMode (and any other consent settings), and whose
+ * dataLayer starts as layer, if given, and the tag booted on it as a.js boots it.
  */
-function page(declinedMode: "off" | "pings", queued: unknown[][] = [], consent: Record<string, unknown> = {}) {
+function page(declinedMode: "off" | "pings", queued: unknown[][] = [], consent: Record<string, unknown> = {}, layer?: unknown[]) {
   const config = { schema_version: 1, site: "site_123", config_version: 7, consent: { declined_mode: declinedMode, ...consent } };
   const jar = new CookieJar("shop.example.com", () => Date.now());
   const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(null, 404), LANDING);
+  if (layer !== undefined) win.dataLayer = layer;
   win.fetchMock.mockImplementation(async (url: string) => (url === CONFIG_URL ? jsonResponse(config) : jsonResponse(null, 204)));
   const beacon = vi.fn(() => true);
   const pagehide: (() => void)[] = [];
@@ -114,6 +122,43 @@ describe("the pageview feed", () => {
     // The ids are the visitor's cookies, which the identity wrote under the grant.
     expect(p.jar.cookie).toContain(`${VISITOR_COOKIE}=v1.${event.visitor_id}`);
     expect(p.jar.cookie).toContain(`${SESSION_COOKIE}=v1.${event.session_id}.`);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("Consent Mode: the default grants, and an update mid-session changes the next event's snapshot", async () => {
+    const granted = { analytics_storage: "granted", ad_storage: "granted", ad_user_data: "granted" };
+    const p = page("off", [], {}, [gtag("consent", "default", granted)]);
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(0);
+
+    (p.win.dataLayer as unknown[]).push(gtag("consent", "update", { ad_user_data: "denied" }));
+    p.win.history.pushState(null, "", "/cart");
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const batches = p.batches();
+    for (const batch of batches) expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
+    const events = batches.flatMap((batch) => batch.e as Record<string, unknown>[]);
+    expect(events.map((event) => [new URL(event.url as string).pathname, event.consent])).toEqual([
+      ["/products", { analytics: "granted", ads: "granted", source: "gcm" }],
+      ["/cart", { analytics: "granted", ads: "denied", source: "gcm" }],
+    ]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("manual first: a later Consent Mode update doesn't override the site's own consent call", async () => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]]);
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(0);
+
+    (p.win.dataLayer as unknown[]).push(gtag("consent", "update", { analytics_storage: "denied", ad_storage: "denied" }));
+    p.win.history.pushState(null, "", "/cart");
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const events = p.batches().flatMap((batch) => batch.e as Record<string, unknown>[]);
+    expect(events.map((event) => event.consent)).toEqual([
+      { analytics: "granted", ads: "granted", source: "manual" },
+      { analytics: "granted", ads: "granted", source: "manual" },
+    ]);
     expect(p.reports).toEqual([]);
   });
 
