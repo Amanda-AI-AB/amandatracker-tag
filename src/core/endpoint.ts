@@ -111,6 +111,11 @@ export function eventsUrl(endpoint: string): string {
   return `${endpoint}/v1/e`;
 }
 
+/** Where the tag's error boundary posts its reports (schema/v1/tag-error.json). */
+export function tagErrorsUrl(endpoint: string): string {
+  return `${endpoint}/v1/t`;
+}
+
 export { ADAPTER_NAME };
 
 /**
@@ -164,6 +169,14 @@ export const REFERRER_POLICY: ReferrerPolicy = "strict-origin";
 /** The fetch options for the site's config from configUrl. It sends no cookie, to any host. */
 export function configRequestInit(): RequestInit {
   return { credentials: "omit", referrerPolicy: REFERRER_POLICY };
+}
+
+/**
+ * The fetch options for a tag error to tagErrorsUrl; `body` is a WireTagError as JSON. It is sent
+ * whatever the visitor's consent, so, like a ping, it never carries the site's cookies.
+ */
+export function tagErrorRequestInit(body: string): RequestInit {
+  return { method: "POST", body, credentials: "omit", referrerPolicy: REFERRER_POLICY };
 }
 
 /**

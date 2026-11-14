@@ -3,8 +3,10 @@
 // host page. A failure is never dropped either: it goes to the boundary's report sink, sampled
 // once per page and capped per page, so that a tag broken everywhere can't flood the collector.
 
-/** Where in the tag a failure happened. */
-export type Stage = "boot" | "config" | "command" | "pageview" | "route";
+import type { WireTagError } from "../wire/generated";
+
+/** Where in the tag a failure happened: a tag error's stage (schema/v1/tag-error.json). */
+export type Stage = WireTagError["stage"];
 
 /** One failure, as the boundary hands it to its sink. */
 export interface ErrorReport {
@@ -18,29 +20,32 @@ export type ReportSink = (report: ErrorReport) => void;
 /** The most reports one page load hands its sink. */
 export const MAX_REPORTS_PER_PAGE = 5;
 
-/** The longest message a report carries, in UTF-16 units. */
-export const MAX_REPORT_MESSAGE = 256;
-
 export class ErrorBoundary {
-  private readonly sampled: boolean;
+  /** This page's draw, from 0 to 1: the page is sampled while it is under the sample rate. */
+  private readonly draw: number;
   private reported = 0;
 
   /**
-   * `sampleRate` is the share of page loads whose failures are reported, from 0 to 1; the page is
-   * drawn once, with `random`, so a sampled page reports all its failures up to
-   * MAX_REPORTS_PER_PAGE and any other reports none.
+   * `sampleRate` is the share of page loads whose failures are reported, from 0 to 1, until
+   * setSampleRate changes it. The page is drawn once, with `random`, so a sampled page reports all
+   * its failures up to MAX_REPORTS_PER_PAGE and any other reports none.
    */
   constructor(
     private readonly sink: ReportSink,
-    sampleRate: number,
+    private sampleRate: number,
     random: () => number = Math.random,
   ) {
-    this.sampled = random() < sampleRate;
+    this.draw = random();
+  }
+
+  /** Sets the sample rate for the failures still to come, such as the one the site's config sets. */
+  setSampleRate(sampleRate: number): void {
+    this.sampleRate = sampleRate;
   }
 
   /** Hands error to the sink, if this page is sampled and under its cap. Never throws. */
   report(stage: Stage, error: unknown): void {
-    if (!this.sampled || this.reported >= MAX_REPORTS_PER_PAGE) return;
+    if (this.draw >= this.sampleRate || this.reported >= MAX_REPORTS_PER_PAGE) return;
     this.reported++;
     const report = toReport(stage, error);
     try {
@@ -69,9 +74,8 @@ export class ErrorBoundary {
 }
 
 function toReport(stage: Stage, error: unknown): ErrorReport {
-  const name = error instanceof Error ? error.name : typeof error;
-  const message = error instanceof Error ? error.message : String(error);
-  return { stage, name, message: message.slice(0, MAX_REPORT_MESSAGE) };
+  if (error instanceof Error) return { stage, name: error.name || "Error", message: error.message };
+  return { stage, name: typeof error, message: String(error) };
 }
 
 /** console.warn where the page has a console; a page without one gets nothing. */

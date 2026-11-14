@@ -10,6 +10,7 @@ import { createContext, runInContext } from "node:vm";
 import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { build } from "../scripts/build.mjs";
+import { validator } from "./wire-validator";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -31,7 +32,9 @@ function srcDiagnostics(file: string): string[] {
  * installed by a.js's snippet for site_123, whose fetch answers with fetchFn (by default never).
  * Add to it what new top-level code needs, never a Node global.
  */
-function browserContext(fetchFn: (url: string) => Promise<unknown> = () => new Promise(() => undefined)): Record<string, unknown> {
+function browserContext(
+  fetchFn: (url: string, init?: unknown) => Promise<unknown> = () => new Promise(() => undefined),
+): Record<string, unknown> {
   const script = {
     tagName: "SCRIPT",
     getAttribute: (name: string) => ({ "data-site": "site_123" })[name] ?? null,
@@ -46,6 +49,8 @@ function browserContext(fetchFn: (url: string) => Promise<unknown> = () => new P
   const context: Record<string, unknown> = {
     URL,
     TextEncoder,
+    // Web Crypto, which browsers have: Node's globalThis.crypto is the same API
+    crypto: globalThis.crypto,
     Document,
     document: new Document(),
     location: { href: "https://shop.example.com/products", origin: "https://shop.example.com" },
@@ -118,6 +123,29 @@ describe("browser target", () => {
 
     expect(fetched).toEqual(["https://eu.serversider.com/cfg/site_123.json"]);
     expect((context.amanda as { loaded?: boolean }).loaded).toBe(true);
+  });
+
+  it("reports a failed boot of the built core to the collector as a tag error", async () => {
+    const { coreFile } = await build({ outdir: join(dir, "dist") });
+    const requests: { url: string; init?: { body?: string; credentials?: string } }[] = [];
+    const context = browserContext(async (url, init) => {
+      requests.push({ url, init: init as { body?: string; credentials?: string } });
+      return { ok: url.endsWith("/v1/t"), status: url.endsWith("/v1/t") ? 204 : 404, json: async () => ({}) };
+    });
+    // a sampled page
+    runInContext("Math.random = () => 0;", context);
+
+    runInContext(readFileSync(coreFile, "utf8"), context, { filename: coreFile });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(requests.map((r) => r.url)).toEqual([
+      "https://eu.serversider.com/cfg/site_123.json",
+      "https://eu.serversider.com/v1/t",
+    ]);
+    expect(requests[1]!.init!.credentials).toBe("omit");
+    const report = JSON.parse(requests[1]!.init!.body!);
+    expect(report).toMatchObject({ site_id: "site_123", stage: "config", name: "ConfigError", message: "GET https://eu.serversider.com HTTP 404" });
+    expect(validator("tag-error.json")(report)).toBe(true);
   });
 
   it("fails a build that uses a Node global at load time", async () => {

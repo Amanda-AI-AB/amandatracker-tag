@@ -337,6 +337,37 @@ export const PUB_SUB_MESSAGE_PATTERN = { region: "^[a-z0-9-]+$", country: "^[A-Z
 
 export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64, browser_family: 64, os_family: 64 } as const;
 
+// tag-error.json
+
+/** A failure inside the tag, which its error boundary caught instead of throwing into the host page: the request body of POST /v1/t. It is sent in every consent state, so it carries nothing about the visitor or the page: no visitor or session id, no URL, no referrer, no client_ts. It is sent from a sample of page loads, without cookies, at most a few per page. */
+export interface WireTagError {
+  /** The wire schema's major version: this file's. */
+  schema_version: 1;
+  /** Random per report, for idempotent storage only. Its embedded time is the start of the client's hour, as a ping's is, never the millisecond. */
+  event_id: Uuidv7;
+  tag_version: TagVersion;
+  /** The site the tag was installed for; absent when the failure is that the snippet names no valid site. */
+  site_id?: SiteId;
+  /** Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, or a route change. */
+  stage: "boot" | "config" | "command" | "pageview" | "route";
+  /** The error's name, such as TypeError or ConfigError. */
+  name: string;
+  /** The error's message, scrubbed by the tag: each URL in it cut to its scheme and host, and each email address replaced. */
+  message?: string;
+}
+
+export const WIRE_TAG_ERROR_FIELDS = ["schema_version", "event_id", "tag_version", "site_id", "stage", "name", "message"] as const;
+
+export const WIRE_TAG_ERROR_REQUIRED = ["schema_version", "event_id", "tag_version", "stage", "name"] as const;
+
+export const WIRE_TAG_ERROR_TYPES = { schema_version: "integer", event_id: "string", tag_version: "string", site_id: "string", stage: "string", name: "string", message: "string" } as const;
+
+export const WIRE_TAG_ERROR_VALUES = { schema_version: [1], stage: ["boot", "config", "command", "pageview", "route"] } as const;
+
+export const WIRE_TAG_ERROR_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$" } as const;
+
+export const WIRE_TAG_ERROR_MAX_LENGTH = { tag_version: 64, site_id: 64, name: 64, message: 256 } as const;
+
 // Each object's shape: its field list, its required fields, its fields' types, const or enum values, minimums
 // and patterns, its strings' and arrays' caps, its arrays' item minimums, its nested objects' shapes, its arrays' item shapes and its maps' rules.
 // An object with a field no shape can check (a oneOf of objects, an array of scalars) has none.
@@ -356,5 +387,7 @@ export const PURCHASE_ITEM_SHAPE = { fields: PURCHASE_ITEM_FIELDS, required: PUR
 export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQUIRED, types: PURCHASE_TYPES, values: {}, minimum: PURCHASE_MINIMUM, pattern: PURCHASE_PATTERN, maxLength: PURCHASE_MAX_LENGTH, minItems: PURCHASE_MIN_ITEMS, maxItems: PURCHASE_MAX_ITEMS, nested: {}, items: { items: PURCHASE_ITEM_SHAPE }, maps: {} } as const;
 
 export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+
+export const WIRE_TAG_ERROR_SHAPE = { fields: WIRE_TAG_ERROR_FIELDS, required: WIRE_TAG_ERROR_REQUIRED, types: WIRE_TAG_ERROR_TYPES, values: WIRE_TAG_ERROR_VALUES, minimum: {}, pattern: WIRE_TAG_ERROR_PATTERN, maxLength: WIRE_TAG_ERROR_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const SCHEMA_VERSION = 1;

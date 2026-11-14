@@ -39,7 +39,7 @@ describe("schema dist", () => {
     const outdir = join(dir, "dist");
     const { versions, files } = distSchema({ outdir });
     expect(versions).toEqual([1]);
-    expect(files).toEqual(["v1/batch.json", "v1/event.json", "v1/ping.json", "v1/pubsub-message.json"]);
+    expect(files).toEqual(["v1/batch.json", "v1/event.json", "v1/ping.json", "v1/pubsub-message.json", "v1/tag-error.json"]);
   });
 
   it("fails when there is no schema", () => {

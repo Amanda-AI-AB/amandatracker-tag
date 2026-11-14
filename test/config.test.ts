@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { checkSiteId, ConfigError, fetchConfig, parseConfig } from "../src/core/config";
+import { checkSiteId, ConfigError, errorSampleRate, fetchConfig, parseConfig } from "../src/core/config";
 import { configRequestInit } from "../src/core/endpoint";
 
 const CONFIG = { schema_version: 1, site: "site_123", config_version: 3, paused: false };
@@ -33,6 +33,22 @@ describe("parseConfig", () => {
     expect(() => parseConfig({ ...CONFIG, site: "other" }, "site_123")).toThrow("for site other");
     for (const config_version of [undefined, "3", -1, 1.5]) {
       expect(() => parseConfig({ ...CONFIG, config_version }, "site_123")).toThrow("config_version");
+    }
+  });
+});
+
+describe("the telemetry section", () => {
+  it("is optional, and sets the error sample rate", () => {
+    expect(errorSampleRate(parseConfig(CONFIG, "site_123"))).toBeUndefined();
+    expect(errorSampleRate(parseConfig({ ...CONFIG, telemetry: {} }, "site_123"))).toBeUndefined();
+    for (const rate of [0, 0.25, 1]) {
+      expect(errorSampleRate(parseConfig({ ...CONFIG, telemetry: { error_sample_rate: rate } }, "site_123"))).toBe(rate);
+    }
+  });
+
+  it("refuses a section or a rate of another shape", () => {
+    for (const telemetry of [null, [], "x", { error_sample_rate: 1.5 }, { error_sample_rate: -0.1 }, { error_sample_rate: "0.5" }]) {
+      expect(() => parseConfig({ ...CONFIG, telemetry }, "site_123")).toThrow(ConfigError);
     }
   });
 });

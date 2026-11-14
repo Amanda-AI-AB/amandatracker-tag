@@ -6,16 +6,19 @@ import {
   SCHEMA_VERSION,
   TRACKED_EVENT_SHAPE,
   WIRE_PING_SHAPE,
+  WIRE_TAG_ERROR_SHAPE,
   type PurchaseEvent,
   type TrackedEvent,
   type WireEvent,
   type WirePing,
+  type WireTagError,
 } from "./generated";
 
 export type TrackedEventInput = Omit<TrackedEvent, "schema_version" | "event_id">;
 export type PurchaseEventInput = Omit<PurchaseEvent, "schema_version" | "event_id">;
 export type EventInput = TrackedEventInput | PurchaseEventInput;
 export type PingInput = Omit<WirePing, "schema_version" | "event_id">;
+export type TagErrorInput = Omit<WireTagError, "schema_version" | "event_id">;
 
 const HEX = "0123456789abcdef";
 
@@ -127,6 +130,8 @@ export const OVERFLOW: Readonly<Record<string, "cut" | "subtags" | "drop">> = {
   "ping.utm.campaign": "cut",
   "ping.utm.term": "cut",
   "ping.utm.content": "cut",
+  "tag_error.name": "cut",
+  "tag_error.message": "cut",
 };
 
 /**
@@ -426,4 +431,28 @@ export function buildEvent(input: EventInput, eventId: string = uuidv7()): WireE
 export function buildPing(input: PingInput, eventId: string = pingId()): WirePing {
   const ping: WirePing = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
   return shape(ping, WIRE_PING_SHAPE, "ping");
+}
+
+const URL_IN_TEXT = /\b([a-z][a-z0-9+.-]*:\/\/[^/?#\s"'<>]*)[^\s"'<>]*/gi;
+const EMAIL_IN_TEXT = /[^\s"'<>@]+@[^\s"'<>@]+\.[^\s"'<>@]+/g;
+
+/**
+ * An error message as a tag error may carry it: each URL in it cut to its scheme and host, and each
+ * email address replaced by "<email>". A tag error is sent whatever the visitor's consent, and an
+ * error's message can quote the page's URL, query string included.
+ */
+export function scrubMessage(message: string): string {
+  return message.replace(EMAIL_IN_TEXT, "<email>").replace(URL_IN_TEXT, "$1");
+}
+
+/**
+ * Builds a tag error (schema/v1/tag-error.json): its message scrubbed (scrubMessage) whatever the
+ * caller passes, its name and message cut to their caps. Throws WirePayloadError when a required
+ * field is missing or a value breaks a rule (a stage the schema doesn't list). Its event_id's time is
+ * only the hour (pingId), as a ping's is: it is sent in every consent state.
+ */
+export function buildTagError(input: TagErrorInput, eventId: string = pingId()): WireTagError {
+  const report: WireTagError = { ...input, schema_version: SCHEMA_VERSION, event_id: eventId };
+  if (typeof input.message === "string") report.message = scrubMessage(input.message);
+  return shape(report, WIRE_TAG_ERROR_SHAPE, "tag_error");
 }

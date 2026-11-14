@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ErrorBoundary, MAX_REPORT_MESSAGE, MAX_REPORTS_PER_PAGE, type ErrorReport } from "../src/core/boundary";
+import { ErrorBoundary, MAX_REPORTS_PER_PAGE, type ErrorReport } from "../src/core/boundary";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -67,10 +67,26 @@ describe("ErrorBoundary", () => {
     expect(reports).toHaveLength(MAX_REPORTS_PER_PAGE);
   });
 
-  it("caps a report's message", () => {
+  it("applies a new sample rate to the failures still to come, with the page's one draw", () => {
+    const random = vi.fn(() => 0.3);
+    const { reports, boundary: b } = boundary(0.1, random);
+
+    b.report("boot", new Error("before the config"));
+    b.setSampleRate(0.5);
+    b.report("command", new Error("after it"));
+    b.setSampleRate(0);
+    b.report("route", new Error("sampling turned off"));
+
+    expect(random).toHaveBeenCalledTimes(1);
+    expect(reports.map((r) => r.message)).toEqual(["after it"]);
+  });
+
+  it("names an Error without a name Error", () => {
     const { reports, boundary: b } = boundary();
-    b.report("boot", new Error("x".repeat(MAX_REPORT_MESSAGE + 10)));
-    expect(reports[0]!.message).toHaveLength(MAX_REPORT_MESSAGE);
+    const error = new Error("x");
+    error.name = "";
+    b.report("boot", error);
+    expect(reports[0]!.name).toBe("Error");
   });
 
   it("logs, and never throws, when its sink throws", () => {

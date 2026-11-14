@@ -54,7 +54,7 @@ export const PING = {
   utm: { source: "newsletter", medium: "email", campaign: "nov" },
 } as const;
 
-export type SchemaFile = "batch.json" | "event.json" | "ping.json" | "pubsub-message.json";
+export type SchemaFile = "batch.json" | "event.json" | "ping.json" | "pubsub-message.json" | "tag-error.json";
 
 export function loadSchemas(version: number = SCHEMA_VERSION): Record<string, Record<string, unknown>> {
   return Object.fromEntries(schemaFiles.loadSchemas(join(schemaFiles.SCHEMA_ROOT, `v${version}`)));

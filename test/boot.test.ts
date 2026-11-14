@@ -4,6 +4,7 @@ import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
 import { configRequestInit, DEFAULT_ENDPOINT } from "../src/core/endpoint";
 import type { PageviewInput } from "../src/core/pageview";
 import type { AmandaFunction } from "../src/core/queue";
+import { defaultTarget } from "../src/core/telemetry";
 import { buildEvent } from "../src/wire/payload";
 import { fakeWindow, jsonResponse, PAGE, scriptTag, type FakeWindow } from "./fake-window";
 import { validator } from "./wire-validator";
@@ -174,6 +175,39 @@ describe("boot", () => {
         expect(win.fetchMock).not.toHaveBeenCalled();
       }
     });
+  });
+
+  it("fills in the tag errors' target as it resolves the endpoint and the site", async () => {
+    const win = fakeWindow(scriptTag({ ...SNIPPET, "data-endpoint": "/amnda" }), jsonResponse(CONFIG));
+    const target = defaultTarget();
+    const boundary = new ErrorBoundary(() => undefined, 1);
+
+    await boot(win, { tagVersion: "0.2.0", boundary, target, onPageview: () => undefined });
+
+    expect(target).toEqual({ endpoint: `${PAGE}/amnda`, site: "site_123" });
+  });
+
+  it("keeps the default target when data-endpoint is refused, and has no site without data-site", async () => {
+    const refused = fakeWindow(scriptTag({ ...SNIPPET, "data-endpoint": "javascript:alert(1)" }));
+    const noSite = fakeWindow(scriptTag({ src: SNIPPET.src, "data-endpoint": "/amnda" }));
+    const targets = [defaultTarget(), defaultTarget()];
+
+    await boot(refused, { tagVersion: "0.2.0", boundary: new ErrorBoundary(() => undefined, 1), target: targets[0]!, onPageview: () => undefined });
+    await boot(noSite, { tagVersion: "0.2.0", boundary: new ErrorBoundary(() => undefined, 1), target: targets[1]!, onPageview: () => undefined });
+
+    expect(targets).toEqual([{ endpoint: DEFAULT_ENDPOINT }, { endpoint: `${PAGE}/amnda` }]);
+  });
+
+  it("samples the failures after the config by the config's error_sample_rate", async () => {
+    const config = { ...CONFIG, telemetry: { error_sample_rate: 0 } };
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(config));
+    const reports: ErrorReport[] = [];
+    const boundary = new ErrorBoundary((report) => reports.push(report), 1);
+
+    await boot(win, { tagVersion: "0.2.0", boundary, onPageview: () => undefined });
+    win.amanda!("no-such-command");
+
+    expect(reports).toEqual([]);
   });
 
   it("reports a throwing pageview sink and keeps running", async () => {

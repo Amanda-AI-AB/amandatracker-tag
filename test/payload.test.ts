@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { PURCHASE_EVENT_SHAPE, TRACKED_EVENT_SHAPE, WIRE_PING_SHAPE } from "../src/wire/generated";
+import { PURCHASE_EVENT_SHAPE, TRACKED_EVENT_SHAPE, WIRE_PING_SHAPE, WIRE_TAG_ERROR_SHAPE } from "../src/wire/generated";
 import {
   buildEvent,
   buildPing,
@@ -227,7 +227,12 @@ describe("cutSubtags", () => {
 });
 
 describe("OVERFLOW", () => {
-  const shapes: [string, Shape][] = [["event", TRACKED_EVENT_SHAPE], ["event", PURCHASE_EVENT_SHAPE], ["ping", WIRE_PING_SHAPE]];
+  const shapes: [string, Shape][] = [
+    ["event", TRACKED_EVENT_SHAPE],
+    ["event", PURCHASE_EVENT_SHAPE],
+    ["ping", WIRE_PING_SHAPE],
+    ["tag_error", WIRE_TAG_ERROR_SHAPE],
+  ];
 
   function capped(prefix: string, spec: Shape): { at: string; required: boolean }[] {
     return [

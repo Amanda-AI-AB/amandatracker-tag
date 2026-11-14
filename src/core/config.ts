@@ -1,7 +1,8 @@
 // The site's public config, cfg/<SITE_PUBLIC_ID>.json: rendered by the control plane's publisher
 // (amandatracker, AAI-91), served from the CDN and fetched anonymously once per page at boot. Its
 // layout is the publisher's `schema_version: 1`: site, config_version, endpoint, domains, consent,
-// features, custom_params, and paused, the kill switch (AAI-92). The tag checks what it reads
+// features, custom_params, paused, the kill switch (AAI-92), and telemetry, whose
+// error_sample_rate overrides the tag's ERROR_SAMPLE_RATE. The tag checks what it reads
 // here; the tickets that use a section (consent AAI-84, kill switch AAI-797, ...) check that
 // section's fields.
 
@@ -51,7 +52,29 @@ export function parseConfig(json: unknown, site: string): SiteConfig {
   if (typeof version !== "number" || !Number.isInteger(version) || version < 0) {
     throw new ConfigError(`the config's config_version is not a version: ${String(version)}`);
   }
+  checkTelemetry(config.telemetry);
   return config as SiteConfig;
+}
+
+/**
+ * The config's optional telemetry section: { error_sample_rate }, the share of page loads, from 0
+ * to 1, that report the tag's failures. A section of any other shape throws ConfigError.
+ */
+function checkTelemetry(telemetry: unknown): void {
+  if (telemetry === undefined) return;
+  if (typeof telemetry !== "object" || telemetry === null || Array.isArray(telemetry)) {
+    throw new ConfigError("the config's telemetry is not an object");
+  }
+  const rate = (telemetry as Record<string, unknown>).error_sample_rate;
+  if (rate !== undefined && (typeof rate !== "number" || !(rate >= 0 && rate <= 1))) {
+    throw new ConfigError(`the config's telemetry.error_sample_rate is not between 0 and 1: ${String(rate)}`);
+  }
+}
+
+/** The error sample rate the config sets, or undefined when it sets none. */
+export function errorSampleRate(config: SiteConfig): number | undefined {
+  const telemetry = config.telemetry as { error_sample_rate?: number } | undefined;
+  return telemetry === undefined ? undefined : telemetry.error_sample_rate;
 }
 
 /**

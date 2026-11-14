@@ -5,16 +5,17 @@ Licensed under Apache-2.0.
 
 ## Status
 
-The tag boots but sends nothing yet. `a.js` (`src/core/boot.ts`) reads its script tag's `data-site`
+The tag boots, but sends no events yet. `a.js` (`src/core/boot.ts`) reads its script tag's `data-site`
 and `data-endpoint`, fetches the site's config from `cfg/<SITE_PUBLIC_ID>.json` without cookies,
 replaces the snippet's `window.amanda` stub with the real command function and runs the calls it
 queued, then makes a pageview on load and on each route change of a single-page app
 (`history.pushState`, `history.replaceState` and `popstate`; a fragment-only change is not a new
 page). Every step runs inside an error boundary (`src/core/boundary.ts`): a failure never reaches the
-host page, and is reported, sampled and capped per page. Still to come:
+host page. It is reported instead (`src/core/telemetry.ts`), as a tag error posted to `v1/t`
+without cookies, from 10 % of page loads (the config's `telemetry.error_sample_rate` sets another
+share) and at most 5 per page. Still to come:
 
-- sending the error reports to the telemetry endpoint, which is not decided yet; until then they go
-  to the browser console (AAI-67);
+- the collector accepting `POST /v1/t` and the event debugger showing tag errors (amandatracker);
 - the transport, which posts batches, pageviews included (AAI-68);
 - the `_amnda_id` and `_amnda_ses` cookies (AAI-98);
 - `data-endpoint` wired into boot, the transport and withdrawal (AAI-831).
@@ -56,6 +57,11 @@ truth for what the tag sends and what the collector accepts:
 - `batch.json`: the request body of `POST /v1/e`, `{"seq": 3, "e": [...]}`. It holds 1 to 10
   events or pings, never both. A batch of events always carries `seq`, the page's batch counter,
   which the collector reads for loss. A batch of pings never carries it.
+- `tag-error.json`: the request body of `POST /v1/t`, one failure the tag's error boundary caught:
+  the tag version, the site (when the snippet names a valid one), the stage it failed in, and the
+  error's name and message, each URL in the message cut to its scheme and host and each email
+  address replaced. It is sent in every consent state, so it carries nothing about the visitor or
+  the page: no ids, no URL, no `client_ts`, and an `event_id` whose time is only the hour.
 - `pubsub-message.json`: what the collector publishes to Pub/Sub. It holds the client's event or
   ping and the fields the collector derives (received time, region, country, device class). For an
   event it may also carry the ISO 3166-2 `subdivision`, `browser_family`, `browser_major` and

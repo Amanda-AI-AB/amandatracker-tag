@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/tag-error.json",
+  "title": "WireTagError",
+  "description": "A failure inside the tag, which its error boundary caught instead of throwing into the host page: the request body of POST /v1/t. It is sent in every consent state, so it carries nothing about the visitor or the page: no visitor or session id, no URL, no referrer, no client_ts. It is sent from a sample of page loads, without cookies, at most a few per page.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "event_id", "tag_version", "stage", "name"],
+  "properties": {
+    "schema_version": {
+      "description": "The wire schema's major version: this file's.",
+      "const": 1
+    },
+    "event_id": {
+      "description": "Random per report, for idempotent storage only. Its embedded time is the start of the client's hour, as a ping's is, never the millisecond.",
+      "$ref": "event.json#/$defs/Uuidv7"
+    },
+    "tag_version": {
+      "$ref": "event.json#/$defs/TagVersion"
+    },
+    "site_id": {
+      "description": "The site the tag was installed for; absent when the failure is that the snippet names no valid site.",
+      "$ref": "event.json#/$defs/SiteId"
+    },
+    "stage": {
+      "description": "Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, or a route change.",
+      "enum": ["boot", "config", "command", "pageview", "route"]
+    },
+    "name": {
+      "description": "The error's name, such as TypeError or ConfigError.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "message": {
+      "description": "The error's message, scrubbed by the tag: each URL in it cut to its scheme and host, and each email address replaced.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    }
+  }
+}

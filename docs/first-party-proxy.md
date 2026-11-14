@@ -39,7 +39,8 @@ alias for someone else's server.
 With the proxy in place, once those tickets land:
 
 1. The page loads `a.js` from `https://www.example.com/amnda/a.js`, a path on your own site.
-2. The tag sends events to `https://www.example.com/amnda/v1/e` (AAI-68, AAI-831).
+2. The tag sends events to `https://www.example.com/amnda/v1/e` (AAI-68, AAI-831), and reports its
+   own errors to `https://www.example.com/amnda/v1/t`.
 3. Your CDN or web server forwards those requests to Amanda's collector.
 4. When the visitor has granted analytics consent, the collector's response re-issues `_amnda_id` and
    `_amnda_ses` with `Set-Cookie` (AAI-827).

@@ -3,10 +3,11 @@
 // step runs inside the error boundary: a failure is reported, and the page never sees it.
 
 import type { ErrorBoundary } from "./boundary";
-import { checkSiteId, fetchConfig, type SiteConfig } from "./config";
+import { checkSiteId, errorSampleRate, fetchConfig, type SiteConfig } from "./config";
 import { currentScript, endpointFromScript } from "./endpoint";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
 import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
+import type { TagTarget } from "./telemetry";
 
 /** The browser globals the tag boots on: window, or a stand-in for it in tests. */
 export interface TagWindow extends AmandaHost, PageSource, RouteSource {
@@ -20,6 +21,8 @@ export interface BootOptions {
   readonly boundary: ErrorBoundary;
   /** Where each pageview goes: the transport, once AAI-68 adds it. */
   readonly onPageview: (input: PageviewInput) => void;
+  /** Filled in as the boot resolves the endpoint and the site, for the tag errors' sink. */
+  readonly target?: TagTarget;
   readonly now?: () => number;
 }
 
@@ -37,18 +40,25 @@ export interface Tag {
  * reported, or another copy of a.js already runs on the page. It never rejects and never throws.
  */
 export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefined> {
-  const { boundary } = options;
+  const { boundary, target } = options;
   const started = boundary.guard("boot", () => {
     if (!ensureStub(win)) return undefined;
     const script = currentScript(win.document);
     const endpoint = endpointFromScript(script, win.location);
+    if (target) target.endpoint = endpoint;
     // endpointFromScript has checked that script is a <script> element.
     const site = checkSiteId(script!.getAttribute("data-site"));
+    if (target) target.site = site;
     return fetchConfig(win.fetch.bind(win), endpoint, site).then((config) => ({ endpoint, site, config }));
   });
   if (started === undefined) return Promise.resolve(undefined);
   return started.then(
-    (tag) => boundary.guard("boot", () => start(win, tag, options)),
+    (tag) =>
+      boundary.guard("boot", () => {
+        const rate = errorSampleRate(tag.config);
+        if (rate !== undefined) boundary.setSampleRate(rate);
+        return start(win, tag, options);
+      }),
     (error: unknown) => {
       boundary.report("config", error);
       return undefined;
