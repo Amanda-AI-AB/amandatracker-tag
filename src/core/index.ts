@@ -4,7 +4,7 @@
 //
 // Still to come: a pageview goes through the consent state machine (src/core/consent.ts,
 // createConsent), which makes it an event with the visitor and session ids (AAI-98) and the
-// consent snapshot, or a ping in declined mode; then it goes to the transport
+// consent snapshot, or a ping in declined mode `pings` (src/core/ping.ts, pingOf); then it goes to the transport
 // (src/core/transport.ts, createTransport) (AAI-964), whose withdrawEvents is the machine sink's
 // withdraw, so that nothing goes after a decline (AAI-86; test/declined-off.test.ts wires them all
 // as a.js is to). Until then, a pageview goes nowhere. The
