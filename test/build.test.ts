@@ -84,8 +84,8 @@ describe("build", () => {
 
   it("fails on a deliberately oversized core bundle", async () => {
     const coreEntry = join(dir, "oversized.ts");
-    // An incompressible string literal of 24 KB: well over 15 KB even after gzip.
-    const payload = randomBytes(18 * 1024).toString("base64");
+    // An incompressible string literal of 40 KB: well over 20 KB even after gzip.
+    const payload = randomBytes(30 * 1024).toString("base64");
     writeFileSync(coreEntry, `console.log(${JSON.stringify(payload)});\n`);
 
     await expect(

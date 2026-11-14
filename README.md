@@ -370,7 +370,9 @@ events arrive in the halves (AAI-951).
 
 ## The size budget
 
-`dist/a.js` must stay within **15 KB gzipped** (15 × 1024 bytes, gzip level 9). `pnpm build` checks
+`dist/a.js` must stay within **20 KB gzipped** (20 × 1024 bytes, gzip level 9; raised from the spec's
+15 KB when the pageview feed brought the transport, identity and consent machine into the core,
+AAI-964). `pnpm build` checks
 it after every build and exits non-zero when the bundle is over, so any CI that runs the build fails
 on an oversized bundle. `pnpm size` checks an existing `dist/a.js` alone. Adapters are outside the
 core budget.

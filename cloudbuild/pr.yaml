@@ -1,6 +1,6 @@
 # Pull-request checks for the tag repo (AAI-787). The `pr-amandatracker-tag` trigger (AAI-59) runs it
 # as `cloudbuild-pr`, which can't deploy anywhere: it only installs, type-checks, tests and builds.
-# `pnpm build` ends with the size gate, so a core bundle over 15 KB gzipped fails the check.
+# `pnpm build` ends with the size gate, so a core bundle over 20 KB gzipped fails the check.
 #
 # Every step runs pnpm through corepack, at the version and hash package.json's packageManager pins,
 # in the Node image pinned by digest, so that the same commit always runs the same tools (AAI-939).
