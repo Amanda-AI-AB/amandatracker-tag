@@ -47,6 +47,7 @@ import { PRIVACY_COMMAND, privacyCommand, type PrivacyHost } from "./privacy";
 import { PURCHASE_COMMAND, purchaseCommand, purchaseInput, type PurchaseInput } from "./purchase";
 import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
 import { scrollDepthInput, watchScroll, type ScrollDepthInput, type ScrollHost, type ScrollReset } from "./scroll";
+import { clickSpecialInput, watchSpecialClicks, type ClickSpecialInput, type SpecialClickHost } from "./special-clicks";
 import type { TagTarget } from "./telemetry";
 
 /** The browser globals the tag boots on: window, or a stand-in for it in tests. */
@@ -59,6 +60,7 @@ export interface TagWindow
     GpcHost,
     EngagementHost,
     FormHost,
+    SpecialClickHost,
     ScrollHost,
     EcommerceHost,
     CmpHost,
@@ -88,6 +90,13 @@ export interface BootOptions {
    * form the page submits. Without it, the tag captures no form submission.
    */
   readonly onFormSubmit?: (input: FormSubmitInput) => void;
+  /**
+   * Where each click_special goes (special-clicks.ts), as each pageview does. With it, the booted
+   * tag hands over a click_special, with the link's scheme, tel or mailto, and never its address,
+   * for each click or middle click on a tel: or mailto: link. Without it, the tag captures no such
+   * click.
+   */
+  readonly onClickSpecial?: (input: ClickSpecialInput) => void;
   /**
    * Where each scroll event goes (scroll.ts), as each pageview does. With it, the booted tag hands
    * over a scroll event the first time, in each pageview, the visitor scrolls to 25, 50, 75 and 90 %
@@ -211,7 +220,8 @@ export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefi
  * their ID, privacy.ts; `identify`, when the site turns it on, links the visitor to the site's
  * pseudonymous ref, identify.ts; `purchase` records an order, purchase.ts), then the first pageview,
  * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
- * on each route change, a form_submit for each form the page submits (forms.ts), and, when it is
+ * on each route change, a form_submit for each form the page submits (forms.ts), a click_special
+ * for each click on a tel: or mailto: link, with its scheme alone (special-clicks.ts), and, when it is
  * turned on, a scroll event for each depth threshold the visitor reaches in each pageview (scroll.ts)
  * and the GA4 e-commerce events of the dataLayer, mapped to the tag's (ecommerce.ts).
  */
@@ -268,6 +278,12 @@ function start(win: TagWindow, tag: Tag, options: BootOptions): Tag {
   if (onFormSubmit) {
     boundary.guard("pageview", () =>
       watchForms(win, boundary, (props) => onFormSubmit(formSubmitInput(win, tag.site, tagVersion, props, now()))),
+    );
+  }
+  const { onClickSpecial } = options;
+  if (onClickSpecial) {
+    boundary.guard("pageview", () =>
+      watchSpecialClicks(win, boundary, (scheme) => onClickSpecial(clickSpecialInput(win, tag.site, tagVersion, scheme, now()))),
     );
   }
   const { onScrollDepth } = options;
