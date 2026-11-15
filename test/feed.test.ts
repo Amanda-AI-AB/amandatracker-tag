@@ -8,7 +8,9 @@
 // does a custom event (AAI-979), which goes in the next batch rather than by beacon. The GA4
 // e-commerce auto-map's events (AAI-974), on a site whose config turns it on, go as a granted
 // visitor's events; a declined one's purchase goes as a count-only ping, and the others not at all.
-// The site's own amanda('purchase', order) (AAI-985) goes as the auto-map's purchase does.
+// The site's own amanda('purchase', order) (AAI-985) goes as the auto-map's purchase does. An
+// identify event, a form_submit, a click_special and a click_outbound (AAI-988) go as a custom
+// event does: a granted visitor's events, and nothing at all for a declined one.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
@@ -73,12 +75,19 @@ function page(
   // The engagement watcher's document: visible until the test hides it.
   let visibility: DocumentVisibilityState = "visible";
   const visibilityChange: (() => void)[] = [];
+  // The form and link-click watchers' listeners, by event type.
+  const documentListeners: { type: string; listener: (event: { target: unknown; button?: number }) => void }[] = [];
   Object.defineProperty(win.document, "visibilityState", { get: () => visibility });
   Object.assign(win.document, {
-    addEventListener: (type: string, listener: () => void) => {
-      if (type === "visibilitychange") visibilityChange.push(listener);
+    addEventListener: (type: string, listener: (event: { target: unknown; button?: number }) => void) => {
+      if (type === "visibilitychange") visibilityChange.push(listener as () => void);
+      else documentListeners.push({ type, listener });
     },
   });
+  Object.assign(win, { HTMLFormElement: FakeForm, Element: FakeLink });
+  const dispatch = (type: string, event: { target: unknown; button?: number }): void => {
+    for (const entry of documentListeners) if (entry.type === type) entry.listener(event);
+  };
   Object.assign(win, {
     navigator: { language: "sv-SE", sendBeacon: beacon },
     setTimeout: (handler: () => void, timeout: number) => setTimeout(handler, timeout),
@@ -108,6 +117,10 @@ function page(
     onEvent: feed.event,
     onEcommerce: feed.ecommerce,
     onPurchase: feed.purchase,
+    onIdentify: feed.identify,
+    onFormSubmit: feed.formSubmit,
+    onClickSpecial: feed.clickSpecial,
+    onClickOutbound: feed.clickOutbound,
     consent: feed.consent,
   });
 
@@ -133,7 +146,36 @@ function page(
       for (const listener of visibilityChange) listener();
       await vi.advanceTimersByTimeAsync(0);
     },
+    /** Submits a form whose attributes are attrs, as the visitor does. */
+    submit: (attrs: Record<string, string>) => dispatch("submit", { target: new FakeForm(attrs) }),
+    /** Clicks a link whose href is href, with the primary button. */
+    click: (href: string) => dispatch("click", { target: new FakeLink(href), button: 0 }),
   };
+}
+
+/** The page's HTMLFormElement: its prototype's getAttribute reads the attributes the form was made with. */
+class FakeForm {
+  readonly #attrs: Record<string, string>;
+  constructor(attrs: Record<string, string>) {
+    this.#attrs = attrs;
+  }
+  getAttribute(name: string): string | null {
+    return Object.prototype.hasOwnProperty.call(this.#attrs, name) ? this.#attrs[name]! : null;
+  }
+}
+
+/** The page's Element, as an <a> with an href: closest finds the link itself. */
+class FakeLink {
+  readonly #href: string;
+  constructor(href: string) {
+    this.#href = href;
+  }
+  closest(): FakeLink {
+    return this;
+  }
+  getAttribute(name: string): string | null {
+    return name === "href" ? this.#href : null;
+  }
 }
 
 describe("the pageview feed", () => {
@@ -657,6 +699,99 @@ describe("the purchase feed (AAI-985)", () => {
 
     expect(p.requests()).toEqual([CONFIG_URL]);
     expect(p.beacons()).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+});
+
+describe("the identify, form_submit, click_special and click_outbound feed (AAI-988)", () => {
+  const IDENTIFY_ON = { identify_enabled: true };
+  const sent = (p: ReturnType<typeof page>): Record<string, unknown>[] =>
+    [...p.batches(), ...p.beacons()].flatMap((batch) => batch.e as Record<string, unknown>[]);
+  /** Each of the four, as the site or the visitor makes it, and what its event carries of its own. */
+  const KINDS: [string, (p: ReturnType<typeof page>) => void, Record<string, unknown>][] = [
+    ["identify", (p) => p.win.amanda!("identify", "cust-hash-123"), { user_ref: "cust-hash-123" }],
+    ["form_submit", (p) => p.submit({ id: "signup", action: "/join?email=x" }), { props: { form_id: "signup", form_action: "/join" } }],
+    ["click_special", (p) => p.click("tel:+46701234567"), { link_scheme: "tel" }],
+    ["click_outbound", (p) => p.click("https://partner.example.org/deal?id=9"), { link_host: "partner.example.org" }],
+  ];
+
+  it.each(KINDS)("granted: a %s leaves for /v1/e as an event valid against the schema, with the pageview's ids", async (type, make, own) => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]], {}, undefined, IDENTIFY_ON);
+    await p.booted;
+    make(p);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    const batches = p.batches();
+    for (const batch of batches) expect(validateBatch(batch), JSON.stringify(validateBatch.errors)).toBe(true);
+    const [view, item] = batches.flatMap((batch) => batch.e as Record<string, unknown>[]);
+    expect(item).toMatchObject({
+      type,
+      ...own,
+      site_id: "site_123",
+      visitor_id: view!.visitor_id,
+      session_id: view!.session_id,
+      consent: { analytics: "granted", ads: "granted", source: "manual" },
+    });
+    expect(p.reports).toEqual([]);
+  });
+
+  it.each(KINDS)("unknown, then granted: the pending %s leaves as an event once consent comes", async (type, make) => {
+    const p = page("off", [], {}, undefined, IDENTIFY_ON);
+    await p.booted;
+    make(p);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(p.requests()).toEqual([CONFIG_URL]);
+
+    p.win.amanda!("consent", { analytics: "granted", ads: "granted" });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(sent(p).map((item) => item.type)).toEqual(["pageview", type]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it.each(KINDS)("declined in mode pings: a %s sends nothing, not even as a ping", async (type, make) => {
+    const p = page("pings", [["consent", { analytics: "denied", ads: "denied" }]], {}, undefined, IDENTIFY_ON);
+    await p.booted;
+    make(p);
+    await p.leave();
+
+    const items = sent(p);
+    expect(items.map((item) => item.type)).toEqual(["pageview"]);
+    expect(JSON.stringify(items)).not.toMatch(new RegExp(`${type}|cust-hash|signup|tel|partner`));
+    expect(p.jar.writes).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it.each(KINDS)("declined in mode off: a %s sends nothing but the config fetch", async (_, make) => {
+    const p = page("off", [["consent", { analytics: "denied", ads: "denied" }]], {}, undefined, IDENTIFY_ON);
+    await p.booted;
+    make(p);
+    await p.leave();
+
+    expect(p.requests()).toEqual([CONFIG_URL]);
+    expect(p.beacons()).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("granted, identify off in the site's config: the call is reported, and nothing of it is sent", async () => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]]);
+    await p.booted;
+    p.win.amanda!("identify", "cust-hash-123");
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(sent(p).map((item) => item.type)).toEqual(["pageview"]);
+    expect(p.reports).toEqual([
+      { stage: "command", name: "CommandError", message: "amanda('identify') is off for this site: its config doesn't turn identify on" },
+    ]);
+  });
+
+  it("granted: a click on a link to the site's own host sends no click_outbound", async () => {
+    const p = page("off", [["consent", { analytics: "granted", ads: "granted" }]]);
+    await p.booted;
+    p.click(`${PAGE}/cart`);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(sent(p).map((item) => item.type)).toEqual(["pageview"]);
     expect(p.reports).toEqual([]);
   });
 });

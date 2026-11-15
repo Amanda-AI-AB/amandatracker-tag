@@ -1,7 +1,9 @@
 // The pageview feed (AAI-964): where a.js sends each pageview the boot hands over, each
 // page_exit (engagement.ts, AAI-968), each custom event (custom-event.ts, AAI-979), each GA4
-// e-commerce event the auto-map makes (ecommerce.ts, AAI-974) and each purchase the site's own
-// amanda('purchase', order) makes (purchase.ts, AAI-985). For the booted site's config it makes one consent state
+// e-commerce event the auto-map makes (ecommerce.ts, AAI-974), each purchase the site's own
+// amanda('purchase', order) makes (purchase.ts, AAI-985), and each identify event (identify.ts),
+// form_submit (forms.ts), click_special (special-clicks.ts) and click_outbound (outbound.ts)
+// (AAI-988). For the booted site's config it makes one consent state
 // machine (consent.ts, with the config's declined mode), the visitor's identity (identity.ts) and
 // one transport to the booted tag's endpoint (transport.ts), and feeds each item through the machine:
 //
@@ -12,13 +14,15 @@
 //                 page's click IDs only when the config's consent.pings_include_click_ids is on,
 //                 sent with transport.ping; in mode `off`, nothing. A page_exit never becomes a ping,
 //                 whose frozen field list has no engagement time, and neither does a custom event
-//                 (custom-event.ts, AAI-979), whose list has no props: each is dropped in either mode.
+//                 (custom-event.ts, AAI-979), whose list has no props: each is dropped in either mode,
+//                 and so are an identify event, a form_submit, a click_special and a click_outbound,
+//                 whose user_ref, form props, link_scheme and link_host the list has no room for.
 //                 A purchase, the site's own or the auto-map's, becomes a count-only ping, as a pageview
 //                 does (pingOf reads its type and page, never its order); a view_item, an
 //                 add_to_cart and a begin_checkout, whose props the list has no room for, are
 //                 dropped, as a custom event is;
 //   pending    -> held by the machine until consent is decided, or the page goes: on pagehide a
-//                 pending page_exit or custom event goes as a declined one does, which is nowhere.
+//                 pending item that is an event only goes as a declined one does, which is nowhere.
 //
 // The machine's withdraw is the transport's withdrawEvents, so that nothing goes after a decline
 // (AAI-86), with one exception the site opts into: with the config's consent.purge_on_withdrawal on,
@@ -34,10 +38,14 @@ import { createConsent, type ConsentMachine } from "./consent";
 import type { CustomEventInput } from "./custom-event";
 import type { EcommerceInput } from "./ecommerce";
 import type { PageExitInput } from "./engagement";
+import type { FormSubmitInput } from "./forms";
+import type { IdentifyInput } from "./identify";
 import { createIdentity, type IdentityHost } from "./identity";
+import type { ClickOutboundInput } from "./outbound";
 import type { PageviewInput } from "./pageview";
 import { pingOf } from "./ping";
 import type { PurchaseInput } from "./purchase";
+import type { ClickSpecialInput } from "./special-clicks";
 import type { TagTarget } from "./telemetry";
 import { createTransport, type TransportWindow } from "./transport";
 import { withdrawalSender } from "./withdrawal";
@@ -46,7 +54,16 @@ import { withdrawalSender } from "./withdrawal";
 export interface FeedWindow extends TransportWindow, IdentityHost {}
 
 /** What goes through the feed's machine. */
-export type FeedItem = PageviewInput | PageExitInput | CustomEventInput | EcommerceInput | PurchaseInput;
+export type FeedItem =
+  | PageviewInput
+  | PageExitInput
+  | CustomEventInput
+  | EcommerceInput
+  | PurchaseInput
+  | IdentifyInput
+  | FormSubmitInput
+  | ClickSpecialInput
+  | ClickOutboundInput;
 
 export interface Feed {
   /**
@@ -70,6 +87,14 @@ export interface Feed {
    * purchase goes: an event or a count-only ping. Boot's `onPurchase` option.
    */
   purchase(input: PurchaseInput): void;
+  /** Feeds an identify event through the machine, as an event only: boot's `onIdentify` option. */
+  identify(input: IdentifyInput): void;
+  /** Feeds a form_submit through the machine, as an event only: boot's `onFormSubmit` option. */
+  formSubmit(input: FormSubmitInput): void;
+  /** Feeds a click_special through the machine, as an event only: boot's `onClickSpecial` option. */
+  clickSpecial(input: ClickSpecialInput): void;
+  /** Feeds a click_outbound through the machine, as an event only: boot's `onClickOutbound` option. */
+  clickOutbound(input: ClickOutboundInput): void;
 }
 
 /**
@@ -108,7 +133,9 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
             // its type and page, never its order. A page_exit, a custom event and the other
             // e-commerce events are events only: the ping's frozen field list has no engagement
             // time and no props, and a custom event's type, never a pageview's or a purchase's
-            // (TAG_EVENT_TYPES), is the site's own free text.
+            // (TAG_EVENT_TYPES), is the site's own free text. So are an identify event, a
+            // form_submit, a click_special and a click_outbound: the list has no user_ref, no
+            // props, no link_scheme and no link_host.
             if (input.type !== "pageview" && input.type !== "purchase") return;
             transport.ping(pingOf(input, pingId(), pingOptions));
           },
@@ -123,5 +150,9 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
     event: collect,
     ecommerce: collect,
     purchase: collect,
+    identify: collect,
+    formSubmit: collect,
+    clickSpecial: collect,
+    clickOutbound: collect,
   };
 }
