@@ -864,6 +864,29 @@ describe("purge on withdrawal (AAI-785)", () => {
     expect(p.withdrawals.map((w) => w.body.visitor_id)).toEqual([p.visitorId, renewed]);
   });
 
+  it("on: a fetch that throws on the signal still withdraws the events not sent yet (AAI-992)", async () => {
+    const p = await grantedPage("off", true);
+    const answer = p.win.fetchMock.getMockImplementation()!;
+    // A page's fetch wrapper that throws synchronously on a keepalive request.
+    p.win.fetchMock.mockImplementation((url: string, init: RequestInit) => {
+      if (init.keepalive) throw new Error("wrapper refuses keepalive");
+      return answer(url, init);
+    });
+    // An event buffered with the visitor id, waiting for its batch.
+    p.win.amanda!("event", "signup");
+    const before = p.requests().length;
+
+    p.win.amanda!("consent", { analytics: "denied" });
+    await p.leave();
+
+    // It never goes after the decline: neither in a batch nor in the pagehide beacon.
+    expect(p.requests().slice(before)).toEqual([WITHDRAWAL_URL]);
+    expect(p.beacons()).toEqual([]);
+    expect(p.jar.live()).toEqual([]);
+    expect(p.reports).toHaveLength(1);
+    expect(p.reports[0]).toMatchObject({ message: "wrapper refuses keepalive" });
+  });
+
   it("on: a visitor who never granted sends no signal when they decline", async () => {
     const p = page("off", [["consent", { analytics: "denied", ads: "denied" }]], { purge_on_withdrawal: true });
     await p.booted;

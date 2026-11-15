@@ -171,6 +171,30 @@ describe("unknown: the pending buffer", () => {
     expect(machine.pendingCount()).toBe(0);
   });
 
+  it("withdraws and flushes on a denial even when forgetting the visitor throws, and rethrows (AAI-992)", () => {
+    const out: Out[] = [];
+    const machine = createConsent<number>({
+      declinedMode: "pings",
+      sink: {
+        identified: (item, consent) => out.push(["identified", item, consent]),
+        anonymous: (item) => out.push(["anonymous", item]),
+        withdraw: () => out.push(["withdraw"]),
+      },
+      identity: {
+        forget: () => {
+          out.push(["forget"]);
+          throw new Error("the withdrawal signal threw");
+        },
+        renew: () => out.push(["renew"]),
+      },
+    });
+    machine.collect(1);
+    expect(() => machine.update({ analytics: "denied" })).toThrow("the withdrawal signal threw");
+    expect(out).toEqual([["forget"], ["withdraw"], ["anonymous", 1]]);
+    expect(machine.pendingCount()).toBe(0);
+    expect(machine.mode()).toBe("declined");
+  });
+
   it("drops the buffer on a denial in declined mode off", () => {
     const { machine, out } = harness("off");
     machine.collect(1);

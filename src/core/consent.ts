@@ -169,8 +169,18 @@ export function createConsent<T>(options: ConsentOptions<T>): ConsentMachine<T> 
     const to = current();
     if (to === "declined" && from !== "declined") {
       declinedBefore = true;
-      identity.forget();
-      sink.withdraw();
+      // forget() rethrows what the withdrawal signal throws (AAI-785): the identified items not
+      // sent yet are withdrawn, and the pending ones go per the declined mode, all the same (AAI-992).
+      try {
+        identity.forget();
+      } finally {
+        try {
+          sink.withdraw();
+        } finally {
+          drain(decline);
+        }
+      }
+      return;
     }
     if (to === "identified" && from !== "identified" && declinedBefore) identity.renew();
     if (to === "identified") drain((item) => sink.identified(item, { ...consent }));
