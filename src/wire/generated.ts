@@ -7,31 +7,36 @@
 export interface EventBatch {
   /** The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). Every event batch carries it, so that a batch sent without it is refused rather than left out of the loss count (AAI-950). */
   seq: number;
+  /** The pageload's key: the same value on every batch of one pageload, retries included, and a new one on the next, so that the processor can link a pageload's batches and count the gaps in their seq (AAI-106). Optional only because tags up to v0.4.0 send event batches without it; this tag sends it on every event batch. */
+  page_id?: PageId;
   /** The batch's events, 1 to 10. */
   e: [WireEvent, ...WireEvent[]];
   /** Sent, as true, when the browser reports navigator.webdriver === true: it is driven by automation (WebDriver, Puppeteer, Playwright and the like). It feeds the collector's bot marking (03 §5, AAI-76) and names the browser, never the visitor. Absent otherwise: the tag never sends false. It belongs to the browser, so it goes once per batch rather than on each event. A ping batch never carries it: pings leave the browsers of visitors who declined, and their field list is frozen. */
   webdriver?: true;
 }
 
-export const EVENT_BATCH_FIELDS = ["seq", "e", "webdriver"] as const;
+export const EVENT_BATCH_FIELDS = ["seq", "page_id", "e", "webdriver"] as const;
 
 export const EVENT_BATCH_REQUIRED = ["seq", "e"] as const;
 
-export const EVENT_BATCH_TYPES = { seq: "integer", e: "array", webdriver: "boolean" } as const;
+export const EVENT_BATCH_TYPES = { seq: "integer", page_id: "string", e: "array", webdriver: "boolean" } as const;
 
 export const EVENT_BATCH_VALUES = { webdriver: [true] } as const;
 
 export const EVENT_BATCH_MINIMUM = { seq: 1 } as const;
 
+export const EVENT_BATCH_PATTERN = { page_id: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+
 export const EVENT_BATCH_MIN_ITEMS = { e: 1 } as const;
 
 export const EVENT_BATCH_MAX_ITEMS = { e: 10 } as const;
 
-/** A batch of anonymous pings, sent by declined mode `pings`. It carries no seq: pings are never sequence-linkable. */
+/** A batch of anonymous pings, sent by declined mode `pings`. It carries no seq and no page_id: pings are never sequence-linkable. */
 export interface PingBatch {
   /** The batch's pings, 1 to 10. */
   e: [WirePing, ...WirePing[]];
   seq?: never;
+  page_id?: never;
   webdriver?: never;
 }
 
@@ -44,6 +49,9 @@ export const PING_BATCH_TYPES = { e: "array" } as const;
 export const PING_BATCH_MIN_ITEMS = { e: 1 } as const;
 
 export const PING_BATCH_MAX_ITEMS = { e: 10 } as const;
+
+/** A random UUID, version 4, in lower-case hex: 122 random bits and no time. The tag makes it once per pageload and keeps it in memory only: it is never stored on the device, dies with the page and identifies nobody. Only an event batch carries it, never a PingBatch (08 G2). */
+export type PageId = string;
 
 /** The request body of POST /v1/e: one batch of up to 10 events or anonymous pings (01 §6). A batch never mixes the two: it is all events, with the per-pageload batch counter seq, or all pings, without it, so that a ping is never sent beside a seq (02 §2, 08 G2). Its items carry their own schema_version. */
 export type WireBatch = EventBatch | PingBatch;
@@ -512,21 +520,25 @@ export interface PubSubMessage {
   browser_major?: number;
   /** The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message. */
   os_family?: string;
+  /** The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's. */
+  seq?: number;
+  /** The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's. */
+  page_id?: PageId;
   /** The client's payload: an event, an anonymous ping, or a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data. A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. */
   event: WireEvent | WirePing | WireWithdrawal;
 }
 
-export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "subdivision", "device_class", "browser_family", "browser_major", "os_family", "event"] as const;
+export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "subdivision", "device_class", "browser_family", "browser_major", "os_family", "seq", "page_id", "event"] as const;
 
 export const PUB_SUB_MESSAGE_REQUIRED = ["schema_version", "received_at", "region", "device_class", "event"] as const;
 
-export const PUB_SUB_MESSAGE_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", subdivision: "string", device_class: "string", browser_family: "string", browser_major: "integer", os_family: "string", event: "object" } as const;
+export const PUB_SUB_MESSAGE_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", subdivision: "string", device_class: "string", browser_family: "string", browser_major: "integer", os_family: "string", seq: "integer", page_id: "string", event: "object" } as const;
 
 export const PUB_SUB_MESSAGE_VALUES = { schema_version: [1], device_class: ["desktop", "mobile", "tablet", "other"] } as const;
 
-export const PUB_SUB_MESSAGE_MINIMUM = { received_at: 0, browser_major: 0 } as const;
+export const PUB_SUB_MESSAGE_MINIMUM = { received_at: 0, browser_major: 0, seq: 1 } as const;
 
-export const PUB_SUB_MESSAGE_PATTERN = { region: "^[a-z0-9-]+$", country: "^[A-Z]{2}$", subdivision: "^[A-Z]{2}-[A-Z0-9]{1,3}$" } as const;
+export const PUB_SUB_MESSAGE_PATTERN = { region: "^[a-z0-9-]+$", country: "^[A-Z]{2}$", subdivision: "^[A-Z]{2}-[A-Z0-9]{1,3}$", page_id: "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
 
 export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64, browser_family: 64, os_family: 64 } as const;
 

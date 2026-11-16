@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { CLICK_OUTBOUND, CLICK_SPECIAL, EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
 
+/** A batch's page_id: a UUIDv4 (AAI-1050). */
+const PAGE_ID = "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b";
+
 describe("wire schema v1: event", () => {
   const validate = validator("event.json");
 
@@ -453,6 +456,16 @@ describe("wire schema v1: Pub/Sub message", () => {
     expect(validate({ ...message, browser_major: 131.5, event: EVENT })).toBe(false);
     expect(validate({ ...message, browser_major: "131", event: EVENT })).toBe(false);
   });
+
+  it("carries an event's batch seq and page_id, for the seq-gap loss metric (AAI-1050)", () => {
+    expect(validate({ ...message, seq: 3, page_id: PAGE_ID, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...message, seq: 3, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("checks the shape of seq and page_id", () => {
+    for (const seq of [0, 1.5, "1"]) expect(validate({ ...message, seq, event: EVENT }), String(seq)).toBe(false);
+    expect(validate({ ...message, seq: 1, page_id: EVENT.visitor_id, event: EVENT })).toBe(false);
+  });
 });
 
 describe("wire schema v1: batch (the body of POST /v1/e)", () => {
@@ -511,6 +524,21 @@ describe("wire schema v1: batch (the body of POST /v1/e)", () => {
 
   it("rejects webdriver on a batch of pings, whose field list is frozen", () => {
     expect(validate({ e: [PING], webdriver: true })).toBe(false);
+  });
+
+  it("accepts a UUIDv4 page_id on a batch of events, and a batch without one from a tag up to v0.4.0 (AAI-1050)", () => {
+    expect(validate({ seq: 1, page_id: PAGE_ID, e: [EVENT] }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ seq: 1, e: [EVENT] }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a page_id that isn't a lower-case UUIDv4, such as a UUIDv7 that carries a time", () => {
+    for (const pageId of [EVENT.visitor_id, PAGE_ID.toUpperCase(), PAGE_ID.replace(/-/g, ""), "", 42]) {
+      expect(validate({ seq: 1, page_id: pageId, e: [EVENT] }), String(pageId)).toBe(false);
+    }
+  });
+
+  it("rejects page_id on a batch of pings, which are never sequence-linkable (08 G2)", () => {
+    expect(validate({ page_id: PAGE_ID, e: [PING] })).toBe(false);
   });
 
   it("rejects a key the schema doesn't list", () => {

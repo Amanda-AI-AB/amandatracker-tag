@@ -53,6 +53,15 @@
       "minLength": 1,
       "maxLength": 64
     },
+    "seq": {
+      "description": "The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "page_id": {
+      "description": "The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's.",
+      "$ref": "batch.json#/$defs/PageId"
+    },
     "event": {
       "description": "The client's payload: an event, an anonymous ping, or a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data. A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them.",
       "oneOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }, { "$ref": "withdrawal.json" }]

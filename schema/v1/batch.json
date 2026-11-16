@@ -16,6 +16,10 @@
           "type": "integer",
           "minimum": 1
         },
+        "page_id": {
+          "description": "The pageload's key: the same value on every batch of one pageload, retries included, and a new one on the next, so that the processor can link a pageload's batches and count the gaps in their seq (AAI-106). Optional only because tags up to v0.4.0 send event batches without it; this tag sends it on every event batch.",
+          "$ref": "#/$defs/PageId"
+        },
         "e": {
           "description": "The batch's events, 1 to 10.",
           "type": "array",
@@ -30,7 +34,7 @@
       }
     },
     "PingBatch": {
-      "description": "A batch of anonymous pings, sent by declined mode `pings`. It carries no seq: pings are never sequence-linkable.",
+      "description": "A batch of anonymous pings, sent by declined mode `pings`. It carries no seq and no page_id: pings are never sequence-linkable.",
       "type": "object",
       "additionalProperties": false,
       "required": ["e"],
@@ -43,6 +47,11 @@
           "items": { "$ref": "ping.json" }
         }
       }
+    },
+    "PageId": {
+      "description": "A random UUID, version 4, in lower-case hex: 122 random bits and no time. The tag makes it once per pageload and keeps it in memory only: it is never stored on the device, dies with the page and identifies nobody. Only an event batch carries it, never a PingBatch (08 G2).",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     }
   }
 }
