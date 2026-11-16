@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { PURCHASE_EVENT_SHAPE, TRACKED_EVENT_SHAPE, WIRE_PING_SHAPE, WIRE_TAG_ERROR_SHAPE } from "../src/wire/generated";
+import { EVENT_BATCH_PATTERN, PURCHASE_EVENT_SHAPE, TRACKED_EVENT_SHAPE, WIRE_PING_SHAPE, WIRE_TAG_ERROR_SHAPE } from "../src/wire/generated";
 import {
   buildEvent,
   buildPing,
@@ -12,6 +12,7 @@ import {
   STRIP_FROM,
   stripFrom,
   UPPER_CASE,
+  uuidv4,
   uuidv7,
   WirePayloadError,
   type ClickSpecialEventInput,
@@ -64,6 +65,29 @@ describe("uuidv7", () => {
 
   it("refuses too few random bytes", () => {
     expect(() => uuidv7(0, new Uint8Array(9))).toThrow("10 random bytes");
+  });
+});
+
+describe("uuidv4 (AAI-1050)", () => {
+  const UUID4_PATTERN = new RegExp(EVENT_BATCH_PATTERN.page_id);
+
+  it("is a version-4 UUID that batch.json's page_id accepts", () => {
+    expect(uuidv4()).toMatch(UUID4_PATTERN);
+  });
+
+  it("sets the version and variant whatever the random bytes, and leaves the caller's bytes as they are", () => {
+    const ones = new Uint8Array(16).fill(0xff);
+    expect(uuidv4(ones)).toBe("ffffffff-ffff-4fff-bfff-ffffffffffff");
+    expect(ones[6]).toBe(0xff);
+    expect(uuidv4(new Uint8Array(16))).toBe("00000000-0000-4000-8000-000000000000");
+  });
+
+  it("differs between calls", () => {
+    expect(uuidv4()).not.toBe(uuidv4());
+  });
+
+  it("refuses too few random bytes", () => {
+    expect(() => uuidv4(new Uint8Array(15))).toThrow("16 random bytes");
   });
 });
 

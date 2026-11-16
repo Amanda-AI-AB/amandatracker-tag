@@ -30,7 +30,8 @@ pageview. A batch that meets a network error or a 5xx is retried twice (after 1 
 then dropped; one the collector refuses otherwise is dropped and reported as a tag error. On
 `pagehide` it sends what is buffered or awaiting a retry with `sendBeacon` (pings, which must not
 carry cookies, and any batch `sendBeacon` refuses go with a `keepalive` fetch instead). Each event
-batch carries `seq`, the page's batch counter from 1, whose gaps show lost batches, and
+batch carries `seq`, the page's batch counter from 1, whose gaps show lost batches, `page_id`,
+a random UUIDv4 made once per pageload that links the page's batches, and
 `"webdriver": true` when `navigator.webdriver` is `true`. Its queues live
 in memory only: no cookie, `localStorage` or IndexedDB.
 
@@ -386,9 +387,12 @@ truth for what the tag sends and what the collector accepts:
 - `ping.json`: the anonymous ping that declined mode `pings` sends. It has no ids, no `seq` and
   nothing linkable across events. Its field list is frozen after counsel sign-off, so adding a
   field is a framework amendment, never a routine release.
-- `batch.json`: the request body of `POST /v1/e`, `{"seq": 3, "e": [...]}`. It holds 1 to 10
-  events or pings, never both. A batch of events always carries `seq`, the page's batch counter,
-  which the collector reads for loss. A batch of pings never carries it. A batch of events from a
+- `batch.json`: the request body of `POST /v1/e`, `{"seq": 3, "page_id": "…", "e": [...]}`. It
+  holds 1 to 10 events or pings, never both. A batch of events always carries `seq`, the page's
+  batch counter, which the collector reads for loss, and this tag sends `page_id` beside it: a
+  random UUIDv4 made once per pageload, in memory only, that links the page's batches (optional in
+  the schema, as tags up to v0.4.0 send event batches without it). A batch of pings never carries
+  either. A batch of events from a
   browser driven by automation (`navigator.webdriver === true`) also carries `"webdriver": true`, for
   the collector's bot marking; it is absent otherwise, and never on a batch of pings.
 - `tag-error.json`: the request body of `POST /v1/t`, one failure the tag's error boundary caught:
@@ -405,7 +409,9 @@ truth for what the tag sends and what the collector accepts:
   ping or withdrawal signal and the fields the collector derives (received time, region, country,
   device class). For an event it may also carry the ISO 3166-2 `subdivision`, `browser_family`,
   `browser_major` and `os_family`; a ping's or a withdrawal signal's message leaves them off, as a
-  ping carries country-level geo only. It never includes the IP address.
+  ping carries country-level geo only. An event's message also carries its batch's `seq` and
+  `page_id` (when the batch had one), which the processor stores for the seq-gap loss metric; a
+  ping's or a withdrawal signal's never does. It never includes the IP address.
 
 `pnpm gen:wire` generates `src/wire/generated.ts` from the newest version: types, field lists and
 length caps. The payload builder in `src/wire/payload.ts` shapes every payload by them. A test

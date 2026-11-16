@@ -33,7 +33,7 @@ interface Harness {
   reports: ErrorReport[];
   pagehide(): void;
   /** The bodies posted with fetch, parsed. */
-  posted(): { seq?: number; e: { type: string; props?: { n: number } }[] }[];
+  posted(): { seq?: number; page_id?: string; e: { type: string; props?: { n: number } }[] }[];
   inits(): RequestInit[];
 }
 
@@ -172,6 +172,70 @@ describe("seq", () => {
     second.transport.event(pageview());
     expect(first.posted()[0]!.seq).toBe(1);
     expect(second.posted()[0]!.seq).toBe(1);
+  });
+});
+
+describe("page_id (AAI-1050)", () => {
+  const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it("puts the same UUIDv4 on every event batch of a page: by fetch, on each retry, by beacon and in pagehide's split halves", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness([{ ok: false, status: 503 }]);
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(RETRY_DELAYS_MS[0]!);
+    t.transport.event(click(1));
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+    t.transport.event(click(2));
+    t.pagehide();
+    const beaconed = t.beacon.mock.calls.map((call) => JSON.parse(call[1] as string));
+
+    const batches = [...t.posted(), ...beaconed];
+    expect(batches.map((b) => b.seq)).toEqual([1, 1, 2, 3]);
+    const pageId = batches[0]!.page_id;
+    expect(pageId).toMatch(UUID_V4);
+    for (const batch of batches) {
+      expect(batch.page_id).toBe(pageId);
+      expect(validate(batch), JSON.stringify(validate.errors)).toBe(true);
+    }
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("keeps it on the halves of a pagehide fetch the browser rejected", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness([{ ok: true, status: 204 }, new TypeError("keepalive quota")], { beacon: "missing" });
+    t.transport.event(pageview());
+    t.transport.event(click(1));
+    t.transport.event(click(2));
+    t.pagehide();
+    await vi.advanceTimersByTimeAsync(0);
+    const bodies = t.posted();
+    expect(bodies.map((b) => b.e.length)).toEqual([1, 2, 1, 1]);
+    expect(new Set(bodies.map((b) => b.page_id)).size).toBe(1);
+  });
+
+  it("makes a new one on a new page load: it lives in the transport's memory only", () => {
+    const first = harness();
+    first.transport.event(pageview());
+    const second = harness();
+    second.transport.event(pageview());
+    expect(first.posted()[0]!.page_id).toMatch(UUID_V4);
+    expect(second.posted()[0]!.page_id).toMatch(UUID_V4);
+    expect(second.posted()[0]!.page_id).not.toBe(first.posted()[0]!.page_id);
+  });
+
+  it("never puts page_id on a ping batch, by fetch or on pagehide", () => {
+    const t = harness();
+    t.transport.event(pageview());
+    t.transport.ping(pingOf("pageview"));
+    t.transport.ping(pingOf("click"));
+    t.pagehide();
+    const [events, ...pings] = t.posted();
+    expect(events).toHaveProperty("page_id");
+    expect(pings).toHaveLength(2);
+    for (const batch of pings) {
+      expect(batch).not.toHaveProperty("page_id");
+      expect(validate(batch), JSON.stringify(validate.errors)).toBe(true);
+    }
   });
 });
 
