@@ -9,13 +9,17 @@ export interface EventBatch {
   seq: number;
   /** The batch's events, 1 to 10. */
   e: [WireEvent, ...WireEvent[]];
+  /** Sent, as true, when the browser reports navigator.webdriver === true: it is driven by automation (WebDriver, Puppeteer, Playwright and the like). It feeds the collector's bot marking (03 §5, AAI-76) and names the browser, never the visitor. Absent otherwise: the tag never sends false. It belongs to the browser, so it goes once per batch rather than on each event. A ping batch never carries it: pings leave the browsers of visitors who declined, and their field list is frozen. */
+  webdriver?: true;
 }
 
-export const EVENT_BATCH_FIELDS = ["seq", "e"] as const;
+export const EVENT_BATCH_FIELDS = ["seq", "e", "webdriver"] as const;
 
 export const EVENT_BATCH_REQUIRED = ["seq", "e"] as const;
 
-export const EVENT_BATCH_TYPES = { seq: "integer", e: "array" } as const;
+export const EVENT_BATCH_TYPES = { seq: "integer", e: "array", webdriver: "boolean" } as const;
+
+export const EVENT_BATCH_VALUES = { webdriver: [true] } as const;
 
 export const EVENT_BATCH_MINIMUM = { seq: 1 } as const;
 
@@ -28,6 +32,7 @@ export interface PingBatch {
   /** The batch's pings, 1 to 10. */
   e: [WirePing, ...WirePing[]];
   seq?: never;
+  webdriver?: never;
 }
 
 export const PING_BATCH_FIELDS = ["e"] as const;
@@ -45,7 +50,7 @@ export type WireBatch = EventBatch | PingBatch;
 
 // event.json
 
-/** An event that isn't a purchase, such as a pageview or a custom event. */
+/** An event that is neither a purchase, a page exit nor a click_special, such as a pageview, a click_outbound or a custom event. Only a TrackedEvent may carry link_host, and the tag sets it on a click_outbound alone. */
 export interface TrackedEvent {
   schema_version: SchemaVersion;
   tag_version: TagVersion;
@@ -60,26 +65,32 @@ export interface TrackedEvent {
   visitor_id: VisitorId;
   session_id: SessionId;
   consent: Consent;
+  attribution?: Attribution;
   props?: Props;
+  user_ref?: UserRef;
+  link_host?: LinkHost;
   purchase?: never;
+  engagement_ms?: never;
+  link_scheme?: never;
   path?: never;
   referrer_host?: never;
   utm?: never;
+  click_ids?: never;
 }
 
-export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "props"] as const;
+export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "link_host"] as const;
 
 export const TRACKED_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent"] as const;
 
-export const TRACKED_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", props: "object" } as const;
+export const TRACKED_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", attribution: "object", props: "object", user_ref: "string", link_host: "string" } as const;
 
 export const TRACKED_EVENT_VALUES = { schema_version: [1] } as const;
 
 export const TRACKED_EVENT_MINIMUM = { client_ts: 0 } as const;
 
-export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", type: "^(?:[^p]|p(?:[^u]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S])", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+export const TRACKED_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", type: "^(?:[^pc]|p(?:[^ua]|$)|pu(?:[^r]|$)|pur(?:[^c]|$)|purc(?:[^h]|$)|purch(?:[^a]|$)|purcha(?:[^s]|$)|purchas(?:[^e]|$)|purchase[\\s\\S]|pa(?:[^g]|$)|pag(?:[^e]|$)|page(?:[^_]|$)|page_(?:[^e]|$)|page_e(?:[^x]|$)|page_ex(?:[^i]|$)|page_exi(?:[^t]|$)|page_exit[\\s\\S]|c(?:[^l]|$)|cl(?:[^i]|$)|cli(?:[^c]|$)|clic(?:[^k]|$)|click(?:[^_]|$)|click_(?:[^s]|$)|click_s(?:[^p]|$)|click_sp(?:[^e]|$)|click_spe(?:[^c]|$)|click_spec(?:[^i]|$)|click_speci(?:[^a]|$)|click_specia(?:[^l]|$)|click_special[\\s\\S])", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", user_ref: "^[^@]+$", link_host: "^(?:[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*|\\[[0-9a-f:.]+\\])$" } as const;
 
-export const TRACKED_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
+export const TRACKED_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, type: 64, url: 2048, referrer: 2048, page_title: 512, language: 35, user_ref: 128, link_host: 253 } as const;
 
 /** A purchase: the envelope every event carries, type purchase, and the order in purchase (01 §4). */
 export interface PurchaseEvent {
@@ -97,26 +108,130 @@ export interface PurchaseEvent {
   visitor_id: VisitorId;
   session_id: SessionId;
   consent: Consent;
+  attribution?: Attribution;
   props?: Props;
+  user_ref?: UserRef;
   purchase: Purchase;
+  link_host?: never;
+  engagement_ms?: never;
+  link_scheme?: never;
   path?: never;
   referrer_host?: never;
   utm?: never;
+  click_ids?: never;
 }
 
-export const PURCHASE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "props", "purchase"] as const;
+export const PURCHASE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "purchase"] as const;
 
 export const PURCHASE_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent", "purchase"] as const;
 
-export const PURCHASE_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", props: "object", purchase: "object" } as const;
+export const PURCHASE_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", attribution: "object", props: "object", user_ref: "string", purchase: "object" } as const;
 
 export const PURCHASE_EVENT_VALUES = { schema_version: [1], type: ["purchase"] } as const;
 
 export const PURCHASE_EVENT_MINIMUM = { client_ts: 0 } as const;
 
-export const PURCHASE_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+export const PURCHASE_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", user_ref: "^[^@]+$" } as const;
 
-export const PURCHASE_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35 } as const;
+export const PURCHASE_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35, user_ref: 128 } as const;
+
+/** A page exit (01 §7.1): the envelope every event carries, type page_exit, and in engagement_ms the engagement time since the page load's previous page exit. The tag sends one, by beacon, each time the page is hidden (visibilitychange to hidden, or pagehide) after engagement since the previous one, and one for the route a single-page app leaves at each route change, with that route's url and engagement (AAI-969): at least one per pageview. A tab switched back and forth sends several, and the processor adds them up (AAI-798). */
+export interface PageExitEvent {
+  schema_version: SchemaVersion;
+  tag_version: TagVersion;
+  site_id: SiteId;
+  event_id: EventId;
+  /** Always page_exit. */
+  type: "page_exit";
+  client_ts: ClientTs;
+  url: Url;
+  referrer?: Referrer;
+  page_title?: PageTitle;
+  language?: Language;
+  visitor_id: VisitorId;
+  session_id: SessionId;
+  consent: Consent;
+  attribution?: Attribution;
+  props?: Props;
+  user_ref?: UserRef;
+  engagement_ms: EngagementMs;
+  link_host?: never;
+  purchase?: never;
+  link_scheme?: never;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
+  click_ids?: never;
+}
+
+export const PAGE_EXIT_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "engagement_ms"] as const;
+
+export const PAGE_EXIT_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent", "engagement_ms"] as const;
+
+export const PAGE_EXIT_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", attribution: "object", props: "object", user_ref: "string", engagement_ms: "integer" } as const;
+
+export const PAGE_EXIT_EVENT_VALUES = { schema_version: [1], type: ["page_exit"] } as const;
+
+export const PAGE_EXIT_EVENT_MINIMUM = { client_ts: 0, engagement_ms: 0 } as const;
+
+export const PAGE_EXIT_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", user_ref: "^[^@]+$" } as const;
+
+export const PAGE_EXIT_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35, user_ref: 128 } as const;
+
+/** A click on a tel: or mailto: link (01 §4; 08 I4): the envelope every event carries, type click_special, and in link_scheme the link's scheme. The scheme is all the tag reads of the link: never its address, so neither a phone number nor an email address ever leaves the browser. The tag sends one, as autocapture, for each click or middle click on such a link. */
+export interface ClickSpecialEvent {
+  schema_version: SchemaVersion;
+  tag_version: TagVersion;
+  site_id: SiteId;
+  event_id: EventId;
+  /** Always click_special. */
+  type: "click_special";
+  client_ts: ClientTs;
+  url: Url;
+  referrer?: Referrer;
+  page_title?: PageTitle;
+  language?: Language;
+  visitor_id: VisitorId;
+  session_id: SessionId;
+  consent: Consent;
+  attribution?: Attribution;
+  props?: Props;
+  user_ref?: UserRef;
+  link_scheme: LinkScheme;
+  link_host?: never;
+  purchase?: never;
+  engagement_ms?: never;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
+  click_ids?: never;
+}
+
+export const CLICK_SPECIAL_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "link_scheme"] as const;
+
+export const CLICK_SPECIAL_EVENT_REQUIRED = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "visitor_id", "session_id", "consent", "link_scheme"] as const;
+
+export const CLICK_SPECIAL_EVENT_TYPES = { schema_version: "integer", tag_version: "string", site_id: "string", event_id: "string", type: "string", client_ts: "integer", url: "string", referrer: "string", page_title: "string", language: "string", visitor_id: "string", session_id: "string", consent: "object", attribution: "object", props: "object", user_ref: "string", link_scheme: "string" } as const;
+
+export const CLICK_SPECIAL_EVENT_VALUES = { schema_version: [1], type: ["click_special"], link_scheme: ["tel", "mailto"] } as const;
+
+export const CLICK_SPECIAL_EVENT_MINIMUM = { client_ts: 0 } as const;
+
+export const CLICK_SPECIAL_EVENT_PATTERN = { tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", language: "^[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", session_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", user_ref: "^[^@]+$" } as const;
+
+export const CLICK_SPECIAL_EVENT_MAX_LENGTH = { tag_version: 64, site_id: 64, url: 2048, referrer: 2048, page_title: 512, language: 35, user_ref: 128 } as const;
+
+/** The scheme of a clicked tel: or mailto: link, without its colon: tel or mailto, and nothing else. A closed list, so that no part of the link's address (a phone number, an email address, a subject) can be sent in its place. */
+export type LinkScheme = "tel" | "mailto";
+
+/** The hostname of the link a click_outbound leaves the site's own domains by (01 §4), as a browser's URL parser gives it: lower case, an internationalised name in its punycode form, without a trailing dot, or an IPv6 address in brackets. The hostname is all the tag sends of the destination: never its scheme, port, path, query or fragment. The tag sets it on a click_outbound alone, which always carries it. */
+export type LinkHost = string;
+
+/** The site's own pseudonymous reference for the logged-in visitor, such as a hashed customer number, as the site gave it to amanda('identify', ref) (01 §3): it links the visitor to the site's user for logged-in stitching. The tag sends it on the identify event alone, only when the site's config turns identify on, and only on the identified path (granted analytics), never in a ping. Never a raw email address: a value holding an @, the shape of every email address, is refused here, by the tag before it leaves the browser, and by the collector (AAI-197). An identifier, never cut: one over the cap is refused. */
+export type UserRef = string;
+
+/** Engagement time in milliseconds (01 §7.1, GA4-like): time the page was visible, each span of it counted up to 15 s after the visitor's last interaction (a pointer, key, touch, wheel or scroll event), or after the page loaded or was shown again. A hidden tab pauses the clock, and so do 15 s without interaction. 0 when the page was never engaged since the previous page exit. */
+export type EngagementMs = number;
 
 /** The wire schema's major version: this file's. */
 export type SchemaVersion = 1;
@@ -157,7 +272,7 @@ export type SiteId = string;
 /** The event's name, such as pageview. */
 export type EventType = string;
 
-/** A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order. The pattern refuses exactly purchase, and has no lookahead, so that every regex engine the schema is read with takes it alike. */
+/** A TrackedEvent's name: any EventType but purchase, which only a PurchaseEvent carries, with its order, page_exit, which only a PageExitEvent carries, with its engagement time, and click_special, which only a ClickSpecialEvent carries, with its link's scheme. The pattern refuses exactly those three, and has no lookahead, so that every regex engine the schema is read with takes it alike. */
 export type TrackedEventType = string;
 
 /** One category's consent: granted, denied, unknown (not yet decided) or no_cmp (the site has no consent manager). */
@@ -167,15 +282,86 @@ export type ConsentState = "granted" | "denied" | "unknown" | "no_cmp";
 export interface Consent {
   analytics: ConsentState;
   ads: ConsentState;
+  source?: ConsentSource;
+  tc_string?: TcString;
 }
 
-export const CONSENT_FIELDS = ["analytics", "ads"] as const;
+export const CONSENT_FIELDS = ["analytics", "ads", "source", "tc_string"] as const;
 
 export const CONSENT_REQUIRED = ["analytics", "ads"] as const;
 
-export const CONSENT_TYPES = { analytics: "string", ads: "string" } as const;
+export const CONSENT_TYPES = { analytics: "string", ads: "string", source: "string", tc_string: "string" } as const;
 
-export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"] } as const;
+export const CONSENT_VALUES = { analytics: ["granted", "denied", "unknown", "no_cmp"], ads: ["granted", "denied", "unknown", "no_cmp"], source: ["gpc", "manual", "gcm", "tcf", "cookiebot", "onetrust", "usercentrics"] } as const;
+
+export const CONSENT_PATTERN = { tc_string: "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*$" } as const;
+
+export const CONSENT_MAX_LENGTH = { tc_string: 8192 } as const;
+
+/** The consent source whose signal the snapshot holds (02 §5): manual, the site's own amanda('consent', ...) calls, gcm, Google Consent Mode v2, tcf, the page's IAB TCF v2.2 consent manager (__tcfapi), cookiebot, the page's Cookiebot consent manager read through its own API (window.Cookiebot), onetrust, the page's OneTrust consent manager read through its own API (window.OnetrustActiveGroups), usercentrics, the page's Usercentrics consent manager read through its own API (window.UC_UI), or gpc, the browser's Global Privacy Control, which only ever denies. Absent when no source has signalled, such as a no_cmp state the site's no-CMP policy resolved. */
+export type ConsentSource = "gpc" | "manual" | "gcm" | "tcf" | "cookiebot" | "onetrust" | "usercentrics";
+
+/** The IAB TCF v2.2 TC string the consent manager gave with the signal the snapshot holds: present only when source is tcf, and then whenever the consent manager gave one that fits. Personal data (CJEU C-604/22). The tag never cuts it, which would make another string of it: one over the cap, or not of base64url segments joined by dots, is left out. */
+export type TcString = string;
+
+/** The landing's attribution (01 §5): the parameters of the landing page's query string, those present and not empty, read on the page load's first pageview and on no other event. Each value is verbatim, as URLSearchParams decodes it: never case-normalised, so that Summer and summer stay distinct, and never classified, which the processor does (AAI-102). The collector caps each value at 200 characters (03 §5); the 2048 here is the page URL's own cap. Click IDs go only while ads consent isn't denied: under denied ads the tag leaves out click_ids, and drops the click-ID parameters from url and referrer too, while the UTMs and custom parameters, campaign labels rather than identifiers, still go. */
+export interface Attribution {
+  utm?: AttributionUtm;
+  click_ids?: ClickIds;
+  custom?: CustomParams;
+}
+
+export const ATTRIBUTION_FIELDS = ["utm", "click_ids", "custom"] as const;
+
+export const ATTRIBUTION_REQUIRED = [] as const;
+
+export const ATTRIBUTION_TYPES = { utm: "object", click_ids: "object", custom: "object" } as const;
+
+/** The UTM set: utm_<field> in the landing URL. */
+export interface AttributionUtm {
+  source?: AttributionValue;
+  medium?: AttributionValue;
+  campaign?: AttributionValue;
+  term?: AttributionValue;
+  content?: AttributionValue;
+  id?: AttributionValue;
+  source_platform?: AttributionValue;
+  creative_format?: AttributionValue;
+  marketing_tactic?: AttributionValue;
+}
+
+export const ATTRIBUTION_UTM_FIELDS = ["source", "medium", "campaign", "term", "content", "id", "source_platform", "creative_format", "marketing_tactic"] as const;
+
+export const ATTRIBUTION_UTM_REQUIRED = [] as const;
+
+export const ATTRIBUTION_UTM_TYPES = { source: "string", medium: "string", campaign: "string", term: "string", content: "string", id: "string", source_platform: "string", creative_format: "string", marketing_tactic: "string" } as const;
+
+export const ATTRIBUTION_UTM_MAX_LENGTH = { source: 2048, medium: 2048, campaign: 2048, term: 2048, content: 2048, id: 2048, source_platform: 2048, creative_format: 2048, marketing_tactic: 2048 } as const;
+
+/** The ad platforms' click IDs, by their own parameter names in the landing URL: Google Ads' gclid, gbraid and wbraid, Meta's fbclid and Microsoft Advertising's msclkid. Identifiers: sent only while ads consent isn't denied. */
+export interface ClickIds {
+  gclid?: AttributionValue;
+  gbraid?: AttributionValue;
+  wbraid?: AttributionValue;
+  fbclid?: AttributionValue;
+  msclkid?: AttributionValue;
+}
+
+export const CLICK_IDS_FIELDS = ["gclid", "gbraid", "wbraid", "fbclid", "msclkid"] as const;
+
+export const CLICK_IDS_REQUIRED = [] as const;
+
+export const CLICK_IDS_TYPES = { gclid: "string", gbraid: "string", wbraid: "string", fbclid: "string", msclkid: "string" } as const;
+
+export const CLICK_IDS_MAX_LENGTH = { gclid: 2048, gbraid: 2048, wbraid: 2048, fbclid: 2048, msclkid: 2048 } as const;
+
+/** The site's own attribution parameters, those its config's custom_params names, by their names in the landing URL: at most 25. */
+export type CustomParams = Record<string, string>;
+
+export const CUSTOM_PARAMS_MAP = { maxProperties: 25, values: ["string"], maxLength: 2048 } as const;
+
+/** One attribution parameter's value, verbatim. */
+export type AttributionValue = string;
 
 /** The event's own properties (01 §4): a flat object of at most 25 keys, each value a string of at most 200 characters (03 §5), a number or a boolean. Keys starting with am_ are reserved for the tag and refused. 01 §4 also caps props at 8 KB in total, which JSON Schema can't express: the collector's payload cap is its backstop (AAI-65). */
 export type Props = Record<string, PropValue>;
@@ -235,8 +421,8 @@ export const PURCHASE_ITEM_MINIMUM = { qty: 1, price: 0 } as const;
 
 export const PURCHASE_ITEM_MAX_LENGTH = { sku: 128, name: 200 } as const;
 
-/** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; every other event is a TrackedEvent, which never does, and whose type is never purchase. The two are told apart by purchase: one requires it and the other doesn't list it. */
-export type WireEvent = TrackedEvent | PurchaseEvent;
+/** One event the tag sends while consent allows collection with identifiers: the common envelope every event carries, and its properties. A purchase is a PurchaseEvent, which carries its order in purchase; a page exit is a PageExitEvent, which carries its engagement time in engagement_ms; a click on a tel: or mailto: link is a ClickSpecialEvent, which carries the link's scheme in link_scheme; every other event is a TrackedEvent, which carries none of them, and whose type is never purchase, page_exit or click_special. They are told apart by purchase, engagement_ms and link_scheme: each is required by one branch and listed by no other. */
+export type WireEvent = TrackedEvent | PurchaseEvent | PageExitEvent | ClickSpecialEvent;
 
 // ping.json
 
@@ -270,6 +456,8 @@ export interface WirePing {
   /** The referrer's hostname alone, when there is a referrer. */
   referrer_host?: string;
   utm?: Utm;
+  /** The page URL's click IDs, those present, only when the site turned on consent.pings_include_click_ids (default off; AAI-88, AAI-801). A click ID makes the ping click-linkable, which the site's owner must explicitly accept; the collector strips this field from the pings of a site that hasn't. */
+  click_ids?: ClickIds;
   tag_version?: never;
   client_ts?: never;
   url?: never;
@@ -279,15 +467,20 @@ export interface WirePing {
   visitor_id?: never;
   session_id?: never;
   consent?: never;
+  attribution?: never;
   props?: never;
+  user_ref?: never;
+  link_host?: never;
   purchase?: never;
+  engagement_ms?: never;
+  link_scheme?: never;
 }
 
-export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm"] as const;
+export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm", "click_ids"] as const;
 
 export const WIRE_PING_REQUIRED = ["schema_version", "event_id", "site_id", "type", "path"] as const;
 
-export const WIRE_PING_TYPES = { schema_version: "integer", event_id: "string", site_id: "string", type: "string", path: "string", referrer_host: "string", utm: "object" } as const;
+export const WIRE_PING_TYPES = { schema_version: "integer", event_id: "string", site_id: "string", type: "string", path: "string", referrer_host: "string", utm: "object", click_ids: "object" } as const;
 
 export const WIRE_PING_VALUES = { schema_version: [1] } as const;
 
@@ -300,7 +493,7 @@ export const WIRE_PING_MAX_LENGTH = { site_id: 64, type: 64, path: 2048, referre
 /** The coarse device class the collector derives from the user agent. */
 export type DeviceClass = "desktop" | "mobile" | "tablet" | "other";
 
-/** What the collector publishes to Pub/Sub for each accepted event or ping, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it. */
+/** What the collector publishes to Pub/Sub for each accepted event, ping or withdrawal signal, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it. */
 export interface PubSubMessage {
   /** The wire schema's major version: this file's. */
   schema_version: 1;
@@ -310,24 +503,111 @@ export interface PubSubMessage {
   region: string;
   /** The ISO 3166-1 alpha-2 country derived from the client's IP address, when one could be; the address itself is dropped. */
   country?: string;
+  /** The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Never on a ping's message: a ping carries country-level geo only (06 §3). */
+  subdivision?: string;
   device_class: DeviceClass;
-  /** The client's payload: an event, or an anonymous ping. */
-  event: WireEvent | WirePing;
+  /** The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Never on a ping's message. */
+  browser_family?: string;
+  /** The browser's major version the collector parses from the user agent, when it could. Never on a ping's message. */
+  browser_major?: number;
+  /** The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message. */
+  os_family?: string;
+  /** The client's payload: an event, an anonymous ping, or a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data. A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. */
+  event: WireEvent | WirePing | WireWithdrawal;
 }
 
-export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "device_class", "event"] as const;
+export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "subdivision", "device_class", "browser_family", "browser_major", "os_family", "event"] as const;
 
 export const PUB_SUB_MESSAGE_REQUIRED = ["schema_version", "received_at", "region", "device_class", "event"] as const;
 
-export const PUB_SUB_MESSAGE_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", device_class: "string", event: "object" } as const;
+export const PUB_SUB_MESSAGE_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", subdivision: "string", device_class: "string", browser_family: "string", browser_major: "integer", os_family: "string", event: "object" } as const;
 
 export const PUB_SUB_MESSAGE_VALUES = { schema_version: [1], device_class: ["desktop", "mobile", "tablet", "other"] } as const;
 
-export const PUB_SUB_MESSAGE_MINIMUM = { received_at: 0 } as const;
+export const PUB_SUB_MESSAGE_MINIMUM = { received_at: 0, browser_major: 0 } as const;
 
-export const PUB_SUB_MESSAGE_PATTERN = { region: "^[a-z0-9-]+$", country: "^[A-Z]{2}$" } as const;
+export const PUB_SUB_MESSAGE_PATTERN = { region: "^[a-z0-9-]+$", country: "^[A-Z]{2}$", subdivision: "^[A-Z]{2}-[A-Z0-9]{1,3}$" } as const;
 
-export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64 } as const;
+export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64, browser_family: 64, os_family: 64 } as const;
+
+// tag-error.json
+
+/** A failure inside the tag, which its error boundary caught instead of throwing into the host page: the request body of POST /v1/t. It is sent in every consent state, so it carries nothing about the visitor or the page: no visitor or session id, no URL, no referrer, no client_ts. It is sent from a sample of page loads, without cookies, at most a few per page. */
+export interface WireTagError {
+  /** The wire schema's major version: this file's. */
+  schema_version: 1;
+  /** Random per report, for idempotent storage only. Its embedded time is the start of the client's hour, as a ping's is, never the millisecond. */
+  event_id: Uuidv7;
+  tag_version: TagVersion;
+  /** The site the tag was installed for; absent when the failure is that the snippet names no valid site. */
+  site_id?: SiteId;
+  /** Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, a route change, the transport that posts batches to POST /v1/e (a batch the collector refused, or a failure in a flush), or a consent source the tag follows (an update read from Google Consent Mode's dataLayer). */
+  stage: "boot" | "config" | "command" | "pageview" | "route" | "transport" | "consent";
+  /** The error's name, such as TypeError or ConfigError. */
+  name: string;
+  /** The error's message, scrubbed by the tag: each URL in it cut to its scheme and host, and each email address replaced. */
+  message?: string;
+}
+
+export const WIRE_TAG_ERROR_FIELDS = ["schema_version", "event_id", "tag_version", "site_id", "stage", "name", "message"] as const;
+
+export const WIRE_TAG_ERROR_REQUIRED = ["schema_version", "event_id", "tag_version", "stage", "name"] as const;
+
+export const WIRE_TAG_ERROR_TYPES = { schema_version: "integer", event_id: "string", tag_version: "string", site_id: "string", stage: "string", name: "string", message: "string" } as const;
+
+export const WIRE_TAG_ERROR_VALUES = { schema_version: [1], stage: ["boot", "config", "command", "pageview", "route", "transport", "consent"] } as const;
+
+export const WIRE_TAG_ERROR_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$" } as const;
+
+export const WIRE_TAG_ERROR_MAX_LENGTH = { tag_version: 64, site_id: 64, name: 64, message: 256 } as const;
+
+// withdrawal.json
+
+/** The withdrawal signal, the request body of POST /v1/w (AAI-785): a visitor who had granted analytics consent withdrew it, on a site whose config turns purge on withdrawal on (consent.purge_on_withdrawal, AAI-226). The tag sends it once, with the visitor id of its _amnda_id cookie, just before it deletes the visitor's cookies; the processor then erases that visitor's stored data through the DSAR cascade delete and writes an audit row. It carries nothing about the page (no URL, referrer, session or consent snapshot): only what the erasure needs. It is sent without cookies, so that no collector behind a first-party proxy can re-issue the cookies being deleted. A site with the option off never sends it. */
+export interface WireWithdrawal {
+  /** The wire schema's major version: this file's. */
+  schema_version: 1;
+  /** Minted by the tag for each signal; with site_id, the key that makes redelivery idempotent. */
+  event_id: Uuidv7;
+  tag_version: TagVersion;
+  site_id: SiteId;
+  /** The visitor whose stored data the site's option erases: the id of the _amnda_id cookie the tag is about to delete. */
+  visitor_id: Uuidv7;
+  /** When the visitor withdrew, by the browser's clock: Unix epoch milliseconds. */
+  client_ts: ClientTs;
+  type?: never;
+  url?: never;
+  referrer?: never;
+  page_title?: never;
+  language?: never;
+  session_id?: never;
+  consent?: never;
+  attribution?: never;
+  props?: never;
+  user_ref?: never;
+  link_host?: never;
+  purchase?: never;
+  engagement_ms?: never;
+  link_scheme?: never;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
+  click_ids?: never;
+}
+
+export const WIRE_WITHDRAWAL_FIELDS = ["schema_version", "event_id", "tag_version", "site_id", "visitor_id", "client_ts"] as const;
+
+export const WIRE_WITHDRAWAL_REQUIRED = ["schema_version", "event_id", "tag_version", "site_id", "visitor_id", "client_ts"] as const;
+
+export const WIRE_WITHDRAWAL_TYPES = { schema_version: "integer", event_id: "string", tag_version: "string", site_id: "string", visitor_id: "string", client_ts: "integer" } as const;
+
+export const WIRE_WITHDRAWAL_VALUES = { schema_version: [1] } as const;
+
+export const WIRE_WITHDRAWAL_MINIMUM = { client_ts: 0 } as const;
+
+export const WIRE_WITHDRAWAL_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$", visitor_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" } as const;
+
+export const WIRE_WITHDRAWAL_MAX_LENGTH = { tag_version: 64, site_id: 64 } as const;
 
 // Each object's shape: its field list, its required fields, its fields' types, const or enum values, minimums
 // and patterns, its strings' and arrays' caps, its arrays' item minimums, its nested objects' shapes, its arrays' item shapes and its maps' rules.
@@ -335,18 +615,32 @@ export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64 } as const;
 
 export const UTM_SHAPE = { fields: UTM_FIELDS, required: UTM_REQUIRED, types: UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: UTM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, types: WIRE_PING_TYPES, values: WIRE_PING_VALUES, minimum: {}, pattern: WIRE_PING_PATTERN, maxLength: WIRE_PING_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { utm: UTM_SHAPE }, items: {}, maps: {} } as const;
+export const CLICK_IDS_SHAPE = { fields: CLICK_IDS_FIELDS, required: CLICK_IDS_REQUIRED, types: CLICK_IDS_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: CLICK_IDS_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+
+export const WIRE_PING_SHAPE = { fields: WIRE_PING_FIELDS, required: WIRE_PING_REQUIRED, types: WIRE_PING_TYPES, values: WIRE_PING_VALUES, minimum: {}, pattern: WIRE_PING_PATTERN, maxLength: WIRE_PING_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { utm: UTM_SHAPE, click_ids: CLICK_IDS_SHAPE }, items: {}, maps: {} } as const;
 
 export const PING_BATCH_SHAPE = { fields: PING_BATCH_FIELDS, required: PING_BATCH_REQUIRED, types: PING_BATCH_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: {}, minItems: PING_BATCH_MIN_ITEMS, maxItems: PING_BATCH_MAX_ITEMS, nested: {}, items: { e: WIRE_PING_SHAPE }, maps: {} } as const;
 
-export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, types: CONSENT_TYPES, values: CONSENT_VALUES, minimum: {}, pattern: {}, maxLength: {}, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+export const CONSENT_SHAPE = { fields: CONSENT_FIELDS, required: CONSENT_REQUIRED, types: CONSENT_TYPES, values: CONSENT_VALUES, minimum: {}, pattern: CONSENT_PATTERN, maxLength: CONSENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
-export const TRACKED_EVENT_SHAPE = { fields: TRACKED_EVENT_FIELDS, required: TRACKED_EVENT_REQUIRED, types: TRACKED_EVENT_TYPES, values: TRACKED_EVENT_VALUES, minimum: TRACKED_EVENT_MINIMUM, pattern: TRACKED_EVENT_PATTERN, maxLength: TRACKED_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+export const ATTRIBUTION_UTM_SHAPE = { fields: ATTRIBUTION_UTM_FIELDS, required: ATTRIBUTION_UTM_REQUIRED, types: ATTRIBUTION_UTM_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: ATTRIBUTION_UTM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+
+export const ATTRIBUTION_SHAPE = { fields: ATTRIBUTION_FIELDS, required: ATTRIBUTION_REQUIRED, types: ATTRIBUTION_TYPES, values: {}, minimum: {}, pattern: {}, maxLength: {}, minItems: {}, maxItems: {}, nested: { utm: ATTRIBUTION_UTM_SHAPE, click_ids: CLICK_IDS_SHAPE }, items: {}, maps: { custom: CUSTOM_PARAMS_MAP } } as const;
+
+export const TRACKED_EVENT_SHAPE = { fields: TRACKED_EVENT_FIELDS, required: TRACKED_EVENT_REQUIRED, types: TRACKED_EVENT_TYPES, values: TRACKED_EVENT_VALUES, minimum: TRACKED_EVENT_MINIMUM, pattern: TRACKED_EVENT_PATTERN, maxLength: TRACKED_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
 export const PURCHASE_ITEM_SHAPE = { fields: PURCHASE_ITEM_FIELDS, required: PURCHASE_ITEM_REQUIRED, types: PURCHASE_ITEM_TYPES, values: {}, minimum: PURCHASE_ITEM_MINIMUM, pattern: {}, maxLength: PURCHASE_ITEM_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const PURCHASE_SHAPE = { fields: PURCHASE_FIELDS, required: PURCHASE_REQUIRED, types: PURCHASE_TYPES, values: {}, minimum: PURCHASE_MINIMUM, pattern: PURCHASE_PATTERN, maxLength: PURCHASE_MAX_LENGTH, minItems: PURCHASE_MIN_ITEMS, maxItems: PURCHASE_MAX_ITEMS, nested: {}, items: { items: PURCHASE_ITEM_SHAPE }, maps: {} } as const;
 
-export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: PURCHASE_EVENT_REQUIRED, types: PURCHASE_EVENT_TYPES, values: PURCHASE_EVENT_VALUES, minimum: PURCHASE_EVENT_MINIMUM, pattern: PURCHASE_EVENT_PATTERN, maxLength: PURCHASE_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE, purchase: PURCHASE_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+
+export const PAGE_EXIT_EVENT_SHAPE = { fields: PAGE_EXIT_EVENT_FIELDS, required: PAGE_EXIT_EVENT_REQUIRED, types: PAGE_EXIT_EVENT_TYPES, values: PAGE_EXIT_EVENT_VALUES, minimum: PAGE_EXIT_EVENT_MINIMUM, pattern: PAGE_EXIT_EVENT_PATTERN, maxLength: PAGE_EXIT_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+
+export const CLICK_SPECIAL_EVENT_SHAPE = { fields: CLICK_SPECIAL_EVENT_FIELDS, required: CLICK_SPECIAL_EVENT_REQUIRED, types: CLICK_SPECIAL_EVENT_TYPES, values: CLICK_SPECIAL_EVENT_VALUES, minimum: CLICK_SPECIAL_EVENT_MINIMUM, pattern: CLICK_SPECIAL_EVENT_PATTERN, maxLength: CLICK_SPECIAL_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+
+export const WIRE_TAG_ERROR_SHAPE = { fields: WIRE_TAG_ERROR_FIELDS, required: WIRE_TAG_ERROR_REQUIRED, types: WIRE_TAG_ERROR_TYPES, values: WIRE_TAG_ERROR_VALUES, minimum: {}, pattern: WIRE_TAG_ERROR_PATTERN, maxLength: WIRE_TAG_ERROR_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
+
+export const WIRE_WITHDRAWAL_SHAPE = { fields: WIRE_WITHDRAWAL_FIELDS, required: WIRE_WITHDRAWAL_REQUIRED, types: WIRE_WITHDRAWAL_TYPES, values: WIRE_WITHDRAWAL_VALUES, minimum: WIRE_WITHDRAWAL_MINIMUM, pattern: WIRE_WITHDRAWAL_PATTERN, maxLength: WIRE_WITHDRAWAL_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const SCHEMA_VERSION = 1;

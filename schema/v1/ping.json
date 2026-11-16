@@ -37,6 +37,10 @@
     },
     "utm": {
       "$ref": "#/$defs/Utm"
+    },
+    "click_ids": {
+      "description": "The page URL's click IDs, those present, only when the site turned on consent.pings_include_click_ids (default off; AAI-88, AAI-801). A click ID makes the ping click-linkable, which the site's owner must explicitly accept; the collector strips this field from the pings of a site that hasn't.",
+      "$ref": "event.json#/$defs/ClickIds"
     }
   },
   "$defs": {

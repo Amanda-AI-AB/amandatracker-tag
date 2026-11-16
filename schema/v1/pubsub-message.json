@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/pubsub-message.json",
   "title": "PubSubMessage",
-  "description": "What the collector publishes to Pub/Sub for each accepted event or ping, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it.",
+  "description": "What the collector publishes to Pub/Sub for each accepted event, ping or withdrawal signal, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "received_at", "region", "device_class", "event"],
@@ -28,12 +28,34 @@
       "type": "string",
       "pattern": "^[A-Z]{2}$"
     },
+    "subdivision": {
+      "description": "The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Never on a ping's message: a ping carries country-level geo only (06 §3).",
+      "type": "string",
+      "pattern": "^[A-Z]{2}-[A-Z0-9]{1,3}$"
+    },
     "device_class": {
       "$ref": "#/$defs/DeviceClass"
     },
+    "browser_family": {
+      "description": "The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Never on a ping's message.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "browser_major": {
+      "description": "The browser's major version the collector parses from the user agent, when it could. Never on a ping's message.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "os_family": {
+      "description": "The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
     "event": {
-      "description": "The client's payload: an event, or an anonymous ping.",
-      "oneOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }]
+      "description": "The client's payload: an event, an anonymous ping, or a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data. A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them.",
+      "oneOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }, { "$ref": "withdrawal.json" }]
     }
   },
   "$defs": {

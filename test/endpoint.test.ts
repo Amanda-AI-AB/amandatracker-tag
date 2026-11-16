@@ -8,6 +8,8 @@ import {
   adapterUrl,
   batchRequestInit,
   bodyBytes,
+  bootParam,
+  bundleUrl,
   configRequestInit,
   configUrl,
   currentScript,
@@ -146,6 +148,31 @@ describe("endpointFromScript", () => {
   });
 });
 
+describe("bootParam", () => {
+  const tag = (attributes: Record<string, string>) =>
+    ({ getAttribute: (name: string) => (Object.prototype.hasOwnProperty.call(attributes, name) ? attributes[name] : null) }) as unknown as Element;
+
+  it("reads the data- attribute the snippet sets", () => {
+    expect(bootParam(tag({ src: "/a.js?site=other", "data-site": "site_123" }), "site", LOCATION)).toBe("site_123");
+  });
+
+  it("falls back to the src query that Google Tag Manager's template sets, decoded", () => {
+    const gtm = tag({ src: `${DEFAULT_ENDPOINT}/a.js?site=site_123&endpoint=%2Famnda` });
+    expect(bootParam(gtm, "site", LOCATION)).toBe("site_123");
+    expect(bootParam(gtm, "endpoint", LOCATION)).toBe("/amnda");
+    expect(endpointFromScript({ ...gtm, tagName: "SCRIPT" } as unknown as Element, LOCATION)).toBe(`${PAGE}/amnda`);
+  });
+
+  it("resolves a relative src against the page", () => {
+    expect(bootParam(tag({ src: "/amnda/a.js?site=site_123" }), "site", LOCATION)).toBe("site_123");
+  });
+
+  it("is null when the tag has neither", () => {
+    expect(bootParam(tag({ src: `${DEFAULT_ENDPOINT}/a.js` }), "site", LOCATION)).toBeNull();
+    expect(bootParam(tag({}), "endpoint", LOCATION)).toBeNull();
+  });
+});
+
 describe("currentScript", () => {
   const installing = element("SCRIPT", "/amnda");
 
@@ -225,6 +252,20 @@ describe("the endpoint's URLs", () => {
     expect(adapterUrl(resolveEndpoint("/amnda", DEV), "0.3.0", "x", DEV.origin)).toBe(
       "http://localhost:8080/amnda/adapters/0.3.0/x.js",
     );
+  });
+
+  it("serves a versioned build beside the evergreen a.js, from the collection host or the proxy", () => {
+    expect(bundleUrl(DEFAULT_ENDPOINT, "0.3.0", PAGE)).toBe("https://eu.serversider.com/a.0.3.0.js");
+    expect(bundleUrl(endpoint, "0.3.1-dev.20261114103000.gabc1234", PAGE)).toBe(
+      "https://shop.example.com/amnda/a.0.3.1-dev.20261114103000.gabc1234.js",
+    );
+    expect(bundleUrl(endpoint, "1.0.0+b/../x", PAGE)).toBe("https://shop.example.com/amnda/a.1.0.0%2Bb%2F..%2Fx.js");
+  });
+
+  it("serves versioned builds only from the collection host or the page's own origin", () => {
+    const evil = resolveEndpoint("https://evil.example", LOCATION);
+    expect(() => bundleUrl(evil, "0.3.0", PAGE)).toThrow("versioned builds load only from");
+    expect(bundleUrl(resolveEndpoint("/amnda", DEV), "0.3.0", DEV.origin)).toBe("http://localhost:8080/amnda/a.0.3.0.js");
   });
 });
 

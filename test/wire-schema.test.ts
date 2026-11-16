@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EVENT, loadSchemas, PING, PURCHASE, UUID7, validator } from "./wire-validator";
+import { CLICK_OUTBOUND, CLICK_SPECIAL, EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
 
 describe("wire schema v1: event", () => {
   const validate = validator("event.json");
@@ -38,6 +38,13 @@ describe("wire schema v1: event", () => {
     expect(validate({ ...EVENT, consent: { analytics: "yes", ads: "denied" } })).toBe(false);
     expect(validate({ ...EVENT, consent: { analytics: "granted" } })).toBe(false);
     expect(validate({ ...EVENT, consent: { ...EVENT.consent, functional: "granted" } })).toBe(false);
+  });
+
+  it("accepts the consent snapshot's source, gpc, manual, gcm, tcf, cookiebot, onetrust or usercentrics, and no other", () => {
+    for (const source of ["gpc", "manual", "gcm", "tcf", "cookiebot", "onetrust", "usercentrics"]) {
+      expect(validate({ ...EVENT, consent: { ...EVENT.consent, source } })).toBe(true);
+    }
+    expect(validate({ ...EVENT, consent: { ...EVENT.consent, source: "unlisted-cmp" } })).toBe(false);
   });
 
   it("rejects another schema version, a non-semver tag version and a fractional timestamp", () => {
@@ -166,16 +173,17 @@ describe("wire schema v1: purchase", () => {
     const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, unknown>; required: string[] }>;
     const tracked = defs.TrackedEvent!;
     const purchase = defs.PurchaseEvent!;
-    const { type: trackedType, ...trackedRest } = tracked.properties;
+    // link_host is the ordinary event's own: a click_outbound's (AAI-167).
+    const { type: trackedType, link_host: linkHost, ...trackedRest } = tracked.properties;
     const { type: purchaseType, purchase: order, ...purchaseRest } = purchase.properties;
     expect(purchaseRest).toEqual(trackedRest);
     expect(purchaseType).toMatchObject({ const: "purchase" });
     expect(purchase.required).toEqual([...tracked.required, "purchase"]);
   });
 
-  it("names each envelope field once in $defs, so that both events only refer to it", () => {
+  it("names each envelope field once in $defs, so that every event only refers to it", () => {
     const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, object> }>;
-    for (const name of ["TrackedEvent", "PurchaseEvent"]) {
+    for (const name of ["TrackedEvent", "PurchaseEvent", "PageExitEvent"]) {
       const { type, ...envelope } = defs[name]!.properties;
       for (const [key, prop] of Object.entries(envelope)) {
         expect(Object.keys(prop), `${name}.${key}`).toEqual(["$ref"]);
@@ -190,6 +198,157 @@ describe("wire schema v1: purchase", () => {
   });
 });
 
+describe("wire schema v1: page_exit (AAI-105)", () => {
+  const validate = validator("event.json");
+
+  it("accepts a page_exit, and one with no engagement since the previous one", () => {
+    expect(validate(PAGE_EXIT), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...PAGE_EXIT, engagement_ms: 0 }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a page_exit without its engagement time, which no other event may be", () => {
+    const { engagement_ms, ...rest } = PAGE_EXIT;
+    expect(validate(rest)).toBe(false);
+    expect(validate({ ...EVENT, type: "page_exit" })).toBe(false);
+  });
+
+  it("rejects an engagement time on another type of event, a purchase included", () => {
+    expect(validate({ ...PAGE_EXIT, type: "pageview" })).toBe(false);
+    expect(validate({ ...PURCHASE, engagement_ms: 1 })).toBe(false);
+  });
+
+  it.each([
+    ["a negative", -1],
+    ["a fractional", 1.5],
+    ["a string", "1000"],
+  ])("rejects %s engagement time", (_, engagement) => {
+    expect(validate({ ...PAGE_EXIT, engagement_ms: engagement })).toBe(false);
+  });
+
+  it.each(["pa", "page", "page_", "page_exi", "page_exits", "page_exit_intent", "Page_exit", "PAGE_EXIT", "xpage_exit", "page_exit\n", "pageview", "pa_exit"])(
+    "takes %j as the type of an ordinary event",
+    (type) => {
+      expect(validate({ ...EVENT, type }), JSON.stringify(validate.errors)).toBe(true);
+    },
+  );
+
+  it("gives a page_exit the same envelope as every other event", () => {
+    const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, unknown>; required: string[] }>;
+    const tracked = defs.TrackedEvent!;
+    const exit = defs.PageExitEvent!;
+    // link_host is the ordinary event's own: a click_outbound's (AAI-167).
+    const { type: trackedType, link_host: linkHost, ...trackedRest } = tracked.properties;
+    const { type: exitType, engagement_ms: engagement, ...exitRest } = exit.properties;
+    expect(exitRest).toEqual(trackedRest);
+    expect(exitType).toMatchObject({ const: "page_exit" });
+    expect(exit.required).toEqual([...tracked.required, "engagement_ms"]);
+  });
+
+  it("rides in a batch and a Pub/Sub message", () => {
+    expect(validator("batch.json")({ seq: 1, e: [EVENT, PAGE_EXIT] })).toBe(true);
+    const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: PAGE_EXIT };
+    expect(validator("pubsub-message.json")(message)).toBe(true);
+  });
+});
+
+describe("wire schema v1: click_special (AAI-169)", () => {
+  const validate = validator("event.json");
+
+  it.each(["tel", "mailto"])("accepts a click_special on a %s: link", (scheme) => {
+    expect(validate({ ...CLICK_SPECIAL, link_scheme: scheme }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it.each([
+    ["the link's address", "tel:+46701234567"],
+    ["an email address", "visitor@example.com"],
+    ["a scheme with its colon", "mailto:"],
+    ["another scheme", "sms"],
+    ["an upper-case scheme", "TEL"],
+    ["an empty scheme", ""],
+  ])("rejects %s as the link's scheme", (_, scheme) => {
+    expect(validate({ ...CLICK_SPECIAL, link_scheme: scheme })).toBe(false);
+  });
+
+  it("rejects a click_special without its scheme, which no other event may be", () => {
+    const { link_scheme, ...rest } = CLICK_SPECIAL;
+    expect(validate(rest)).toBe(false);
+    expect(validate({ ...EVENT, type: "click_special" })).toBe(false);
+  });
+
+  it("rejects a link's scheme on another type of event, a purchase and a page_exit included", () => {
+    expect(validate({ ...CLICK_SPECIAL, type: "click" })).toBe(false);
+    expect(validate({ ...PURCHASE, link_scheme: "tel" })).toBe(false);
+    expect(validate({ ...PAGE_EXIT, link_scheme: "tel" })).toBe(false);
+  });
+
+  it.each(["c", "cl", "click", "click_", "click_specia", "click_specials", "click_outbound", "Click_special", "xclick_special", "click_special\n", "clack", "custom"])(
+    "takes %j as the type of an ordinary event",
+    (type) => {
+      expect(validate({ ...EVENT, type }), JSON.stringify(validate.errors)).toBe(true);
+    },
+  );
+
+  it("still refuses purchase and page_exit as an ordinary event's type", () => {
+    expect(validate({ ...EVENT, type: "purchase" })).toBe(false);
+    expect(validate({ ...EVENT, type: "page_exit" })).toBe(false);
+  });
+
+  it("gives a click_special the same envelope as every other event", () => {
+    const defs = loadSchemas()["event.json"]!.$defs as Record<string, { properties: Record<string, unknown>; required: string[] }>;
+    const tracked = defs.TrackedEvent!;
+    const click = defs.ClickSpecialEvent!;
+    // link_host is the ordinary event's own: a click_outbound's (AAI-167).
+    const { type: trackedType, link_host: linkHost, ...trackedRest } = tracked.properties;
+    const { type: clickType, link_scheme: scheme, ...clickRest } = click.properties;
+    expect(clickRest).toEqual(trackedRest);
+    expect(clickType).toMatchObject({ const: "click_special" });
+    expect(click.required).toEqual([...tracked.required, "link_scheme"]);
+  });
+
+  it("rides in a batch and a Pub/Sub message", () => {
+    expect(validator("batch.json")({ seq: 1, e: [EVENT, CLICK_SPECIAL] })).toBe(true);
+    const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: CLICK_SPECIAL };
+    expect(validator("pubsub-message.json")(message)).toBe(true);
+  });
+});
+
+describe("wire schema v1: click_outbound (AAI-167)", () => {
+  const validate = validator("event.json");
+
+  it.each(["partner.example.org", "example.com", "xn--bcher-kva.de", "a_b.example", "192.0.2.1", "[2001:db8::1]", "localhost"])(
+    "accepts a click_outbound to the host %s",
+    (host) => {
+      expect(validate({ ...CLICK_OUTBOUND, link_host: host }), JSON.stringify(validate.errors)).toBe(true);
+    },
+  );
+
+  it.each([
+    ["a full URL", "https://partner.example.org/offer?id=1"],
+    ["a host with its path", "partner.example.org/offer"],
+    ["a host with its port", "partner.example.org:8443"],
+    ["a host with credentials", "user@partner.example.org"],
+    ["an upper-case host", "Partner.Example.org"],
+    ["a host with a trailing dot", "example.com."],
+    ["an empty label", "partner..example.org"],
+    ["an empty host", ""],
+    ["a host over 253 characters", `${"a".repeat(250)}.com`],
+  ])("rejects %s as the link's host", (_, host) => {
+    expect(validate({ ...CLICK_OUTBOUND, link_host: host })).toBe(false);
+  });
+
+  it("rejects a link's host on a purchase, a page_exit and a click_special", () => {
+    expect(validate({ ...PURCHASE, link_host: "example.org" })).toBe(false);
+    expect(validate({ ...PAGE_EXIT, link_host: "example.org" })).toBe(false);
+    expect(validate({ ...CLICK_SPECIAL, link_host: "example.org" })).toBe(false);
+  });
+
+  it("rides in a batch and a Pub/Sub message", () => {
+    expect(validator("batch.json")({ seq: 1, e: [EVENT, CLICK_OUTBOUND] })).toBe(true);
+    const message = { schema_version: 1, received_at: 1, region: "europe-west1", device_class: "desktop", event: CLICK_OUTBOUND };
+    expect(validator("pubsub-message.json")(message)).toBe(true);
+  });
+});
+
 describe("wire schema v1: anonymous ping", () => {
   const validate = validator("ping.json");
 
@@ -197,7 +356,7 @@ describe("wire schema v1: anonymous ping", () => {
     expect(validate(PING), JSON.stringify(validate.errors)).toBe(true);
   });
 
-  it("has exactly the frozen field list", () => {
+  it("has exactly the frozen field list, and the click_ids of a site that turned them on (AAI-801)", () => {
     const ping = loadSchemas()["ping.json"]!;
     expect(Object.keys(ping.properties as object)).toEqual([
       "schema_version",
@@ -207,8 +366,16 @@ describe("wire schema v1: anonymous ping", () => {
       "path",
       "referrer_host",
       "utm",
+      "click_ids",
     ]);
     expect(ping.additionalProperties).toBe(false);
+    expect(ping.required).not.toContain("click_ids");
+  });
+
+  it("accepts the ad platforms' click IDs in click_ids, and nothing else there", () => {
+    expect(validate({ ...PING, click_ids: { gclid: "a", gbraid: "b", wbraid: "c", fbclid: "d", msclkid: "e" } })).toBe(true);
+    expect(validate({ ...PING, click_ids: { dclid: "x" } })).toBe(false);
+    expect(validate({ ...PING, click_ids: { gclid: "" } })).toBe(false);
   });
 
   it.each([
@@ -216,7 +383,6 @@ describe("wire schema v1: anonymous ping", () => {
     ["session_id", EVENT.session_id],
     ["seq", 3],
     ["gclid", "abc"],
-    ["click_ids", { gclid: "abc" }],
     ["order_id", "1001"],
     ["revenue", 99],
     ["language", "sv"],
@@ -267,6 +433,26 @@ describe("wire schema v1: Pub/Sub message", () => {
     expect(validate({ ...message, country: "se", event: PING })).toBe(false);
     expect(validate({ ...message, device_class: "smartwatch", event: PING })).toBe(false);
   });
+
+  it("carries an event's subdivision, browser family and major, and OS family (AAI-908)", () => {
+    const derived = { subdivision: "SE-AB", browser_family: "Chrome Mobile", browser_major: 131, os_family: "Android" };
+    expect(validate({ ...message, ...derived, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...message, subdivision: "GB-ENG", event: EVENT })).toBe(true);
+    expect(validate({ ...message, subdivision: "FR-75C", event: EVENT })).toBe(true);
+  });
+
+  it("checks the shape of the subdivision and the user-agent fields", () => {
+    for (const subdivision of ["se-ab", "SE", "SE-", "SE-ABCD", "SEAB"]) {
+      expect(validate({ ...message, subdivision, event: EVENT }), subdivision).toBe(false);
+    }
+    expect(validate({ ...message, browser_family: "", event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_family: "x".repeat(65), event: EVENT })).toBe(false);
+    expect(validate({ ...message, os_family: "", event: EVENT })).toBe(false);
+    expect(validate({ ...message, os_family: "x".repeat(65), event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_major: -1, event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_major: 131.5, event: EVENT })).toBe(false);
+    expect(validate({ ...message, browser_major: "131", event: EVENT })).toBe(false);
+  });
 });
 
 describe("wire schema v1: batch (the body of POST /v1/e)", () => {
@@ -311,6 +497,20 @@ describe("wire schema v1: batch (the body of POST /v1/e)", () => {
   it("rejects a seq below 1 or fractional", () => {
     expect(validate({ seq: 0, e: [EVENT] })).toBe(false);
     expect(validate({ seq: 1.5, e: [EVENT] })).toBe(false);
+  });
+
+  it("accepts webdriver: true on a batch of events, for the collector's bot marking (AAI-796)", () => {
+    expect(validate({ seq: 1, e: [EVENT], webdriver: true }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a webdriver other than true: the tag leaves it out instead", () => {
+    expect(validate({ seq: 1, e: [EVENT], webdriver: false })).toBe(false);
+    expect(validate({ seq: 1, e: [EVENT], webdriver: "true" })).toBe(false);
+    expect(validate({ seq: 1, e: [EVENT], webdriver: 1 })).toBe(false);
+  });
+
+  it("rejects webdriver on a batch of pings, whose field list is frozen", () => {
+    expect(validate({ e: [PING], webdriver: true })).toBe(false);
   });
 
   it("rejects a key the schema doesn't list", () => {

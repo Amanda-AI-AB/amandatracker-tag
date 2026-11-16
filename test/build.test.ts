@@ -7,8 +7,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { adapterEntries, build, BuildError, buildVersion, sriHash } from "../scripts/build.mjs";
 import { CORE_BUDGET_BYTES, SizeBudgetError } from "../scripts/size-gate.mjs";
 
-// esbuild keeps the "use strict" directive of strict TypeScript ahead of the IIFE.
+// esbuild keeps the "use strict" directive of strict TypeScript ahead of the IIFE; the core's version
+// banner comes before both.
 const IIFE = /^("use strict";)?\(\(\)=>\{[\s\S]*\}\)\(\);\s*$/;
+const BANNER = /^\/\*! amandatracker-tag \S+ \*\/\n/;
 
 describe("build", () => {
   let dir: string;
@@ -27,7 +29,8 @@ describe("build", () => {
 
     const code = readFileSync(coreFile, "utf8");
     expect(coreFile).toBe(join(outdir, "a.js"));
-    expect(code).toMatch(IIFE);
+    expect(code).toMatch(BANNER);
+    expect(code.replace(BANNER, "")).toMatch(IIFE);
     expect(code).not.toMatch(/\bimport\s*[{(*"']|\bexport\s*[{*]|\brequire\(/);
     expect(coreGzipBytes).toBeLessThanOrEqual(CORE_BUDGET_BYTES);
   });
@@ -81,8 +84,8 @@ describe("build", () => {
 
   it("fails on a deliberately oversized core bundle", async () => {
     const coreEntry = join(dir, "oversized.ts");
-    // An incompressible string literal of 24 KB: well over 15 KB even after gzip.
-    const payload = randomBytes(18 * 1024).toString("base64");
+    // An incompressible string literal of 40 KB: well over 20 KB even after gzip.
+    const payload = randomBytes(30 * 1024).toString("base64");
     writeFileSync(coreEntry, `console.log(${JSON.stringify(payload)});\n`);
 
     await expect(
@@ -116,6 +119,23 @@ describe("build", () => {
     const code = readFileSync(coreFile, "utf8");
     expect(code).toContain('"1.2.3-dev.gabc1234"');
     expect(code).toContain(`sha384-${digest}`);
+  });
+
+  it("names its version on the core's first line, where whoever loads a.js can read it", async () => {
+    const { coreFile } = await build({ adaptersDir: emptyAdaptersDir(), outdir: join(dir, "dist"), version: "1.2.3" });
+
+    expect(readFileSync(coreFile, "utf8").split("\n")[0]).toBe("/*! amandatracker-tag 1.2.3 */");
+  });
+
+  it("is byte-reproducible: two builds in different directories emit the same bytes", async () => {
+    const adaptersDir = join(dir, "adapters");
+    mkdirSync(adaptersDir);
+    writeFileSync(join(adaptersDir, "example-cmp.ts"), "console.log('example-cmp adapter');\n");
+    const first = await build({ adaptersDir, outdir: join(dir, "first"), version: "1.2.3" });
+    const second = await build({ adaptersDir, outdir: join(dir, "elsewhere", "second"), version: "1.2.3" });
+
+    expect(readFileSync(second.coreFile)).toEqual(readFileSync(first.coreFile));
+    expect(readFileSync(second.adapterFiles[0]!)).toEqual(readFileSync(first.adapterFiles[0]!));
   });
 
   it("refuses a version that isn't semver", async () => {

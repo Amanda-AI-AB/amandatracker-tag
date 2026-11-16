@@ -1,0 +1,8 @@
+# The Community Template Gallery reads this file from main: each version is a commit on main whose
+# template.tpl is that version, newest first. See docs/gtm-gallery.md for the release process, and
+# check it with `pnpm gtm:check`.
+homepage: "https://serversider.com"
+documentation: "https://github.com/Amanda-AI-AB/amandatracker-tag/blob/main/docs/google-tag-manager.md"
+versions:
+  - sha: 3d510810ebd89929c95a8b9d602dffd1f285f1d8
+    changeNotes: Initial release.

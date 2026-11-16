@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { PURCHASE_EVENT_SHAPE, TRACKED_EVENT_SHAPE, WIRE_PING_SHAPE } from "../src/wire/generated";
+import { PURCHASE_EVENT_SHAPE, TRACKED_EVENT_SHAPE, WIRE_PING_SHAPE, WIRE_TAG_ERROR_SHAPE } from "../src/wire/generated";
 import {
   buildEvent,
   buildPing,
@@ -14,13 +14,15 @@ import {
   UPPER_CASE,
   uuidv7,
   WirePayloadError,
+  type ClickSpecialEventInput,
   type EventInput,
+  type PageExitEventInput,
   type PurchaseEventInput,
   type Shape,
   type PingInput,
   type TrackedEventInput,
 } from "../src/wire/payload";
-import { EVENT, PING, PURCHASE, validator } from "./wire-validator";
+import { CLICK_OUTBOUND, CLICK_SPECIAL, EVENT, PAGE_EXIT, PING, PURCHASE, validator } from "./wire-validator";
 
 type Items = NonNullable<PurchaseEventInput["purchase"]["items"]>;
 
@@ -227,7 +229,12 @@ describe("cutSubtags", () => {
 });
 
 describe("OVERFLOW", () => {
-  const shapes: [string, Shape][] = [["event", TRACKED_EVENT_SHAPE], ["event", PURCHASE_EVENT_SHAPE], ["ping", WIRE_PING_SHAPE]];
+  const shapes: [string, Shape][] = [
+    ["event", TRACKED_EVENT_SHAPE],
+    ["event", PURCHASE_EVENT_SHAPE],
+    ["ping", WIRE_PING_SHAPE],
+    ["tag_error", WIRE_TAG_ERROR_SHAPE],
+  ];
 
   function capped(prefix: string, spec: Shape): { at: string; required: boolean }[] {
     return [
@@ -351,6 +358,36 @@ describe("buildEvent nested consent", () => {
     expect(Object.keys(event.consent).sort()).toEqual(["ads", "analytics"]);
     expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
   });
+
+  it("carries the snapshot's source, and refuses one off its list", () => {
+    const input = eventInput();
+    const event = buildEvent({ ...input, consent: { ...input.consent, source: "gcm" } });
+    expect(event.consent.source).toBe("gcm");
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    const consent = { ...input.consent, source: "unlisted-cmp" } as unknown as EventInput["consent"];
+    expect(() => buildEvent({ ...input, consent })).toThrow(
+      new WirePayloadError("event.consent.source", "is not one of gpc, manual, gcm, tcf, cookiebot, onetrust, usercentrics"),
+    );
+  });
+
+  const TC_STRING = "CPXxRfAPXxRfAAfKABENB-CgAAAAAAAAAAYgAAAAAAAA.YAAAAAAAAAAA";
+
+  it("carries a TCF snapshot's TC string", () => {
+    const input = eventInput();
+    const event = buildEvent({ ...input, consent: { ...input.consent, source: "tcf", tc_string: TC_STRING } });
+    expect(event.consent).toEqual({ ...input.consent, source: "tcf", tc_string: TC_STRING });
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it.each([
+    ["over its cap", `${TC_STRING}${"A".repeat(8192)}`],
+    ["not of base64url segments", "CPX xRf+/=="],
+  ])("leaves out a TC string %s, rather than send another string of it", (_name, tcString) => {
+    const input = eventInput();
+    const event = buildEvent({ ...input, consent: { ...input.consent, source: "tcf", tc_string: tcString } });
+    expect(event.consent).toEqual({ ...input.consent, source: "tcf" });
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+  });
 });
 
 describe("buildEvent props", () => {
@@ -427,6 +464,109 @@ describe("buildEvent props", () => {
   it("throws when props isn't an object", () => {
     expect(() => withProps(["a"])).toThrow(new WirePayloadError("event.props", "is not an object"));
     expect(() => withProps("a")).toThrow(new WirePayloadError("event.props", "is not an object"));
+  });
+});
+
+describe("buildEvent page_exit (AAI-105)", () => {
+  const validate = validator("event.json");
+
+  function pageExitInput(): PageExitEventInput {
+    const { schema_version, event_id, ...input } = PAGE_EXIT;
+    return { ...input, consent: { ...input.consent }, props: { ...input.props } };
+  }
+
+  it("builds a valid page_exit with its engagement time, 0 included", () => {
+    const event = buildEvent(pageExitInput());
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    expect(event).toMatchObject({ type: "page_exit", engagement_ms: 42_500 });
+    const idle = buildEvent({ ...pageExitInput(), engagement_ms: 0 });
+    expect(idle).toMatchObject({ engagement_ms: 0 });
+    expect(validate(idle), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("throws when the engagement time is on another type of event", () => {
+    const input = { ...pageExitInput(), type: "pageview" } as unknown as EventInput;
+    expect(() => buildEvent(input)).toThrow(new WirePayloadError("event.type", 'is not "page_exit" on an event with an engagement_ms'));
+  });
+
+  it("throws on an event of type page_exit without its engagement time", () => {
+    const { engagement_ms, ...rest } = pageExitInput();
+    expect(() => buildEvent(rest as unknown as EventInput)).toThrow(new WirePayloadError("event.engagement_ms"));
+    expect(() => buildEvent({ ...EVENT, type: "page_exit" } as unknown as EventInput)).toThrow(
+      new WirePayloadError("event.engagement_ms"),
+    );
+  });
+
+  it.each([
+    ["negative", -1, "is under its minimum of 0"],
+    ["fractional", 1.5, "is not an integer"],
+    ["NaN", Number.NaN, "is not an integer"],
+  ])("throws on a %s engagement time", (_, engagement, problem) => {
+    expect(() => buildEvent({ ...pageExitInput(), engagement_ms: engagement })).toThrow(
+      new WirePayloadError("event.engagement_ms", problem),
+    );
+  });
+});
+
+describe("buildEvent click_special (AAI-169)", () => {
+  const validate = validator("event.json");
+
+  function clickSpecialInput(): ClickSpecialEventInput {
+    const { schema_version, event_id, ...input } = CLICK_SPECIAL;
+    return { ...input, consent: { ...input.consent }, props: { ...input.props } };
+  }
+
+  it.each(["tel", "mailto"] as const)("builds a valid click_special on a %s: link", (scheme) => {
+    const event = buildEvent({ ...clickSpecialInput(), link_scheme: scheme });
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    expect(event).toMatchObject({ type: "click_special", link_scheme: scheme });
+  });
+
+  it.each(["tel:+46701234567", "visitor@example.com", "mailto:", "sms", "TEL"])("throws on %j as the link's scheme", (scheme) => {
+    const input = { ...clickSpecialInput(), link_scheme: scheme } as unknown as EventInput;
+    expect(() => buildEvent(input)).toThrow(new WirePayloadError("event.link_scheme", "is not one of tel, mailto"));
+  });
+
+  it("throws when the link's scheme is on another type of event", () => {
+    const input = { ...clickSpecialInput(), type: "click" } as unknown as EventInput;
+    expect(() => buildEvent(input)).toThrow(new WirePayloadError("event.type", 'is not "click_special" on an event with a link_scheme'));
+  });
+
+  it("throws on an event of type click_special without its scheme", () => {
+    const { link_scheme, ...rest } = clickSpecialInput();
+    expect(() => buildEvent(rest as unknown as EventInput)).toThrow(new WirePayloadError("event.link_scheme"));
+  });
+});
+
+describe("buildEvent click_outbound (AAI-167)", () => {
+  const validate = validator("event.json");
+
+  function clickOutboundInput(): TrackedEventInput {
+    const { schema_version, event_id, ...input } = CLICK_OUTBOUND;
+    return { ...input, consent: { ...input.consent }, props: { ...input.props } };
+  }
+
+  it("builds a valid click_outbound with the link's host", () => {
+    const event = buildEvent(clickOutboundInput());
+    expect(validate(event), JSON.stringify(validate.errors)).toBe(true);
+    expect(event).toMatchObject({ type: "click_outbound", link_host: "partner.example.org" });
+  });
+
+  it("throws on a link's host on another type of event", () => {
+    const input = { ...clickOutboundInput(), type: "click" };
+    expect(() => buildEvent(input)).toThrow(new WirePayloadError("event.type", 'is not "click_outbound" on an event with a link_host'));
+  });
+
+  it("throws on an event of type click_outbound without its host", () => {
+    const { link_host, ...rest } = clickOutboundInput();
+    expect(() => buildEvent(rest)).toThrow(new WirePayloadError("event.link_host"));
+  });
+
+  it.each([
+    ["a full URL", "https://partner.example.org/offer"],
+    ["a host over its cap, which a cut would make another host", `${"a".repeat(250)}.com`],
+  ])("refuses %s as the link's host", (_, host) => {
+    expect(() => buildEvent({ ...clickOutboundInput(), link_host: host })).toThrow(WirePayloadError);
   });
 });
 

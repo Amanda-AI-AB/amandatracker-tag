@@ -24,6 +24,11 @@ export const EVENT = {
   visitor_id: "01934f6c-8d2a-7b3c-8d4e-5f6a7b8c9d01",
   session_id: "01934f6c-8d2a-7b3c-ad4e-5f6a7b8c9d02",
   consent: { analytics: "granted", ads: "denied" },
+  attribution: {
+    utm: { source: "google", medium: "cpc", campaign: "Summer", marketing_tactic: "prospecting" },
+    click_ids: { gclid: "EAIaIQobChMI" },
+    custom: { ref: "partner-7" },
+  },
   props: { plan: "pro" },
 } as const;
 
@@ -43,6 +48,27 @@ export const PURCHASE = {
   },
 } as const;
 
+/** A valid page_exit with every field. */
+export const PAGE_EXIT = {
+  ...EVENT,
+  type: "page_exit",
+  engagement_ms: 42_500,
+} as const;
+
+/** A valid click_special with every field. */
+export const CLICK_SPECIAL = {
+  ...EVENT,
+  type: "click_special",
+  link_scheme: "tel",
+} as const;
+
+/** A valid click_outbound: an ordinary event with the hostname of the link it left by. */
+export const CLICK_OUTBOUND = {
+  ...EVENT,
+  type: "click_outbound",
+  link_host: "partner.example.org",
+} as const;
+
 /** A valid ping with every field. */
 export const PING = {
   schema_version: SCHEMA_VERSION,
@@ -54,7 +80,17 @@ export const PING = {
   utm: { source: "newsletter", medium: "email", campaign: "nov" },
 } as const;
 
-export type SchemaFile = "batch.json" | "event.json" | "ping.json" | "pubsub-message.json";
+/** A valid withdrawal signal (AAI-785). */
+export const WITHDRAWAL = {
+  schema_version: SCHEMA_VERSION,
+  event_id: UUID7,
+  tag_version: "0.1.0",
+  site_id: "site_123",
+  visitor_id: "01934f6c-8d2a-7b3c-8d4e-5f6a7b8c9d01",
+  client_ts: 1_731_400_000_000,
+} as const;
+
+export type SchemaFile = "batch.json" | "event.json" | "ping.json" | "pubsub-message.json" | "tag-error.json" | "withdrawal.json";
 
 export function loadSchemas(version: number = SCHEMA_VERSION): Record<string, Record<string, unknown>> {
   return Object.fromEntries(schemaFiles.loadSchemas(join(schemaFiles.SCHEMA_ROOT, `v${version}`)));

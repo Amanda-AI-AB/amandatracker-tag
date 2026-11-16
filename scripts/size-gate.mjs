@@ -1,11 +1,13 @@
-// The core-bundle size gate: a.js must stay within 15 KB gzipped (spec 09 §2.6).
+// The core-bundle size gate: a.js must stay within 20 KB gzipped. Spec 09 §2.6 set 15 KB; it was
+// raised to 20 KB when the pageview feed brought the transport, identity, consent machine and
+// payload builder into the core (AAI-964, decided on the ticket).
 // `pnpm build` runs it after every build, so any CI that builds fails on an oversized bundle.
 import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { runMain } from "./cli.mjs";
 
-/** 15 KB, counted in KiB: 15 × 1024 bytes after gzip at level 9. */
-export const CORE_BUDGET_BYTES = 15 * 1024;
+/** 20 KB, counted in KiB: 20 × 1024 bytes after gzip at level 9. */
+export const CORE_BUDGET_BYTES = 20 * 1024;
 
 export class SizeBudgetError extends Error {
   /**

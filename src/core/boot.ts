@@ -1,0 +1,385 @@
+// The tag's boot: read the installing script tag, fetch the site's config, then install the
+// command queue, send the first pageview and follow the single-page app's route changes. The
+// engagement clock runs from the page's load, and each hide sends a page_exit (engagement.ts), as
+// does each pageview after the first, for the route it leaves (AAI-969). A
+// config that pins the site to another build hands off to it instead (canary.ts). A config that
+// pauses the site, its kill switch (AAI-797), stops the boot there: the tag sends nothing. Every step runs
+// inside the error boundary: a failure is reported, and the page never sees it.
+
+import { ADAPTER_COMMAND } from "./adapter-api";
+import { loadAdapter } from "./adapter-loader";
+import { attributionOf } from "./attribution";
+import type { ErrorBoundary } from "./boundary";
+import { handOff, shouldHandOff } from "./canary";
+import {
+  bundleVersion,
+  checkSiteId,
+  customParams,
+  errorSampleRate,
+  fetchConfig,
+  ga4EcommerceEnabled,
+  gpcHonored,
+  hasCmp,
+  identifyEnabled,
+  noCmpPolicy,
+  outboundClicksEnabled,
+  ownDomains,
+  paused,
+  type SiteConfig,
+} from "./config";
+import {
+  consentCommand,
+  createLadder,
+  honorGpc,
+  watchConsentMode,
+  watchCmpAdapters,
+  watchTcf,
+  type CmpHost,
+  type ConsentInput,
+  type ConsentModeHost,
+  type GpcHost,
+  type TcfHost,
+} from "./consent-sources";
+import { EVENT_COMMAND, customEventInput, eventCommand, type CustomEventInput } from "./custom-event";
+import { ecommerceInput, watchEcommerce, type EcommerceHost, type EcommerceInput } from "./ecommerce";
+import { pageExitInput, watchEngagement, type EngagementHost, type EngagementWatch, type PageExitInput } from "./engagement";
+import { bootParam, currentScript, endpointFromScript, resolveEndpoint } from "./endpoint";
+import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
+import { IDENTIFY_COMMAND, identifyCommand, identifyInput, type IdentifyInput } from "./identify";
+import { followNoCmpPolicy, type NoCmpInput } from "./no-cmp";
+import { clickOutboundInput, watchOutboundClicks, type ClickOutboundInput } from "./outbound";
+import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
+import { PRIVACY_COMMAND, privacyCommand, type PrivacyHost } from "./privacy";
+import { PURCHASE_COMMAND, purchaseCommand, purchaseInput, type PurchaseInput } from "./purchase";
+import { ensureStub, installCommands, type AmandaHost, type Command } from "./queue";
+import { scrollDepthInput, watchScroll, type ScrollDepthInput, type ScrollHost, type ScrollReset } from "./scroll";
+import { clickSpecialInput, watchSpecialClicks, type ClickSpecialInput, type SpecialClickHost } from "./special-clicks";
+import type { TagTarget } from "./telemetry";
+import type { TransportWindow } from "./transport";
+
+/** The browser globals the tag boots on: window, or a stand-in for it in tests. */
+export interface TagWindow
+  extends AmandaHost,
+    TransportWindow,
+    PageSource,
+    RouteSource,
+    ConsentModeHost,
+    TcfHost,
+    GpcHost,
+    EngagementHost,
+    FormHost,
+    SpecialClickHost,
+    ScrollHost,
+    EcommerceHost,
+    CmpHost,
+    PrivacyHost {
+  readonly document: Document;
+  readonly location: Location;
+  readonly navigator: PageSource["navigator"] & GpcHost["navigator"] & PrivacyHost["navigator"] & TransportWindow["navigator"];
+  fetch: typeof fetch;
+  /** popstate, pagehide, pageshow and scroll, and the events of the consent managers the tag has adapters for. */
+  addEventListener(type: string, listener: () => void): void;
+}
+
+export interface BootOptions {
+  readonly tagVersion: string;
+  readonly boundary: ErrorBoundary;
+  /** Where each pageview goes: in a.js, the feed (feed.ts), which makes it an event or a ping for the transport. */
+  readonly onPageview: (input: PageviewInput) => void;
+  /**
+   * Where each page_exit goes (engagement.ts), as each pageview does: an event only, never a
+   * ping. With it, the boot runs the engagement clock from the page's load, and hands over the
+   * page_exits of hides after the tag booted, and before each pageview after the first (a route
+   * change, or the `pageview` command), the page_exit of the route it leaves, with that route's URL,
+   * title and engagement. Without it, the tag tracks no engagement.
+   */
+  readonly onPageExit?: (input: PageExitInput) => void;
+  /**
+   * Where each form_submit goes (forms.ts), as each pageview does. With it, the booted tag hands
+   * over a form_submit, with the form's id, name and action and never its fields' values, for each
+   * form the page submits. Without it, the tag captures no form submission.
+   */
+  readonly onFormSubmit?: (input: FormSubmitInput) => void;
+  /**
+   * Where each click_special goes (special-clicks.ts), as each pageview does. With it, the booted
+   * tag hands over a click_special, with the link's scheme, tel or mailto, and never its address,
+   * for each click or middle click on a tel: or mailto: link. Without it, the tag captures no such
+   * click.
+   */
+  readonly onClickSpecial?: (input: ClickSpecialInput) => void;
+  /**
+   * Where each click_outbound goes (outbound.ts), as each pageview does. With it, the booted tag
+   * hands over a click_outbound, with the link's hostname alone, for each click or middle click on
+   * an http: or https: link that leaves the site's own domains, unless the site's config turns it
+   * off (features.outbound_clicks_enabled: false). Without it, the tag captures no such click.
+   */
+  readonly onClickOutbound?: (input: ClickOutboundInput) => void;
+  /**
+   * Where each scroll event goes (scroll.ts), as each pageview does. With it, the booted tag hands
+   * over a scroll event the first time, in each pageview, the visitor scrolls to 25, 50, 75 and 90 %
+   * of the page. Without it, the default, the tag measures no scroll depth.
+   */
+  readonly onScrollDepth?: (input: ScrollDepthInput) => void;
+  /**
+   * Where each mapped GA4 e-commerce event goes (ecommerce.ts), as each pageview does. With it, the
+   * booted tag reads view_item, add_to_cart, begin_checkout and purchase from window.dataLayer,
+   * those already there and those pushed later, and hands over each as the event its explicit
+   * mapping makes of it, but only when the site's config turns it on
+   * (features.ga4_ecommerce_enabled: true, AAI-974). Without it, the default, or with the toggle
+   * off or absent, the tag reads none of them.
+   */
+  readonly onEcommerce?: (input: EcommerceInput) => void;
+  /**
+   * Where each identify event goes (identify.ts), as each pageview does: an event only, never a
+   * ping. With it, the booted tag has the `identify` command, which hands over one identify event
+   * for each call with a ref it accepts, and only when the site's config turns identify on. Without
+   * it, the tag has no `identify` command.
+   */
+  readonly onIdentify?: (input: IdentifyInput) => void;
+  /**
+   * Where each purchase event goes (purchase.ts), as each pageview does: an event under granted
+   * analytics, a count-only ping in declined mode `pings`. With it, the booted tag has the
+   * `purchase` command, which hands over one purchase event for each call with an order the wire
+   * schema accepts. Without it, the tag has no `purchase` command.
+   */
+  readonly onPurchase?: (input: PurchaseInput) => void;
+  /**
+   * Where each custom event goes (custom-event.ts), as each pageview does: an event only, never a
+   * ping. With it, the booted tag has the `event` command, which hands over one event, its name as
+   * its type and its props, for each call with a name and props it accepts. Without it, the tag has
+   * no `event` command.
+   */
+  readonly onEvent?: (input: CustomEventInput) => void;
+  /**
+   * The consent state machine for the booted site's config (createConsent, with the config's
+   * declined mode). With it, the consent sources drive the machine: Global Privacy Control when the
+   * config honors it, the `consent` command, Google Consent Mode, TCF v2.2 and the adapters of
+   * consent managers it detects, loaded from the endpoint (consent-sources.ts); and, on a site
+   * whose config says it has no consent manager (consent.has_cmp: false), its no-CMP policy first
+   * (no-cmp.ts). Without it, the tag follows no consent source.
+   */
+  readonly consent?: (config: SiteConfig) => ConsentInput & NoCmpInput;
+  /**
+   * The site and endpoint, given by the code that boots the tag rather than read from the installing
+   * script tag: the npm package's init (src/npm/index.ts, AAI-222), bundled into a site's own code,
+   * has no script tag. The endpoint resolves as data-endpoint does; none means the default. A tag
+   * booted this way never hands off to a build its config pins: the site chose the package's
+   * version when it bundled it.
+   */
+  readonly install?: Install;
+  /** Filled in as the boot resolves the endpoint and the site, for the tag errors' sink. */
+  readonly target?: TagTarget;
+  readonly now?: () => number;
+}
+
+/** A tag's site and endpoint, as its script tag's data-site and data-endpoint would give them. */
+export interface Install {
+  readonly site: string;
+  readonly endpoint?: string | undefined;
+}
+
+/** A booted tag: where it sends, for which site, and with what settings. */
+export interface Tag {
+  readonly endpoint: string;
+  readonly site: string;
+  readonly config: SiteConfig;
+}
+
+/**
+ * Boots the tag on win. Call it synchronously at a.js's top level: it reads
+ * document.currentScript, which is null anywhere else; with options.install, from anywhere. Returns the boot's remaining, asynchronous
+ * part, which settles with the booted tag, or undefined when the tag didn't boot: its failure was
+ * reported, another copy of a.js already runs on the page, the config paused the site (the kill
+ * switch: nothing more is sent, not even a tag error), or the config pinned another build, which
+ * has loaded to run in its place. It never rejects and never throws.
+ */
+export function boot(win: TagWindow, options: BootOptions): Promise<Tag | undefined> {
+  const { boundary, target, onPageExit } = options;
+  const now = options.now || Date.now;
+  /** The page_exits' destination, once the tag booted; until then a page_exit is dropped. */
+  let exitTo: ((engagementMs: number) => void) | undefined;
+  /** The engagement watcher, with onPageExit, for the route changes' page_exits. */
+  let engagement: EngagementWatch | undefined;
+  /**
+   * The installing script tag, a <script> element once endpointFromScript has accepted it; none for
+   * a tag booted with options.install.
+   */
+  let script: Element | undefined;
+  const started = boundary.guard("boot", () => {
+    if (!ensureStub(win)) return undefined;
+    if (onPageExit) engagement = watchEngagement(win, boundary, (engagementMs) => exitTo?.(engagementMs), now);
+    let endpoint: string;
+    let site: string;
+    if (options.install) {
+      endpoint = resolveEndpoint(options.install.endpoint, win.location);
+      if (target) target.endpoint = endpoint;
+      site = checkSiteId(options.install.site);
+    } else {
+      const current = currentScript(win.document);
+      endpoint = endpointFromScript(current, win.location);
+      // endpointFromScript has checked that current is a <script> element.
+      script = current!;
+      if (target) target.endpoint = endpoint;
+      site = checkSiteId(bootParam(script, "site", win.location));
+    }
+    if (target) target.site = site;
+    return fetchConfig(win.fetch.bind(win), endpoint, site).then((config) => ({ endpoint, site, config }));
+  });
+  if (started === undefined) return Promise.resolve(undefined);
+  /** Starts the booted tag: from here on, this build runs on the page. */
+  const run = (tag: Tag): Tag => {
+    if (onPageExit) {
+      exitTo = (engagementMs) => onPageExit(pageExitInput(win, tag.site, options.tagVersion, engagementMs, now()));
+    }
+    return start(win, tag, options, engagement);
+  };
+  return started.then(
+    (tag) =>
+      boundary.guard("boot", () => {
+        if (paused(tag.config)) {
+          // The kill switch: the config fetch was the page's only request. Nothing runs, the site's
+          // calls stay on the stub, and the tag reports no error from here on.
+          boundary.setSampleRate(0);
+          return undefined;
+        }
+        const rate = errorSampleRate(tag.config);
+        if (rate !== undefined) boundary.setSampleRate(rate);
+        const pin = bundleVersion(tag.config);
+        if (!script || !shouldHandOff(pin, options.tagVersion, script)) return run(tag);
+        // The pinned build boots in this one's place, with the stub this one left. When it fails to
+        // load, the failure is reported and this build runs, so the page is still tracked.
+        return handOff(win.document, script!, tag.endpoint, pin!, options.tagVersion, win.location).then(
+          () => undefined,
+          (error: unknown) => {
+            boundary.report("boot", error);
+            return boundary.guard("boot", () => run(tag));
+          },
+        );
+      }),
+    (error: unknown) => {
+      boundary.report("config", error);
+      return undefined;
+    },
+  );
+}
+
+/**
+ * Runs the booted tag: on a site without a consent manager, its no-CMP policy, which puts both
+ * categories in no_cmp at once and decides them when it resolves; Global Privacy Control, when the site honors it, so that nothing grants
+ * before it denies; Consent Mode's state as the dataLayer has it so far, the TCF consent manager's
+ * when the page has one, the adapter of a consent manager the page has or loads later (Cookiebot, OneTrust, Usercentrics),
+ * which signals once it has loaded and connected through the `adapter` command, then the site's queued
+ * commands (they may set what the pageview carries, such as consent; `privacy` shows the visitor
+ * their ID, privacy.ts; `identify`, when the site turns it on, links the visitor to the site's
+ * pseudonymous ref, identify.ts; `purchase` records an order, purchase.ts; `event` sends the site's
+ * own custom event, custom-event.ts), then the first pageview,
+ * the landing, which alone carries the landing URL's attribution (attribution.ts), then a pageview
+ * on each route change, after the page_exit of the route left (engagement.ts), a form_submit for each form the page submits (forms.ts), a click_special
+ * for each click on a tel: or mailto: link, with its scheme alone (special-clicks.ts), a
+ * click_outbound for each click on a link that leaves the site's own domains, with its hostname alone,
+ * unless the site turns it off (outbound.ts), and, when it is
+ * turned on, a scroll event for each depth threshold the visitor reaches in each pageview (scroll.ts)
+ * and the GA4 e-commerce events of the dataLayer, mapped to the tag's (ecommerce.ts).
+ */
+function start(win: TagWindow, tag: Tag, options: BootOptions, engagement: EngagementWatch | undefined): Tag {
+  const { boundary, tagVersion, onPageview, onPageExit } = options;
+  const now = options.now || Date.now;
+  let lastUrl: string | undefined;
+  /** The previous pageview's title, as it carried it: its route's page_exit carries the same. */
+  let lastTitle = "";
+  /** Starts the scroll depth's count over, once the watcher runs (onScrollDepth). */
+  let resetScroll: ScrollReset | undefined;
+  /**
+   * Hands over the page_exit of the route the visitor left, with its URL and title as its pageview
+   * had them and its engagement so far (engagement.ts, AAI-969). Guarded on its own: when it fails,
+   * the next route's pageview still goes.
+   */
+  const leaveRoute = (url: string): void => {
+    if (!engagement || !onPageExit) return;
+    const watch = engagement;
+    const left: PageSource = { location: { href: url }, document: { title: lastTitle, referrer: "" }, navigator: win.navigator };
+    boundary.guard("pageview", () => onPageExit(pageExitInput(left, tag.site, tagVersion, watch.leave(), now())));
+  };
+  const pageview = (): void => {
+    boundary.guard("pageview", () => {
+      const landing = lastUrl === undefined;
+      if (lastUrl !== undefined) leaveRoute(lastUrl);
+      const input = pageviewInput(win, tag.site, tagVersion, lastUrl === undefined ? win.document.referrer : lastUrl, now());
+      lastUrl = input.url;
+      lastTitle = input.page_title || "";
+      // A new pageview's thresholds fire again, even if handing over its pageview fails.
+      if (resetScroll) resetScroll();
+      const attribution = landing ? attributionOf(input.url, customParams(tag.config)) : undefined;
+      onPageview(attribution === undefined ? input : { ...input, attribution });
+    });
+  };
+  // The privacy helper is there in every consent state: it only reads the visitor's ID (privacy.ts).
+  const commands: Record<string, Command> = { pageview, [PRIVACY_COMMAND]: privacyCommand(win, boundary) };
+  if (options.consent) {
+    const machine = options.consent(tag.config);
+    const ladder = createLadder(machine);
+    if (!hasCmp(tag.config)) {
+      boundary.guard("consent", () =>
+        followNoCmpPolicy(machine, noCmpPolicy(tag.config), win.fetch.bind(win), tag.endpoint, boundary),
+      );
+    }
+    if (gpcHonored(tag.config)) boundary.guard("consent", () => honorGpc(win, ladder));
+    boundary.guard("consent", () => watchConsentMode(win, boundary, ladder));
+    boundary.guard("consent", () => watchTcf(win, boundary, ladder));
+    const adapter = boundary.guard("consent", () =>
+      watchCmpAdapters(win, boundary, ladder, (name) => loadAdapter(win.document, tag.endpoint, name, win.location.origin)),
+    );
+    if (adapter) commands[ADAPTER_COMMAND] = adapter;
+    commands.consent = consentCommand(ladder);
+  }
+  const { onIdentify } = options;
+  if (onIdentify) {
+    commands[IDENTIFY_COMMAND] = identifyCommand(identifyEnabled(tag.config), (ref) =>
+      onIdentify(identifyInput(win, tag.site, tagVersion, ref, now())),
+    );
+  }
+  const { onPurchase } = options;
+  if (onPurchase) {
+    commands[PURCHASE_COMMAND] = purchaseCommand((purchase) => onPurchase(purchaseInput(win, tag.site, tagVersion, purchase, now())));
+  }
+  const { onEvent } = options;
+  if (onEvent) {
+    commands[EVENT_COMMAND] = eventCommand((event) => onEvent(customEventInput(win, tag.site, tagVersion, event, now())));
+  }
+  installCommands(win, commands, boundary);
+  pageview();
+  watchRoutes(win, boundary, pageview);
+  const { onFormSubmit } = options;
+  if (onFormSubmit) {
+    boundary.guard("pageview", () =>
+      watchForms(win, boundary, (props) => onFormSubmit(formSubmitInput(win, tag.site, tagVersion, props, now()))),
+    );
+  }
+  const { onClickSpecial } = options;
+  if (onClickSpecial) {
+    boundary.guard("pageview", () =>
+      watchSpecialClicks(win, boundary, (scheme) => onClickSpecial(clickSpecialInput(win, tag.site, tagVersion, scheme, now()))),
+    );
+  }
+  const { onClickOutbound } = options;
+  if (onClickOutbound && outboundClicksEnabled(tag.config)) {
+    boundary.guard("pageview", () =>
+      watchOutboundClicks(win, boundary, ownDomains(tag.config), (host) =>
+        onClickOutbound(clickOutboundInput(win, tag.site, tagVersion, host, now())),
+      ),
+    );
+  }
+  const { onScrollDepth } = options;
+  if (onScrollDepth) {
+    resetScroll = boundary.guard("pageview", () =>
+      watchScroll(win, boundary, (threshold) => onScrollDepth(scrollDepthInput(win, tag.site, tagVersion, threshold, now()))),
+    );
+  }
+  const { onEcommerce } = options;
+  if (onEcommerce && ga4EcommerceEnabled(tag.config)) {
+    boundary.guard("pageview", () =>
+      watchEcommerce(win, boundary, (mapping) => onEcommerce(ecommerceInput(win, tag.site, tagVersion, mapping, now()))),
+    );
+  }
+  return tag;
+}

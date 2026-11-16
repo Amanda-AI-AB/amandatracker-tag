@@ -28,14 +28,14 @@ describe("size gate", () => {
 
   it("fails a file whose gzipped size exceeds the budget", () => {
     const file = join(dir, "big.js");
-    // Random bytes don't compress, so 20 KB of them stays over 15 KB gzipped.
-    writeFileSync(file, randomBytes(20 * 1024).toString("base64"));
+    // Random bytes don't compress, so 30 KB of them stays over 20 KB gzipped.
+    writeFileSync(file, randomBytes(30 * 1024).toString("base64"));
     expect(() => checkBudget(file)).toThrow(SizeBudgetError);
   });
 
   it("exits 1 from the command line on an oversized file, as CI sees it", () => {
     const file = join(dir, "big.js");
-    writeFileSync(file, randomBytes(20 * 1024).toString("base64"));
+    writeFileSync(file, randomBytes(30 * 1024).toString("base64"));
     const result = spawnSync(process.execPath, [SIZE_GATE, file], { encoding: "utf8" });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("size gate failed");

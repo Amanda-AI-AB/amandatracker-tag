@@ -1,7 +1,8 @@
 # Tag release (AAI-787): build and test as pull requests do, then upload the core as the immutable
 # `a.<semver>.js`, and its consent-manager adapters as the immutable `adapters/<semver>/<name>.js`
 # (AAI-932), to the environment's static bucket, which the collection host serves through Cloud CDN
-# (AAI-70).
+# (AAI-70). Beside them goes the release's provenance, `a.<semver>.provenance.json`, and nothing is
+# uploaded unless a second build reproduced the first byte for byte (AAI-148).
 # - dev: the `tag-dev` trigger (AAI-59) runs it on every push to main as `cloudbuild-deployer-dev`,
 #   with `_ENV=dev`. It also promotes the build to the evergreen `a.js`, and purges it from the CDN.
 # - prod: the approval-gated trigger (AAI-146) runs it on a release tag `v<semver>` as
@@ -81,6 +82,24 @@ steps:
     entrypoint: corepack
     args: [pnpm, build]
 
+  # The release's provenance (AAI-148): dist/provenance.json names each file the upload publishes, by
+  # object name and SHA-256, and the ref, commit, lockfile and toolchain it was built from. It holds no
+  # build id or time, so a retried build writes the same bytes.
+  - id: provenance
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
+    entrypoint: corepack
+    env:
+      - RELEASE_ENV=${_ENV}
+      - TAG_NAME=$TAG_NAME
+    args: [pnpm, provenance]
+
+  # A second build, from scratch in a directory of its own, must match the provenance byte for byte,
+  # or nothing is uploaded: every published build is one that reproduces.
+  - id: reproduce
+    name: node:22-bookworm@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb
+    entrypoint: corepack
+    args: [pnpm, reproduce, dist/provenance.json]
+
   # The versioned files are immutable: --no-clobber never replaces one that exists, and skips it
   # silently. So each object's hash is then compared with this build's file: a retried build finds its
   # own bytes and goes on, but another build of the same version (a release tag moved to a fix commit,
@@ -89,7 +108,8 @@ steps:
   # The build bakes the version and each adapter's SRI hash into the core, which loads only
   # adapters/<version>/ (AAI-932), so the adapters go up first, in both environments: a core is never
   # served before its adapters, and an adapter removed from src/adapters/ is simply absent from the
-  # next version's directory.
+  # next version's directory. The provenance goes up as a.<version>.provenance.json before the core
+  # too, so a core is never served without it.
   - id: upload
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -99,12 +119,13 @@ steps:
         set -euo pipefail
         VERSION="$$(cat .release-version)"
         BUCKET="gs://amandatrk-${_ENV}-data-static"
-        # Uploads the file $1 as the immutable object $2, and fails unless $2 then holds its bytes.
+        # Uploads the file $1 as the immutable object $2, of the content type $3, and fails unless $2
+        # then holds its bytes.
         upload_immutable() {
-          local FILE="$${1}" OBJECT="$${2}" BUILT STORED
+          local FILE="$${1}" OBJECT="$${2}" TYPE="$${3}" BUILT STORED
           gcloud storage cp --no-clobber \
             --cache-control="public, max-age=31536000, immutable" \
-            --content-type="text/javascript; charset=utf-8" \
+            --content-type="$${TYPE}" \
             "$${FILE}" "$${OBJECT}"
           BUILT="$$(gcloud storage hash "$${FILE}" --skip-md5 --format='value(crc32c_hash)')"
           STORED="$$(gcloud storage objects describe "$${OBJECT}" --format='value(crc32c_hash)')"
@@ -117,11 +138,13 @@ steps:
             exit 1
           fi
         }
+        JS="text/javascript; charset=utf-8"
         shopt -s nullglob
         for ADAPTER in dist/adapters/*.js; do
-          upload_immutable "$${ADAPTER}" "$${BUCKET}/adapters/$${VERSION}/$${ADAPTER##*/}"
+          upload_immutable "$${ADAPTER}" "$${BUCKET}/adapters/$${VERSION}/$${ADAPTER##*/}" "$${JS}"
         done
-        upload_immutable dist/a.js "$${BUCKET}/a.$${VERSION}.js"
+        upload_immutable dist/provenance.json "$${BUCKET}/a.$${VERSION}.provenance.json" "application/json"
+        upload_immutable dist/a.js "$${BUCKET}/a.$${VERSION}.js" "$${JS}"
 
   # dev only: the evergreen a.js becomes this build, and the CDN drops its copy. Its adapters are
   # already in place under adapters/<version>/. The CDN caches at most 300 s anyway (AAI-70), so a

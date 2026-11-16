@@ -87,11 +87,28 @@ export function currentScript(doc: Document): Element | null {
   return getter.call(doc) as Element | null;
 }
 
+/** What the installing script tag tells the tag: its site, and its endpoint. */
+export type BootParam = "site" | "endpoint";
+
 /**
- * The endpoint the installing script tag names; `script` is currentScript(document) at boot, and
- * `page` is location. The script must be a <script> element: anything else, or null, throws
+ * A boot parameter of the installing script tag: its data-<name> attribute, as the snippet sets it,
+ * or else the <name> parameter of its src URL's query, as Google Tag Manager's template sets it
+ * (its sandboxed injectScript can't set attributes): a.js?site=<id>&endpoint=<url>. The attribute
+ * wins when the tag has both. Null when it has neither.
+ */
+export function bootParam(script: Element, name: BootParam, page: PageLocation): string | null {
+  const attribute = script.getAttribute(`data-${name}`);
+  if (attribute !== null) return attribute;
+  const src = script.getAttribute("src");
+  if (src === null) return null;
+  return new URL(src, page.href).searchParams.get(name);
+}
+
+/**
+ * The endpoint the installing script tag names (bootParam); `script` is currentScript(document) at
+ * boot, and `page` is location. The script must be a <script> element: anything else, or null, throws
  * EndpointError, so that a clobbered or lost currentScript never silently sends a proxied site's
- * traffic to another host. Only a script without data-endpoint gets the default.
+ * traffic to another host. Only a script that names no endpoint gets the default.
  */
 export function endpointFromScript(script: Element | null, page: PageLocation): string {
   if (script === null) {
@@ -100,7 +117,7 @@ export function endpointFromScript(script: Element | null, page: PageLocation): 
   if (script.tagName !== "SCRIPT") {
     throw new EndpointError(`the current script is a <${script.tagName.toLowerCase()}>, not a <script>`);
   }
-  return resolveEndpoint(script.getAttribute("data-endpoint"), page);
+  return resolveEndpoint(bootParam(script, "endpoint", page), page);
 }
 
 export function configUrl(endpoint: string, siteId: string): string {
@@ -109,6 +126,21 @@ export function configUrl(endpoint: string, siteId: string): string {
 
 export function eventsUrl(endpoint: string): string {
   return `${endpoint}/v1/e`;
+}
+
+/** Where the tag's error boundary posts its reports (schema/v1/tag-error.json). */
+export function tagErrorsUrl(endpoint: string): string {
+  return `${endpoint}/v1/t`;
+}
+
+/** Where the withdrawal signal goes (schema/v1/withdrawal.json, AAI-785). */
+export function withdrawalUrl(endpoint: string): string {
+  return `${endpoint}/v1/w`;
+}
+
+/** The collector's anonymous jurisdiction hint for the no-CMP `geo` policy (AAI-93, no-cmp.ts). */
+export function policyUrl(endpoint: string): string {
+  return `${endpoint}/v1/policy`;
 }
 
 export { ADAPTER_NAME };
@@ -125,11 +157,26 @@ export function adapterUrl(endpoint: string, version: string, name: string, page
   if (!ADAPTER_NAME.test(name)) {
     throw new Error(`invalid adapter name: ${name}`);
   }
+  checkCodeOrigin(endpoint, pageOrigin, "adapters");
+  return `${endpoint}/adapters/${encodeURIComponent(version)}/${name}.js`;
+}
+
+/**
+ * The immutable core of tag version `version` as the release publishes it, a.<version>.js, which the
+ * canary pin hands off to (canary.ts). It is code run on the customer's page, as an adapter is, so it
+ * loads only from the collection host or the page's own origin; any other throws EndpointError.
+ */
+export function bundleUrl(endpoint: string, version: string, pageOrigin: string): string {
+  checkCodeOrigin(endpoint, pageOrigin, "versioned builds");
+  return `${endpoint}/a.${encodeURIComponent(version)}.js`;
+}
+
+/** Throws EndpointError unless endpoint is on the collection host or the page's own origin. */
+function checkCodeOrigin(endpoint: string, pageOrigin: string, what: string): void {
   const origin = new URL(endpoint).origin;
   if (origin !== DEFAULT_ENDPOINT && origin !== pageOrigin) {
-    throw new EndpointError(`adapters load only from ${DEFAULT_ENDPOINT} or the page's own origin, not ${origin}`);
+    throw new EndpointError(`${what} load only from ${DEFAULT_ENDPOINT} or the page's own origin, not ${origin}`);
   }
-  return `${endpoint}/adapters/${encodeURIComponent(version)}/${name}.js`;
 }
 
 /**
@@ -140,7 +187,7 @@ export function adapterUrl(endpoint: string, version: string, name: string, page
  * and so do GA4's, Meta's and any other tracker's beacons fired on the same pagehide. The tag
  * can neither see nor reserve their share, so the 4 KiB under 64 KiB is a margin for small
  * third-party beacons, not a guarantee: a pagehide fetch within this limit can still be rejected,
- * and the transport (AAI-68, AAI-893) must catch that TypeError rather than lose the batch.
+ * and the transport must catch that TypeError rather than lose the batch (AAI-951).
  */
 export const KEEPALIVE_BODY_LIMIT = 60 * 1024;
 
@@ -164,6 +211,33 @@ export const REFERRER_POLICY: ReferrerPolicy = "strict-origin";
 /** The fetch options for the site's config from configUrl. It sends no cookie, to any host. */
 export function configRequestInit(): RequestInit {
   return { credentials: "omit", referrerPolicy: REFERRER_POLICY };
+}
+
+/**
+ * The fetch options for the jurisdiction hint from policyUrl. It is asked before the visitor's
+ * consent is known, so it never carries the site's cookies; the browser may cache its answer, as
+ * the collector's Cache-Control says.
+ */
+export function policyRequestInit(): RequestInit {
+  return { credentials: "omit", referrerPolicy: REFERRER_POLICY };
+}
+
+/**
+ * The fetch options for a tag error to tagErrorsUrl; `body` is a WireTagError as JSON. It is sent
+ * whatever the visitor's consent, so, like a ping, it never carries the site's cookies.
+ */
+export function tagErrorRequestInit(body: string): RequestInit {
+  return { method: "POST", body, credentials: "omit", referrerPolicy: REFERRER_POLICY };
+}
+
+/**
+ * The fetch options for a withdrawal signal to withdrawalUrl; `body` is a WireWithdrawal as JSON.
+ * It never carries the site's cookies, so that a collector behind a first-party proxy can't
+ * re-issue the ones being deleted, and goes with keepalive, so that it outlives a page the visitor
+ * leaves right after withdrawing. Its body is a few hundred bytes, far within the keepalive quota.
+ */
+export function withdrawalRequestInit(body: string): RequestInit {
+  return { method: "POST", body, credentials: "omit", referrerPolicy: REFERRER_POLICY, keepalive: true };
 }
 
 /**
