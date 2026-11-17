@@ -14,11 +14,14 @@
 // Everything lives in memory: no cookie, localStorage or IndexedDB, so a visitor who declined
 // accrues no storage, and what the page hasn't sent when it dies is lost. Loss is measured
 // instead: each event batch carries seq, the page's batch counter, whose gaps the collector reads
-// as lost batches (AAI-106). A ping batch never carries seq (schema/v1/batch.json).
+// as lost batches (AAI-106), and page_id, a random UUIDv4 made once per pageload, and a new one when
+// consent is granted again after a withdrawal (newPage, AAI-1156), which links the page's batches to
+// each other. A ping batch carries neither (schema/v1/batch.json).
 // An event batch from a browser that reports navigator.webdriver === true carries webdriver: true,
 // for the collector's bot marking (AAI-76); a ping batch never does.
 
 import type { EventBatch, PingBatch, WireEvent, WirePing } from "../wire/generated";
+import { uuidv4 } from "../wire/payload";
 import { warn, type ErrorBoundary } from "./boundary";
 import { batchRequestInit, bodyBytes, eventsUrl, KEEPALIVE_BODY_LIMIT, type BatchKind } from "./endpoint";
 
@@ -59,6 +62,13 @@ export interface Transport {
    * request is already in flight, are left as they are.
    */
   withdrawEvents(): void;
+  /**
+   * Starts a new page key: a fresh page_id, and seq again from 1, so that the event batches sent
+   * from now on can't be joined to those sent before, and each key's seq stays gapless. Called
+   * when consent is granted again after a withdrawal, with the fresh ids identity.renew() mints
+   * (AAI-1156). A batch built before keeps the body it was built with, through every retry.
+   */
+  newPage(): void;
 }
 
 type Item = WireEvent | WirePing;
@@ -94,6 +104,11 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
   const awaitingRetry = new Set<Batch>();
   const flushTimers: Record<BatchKind, unknown> = { events: undefined, pings: undefined };
   let seq = 0;
+  /**
+   * The pageload's key, on every event batch: one transport serves one pageload, and newPage
+   * starts a new key when consent is granted again after a withdrawal.
+   */
+  let pageId = uuidv4();
   /** The UTF-8 bytes of the tag's own keepalive fetches still in flight. */
   let keepaliveInFlight = 0;
   // Only a strict true marks the browser as automated: a missing or odd value sends nothing.
@@ -102,7 +117,7 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
   /** The body of a batch of `items`; `batchSeq` is the seq an event batch carries. */
   const bodyOf = (kind: BatchKind, items: readonly Item[], batchSeq: number): string => {
     if (kind === "pings") return JSON.stringify({ e: items } as PingBatch);
-    const batch: EventBatch = { seq: batchSeq, e: items as EventBatch["e"] };
+    const batch: EventBatch = { seq: batchSeq, page_id: pageId, e: items as EventBatch["e"] };
     if (webdriver) batch.webdriver = true;
     return JSON.stringify(batch);
   };
@@ -342,6 +357,10 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
         awaitingRetry.delete(batch);
         dropped(batch, "the visitor declined");
       }
+    },
+    newPage() {
+      pageId = uuidv4();
+      seq = 0;
     },
   };
 }

@@ -37,11 +37,11 @@ afterEach(() => {
 });
 
 describe("CMP_ADAPTERS", () => {
-  it("has Cookiebot, OneTrust and Usercentrics, each detected by its global or the events it fires", () => {
+  it("has Cookiebot, OneTrust and Usercentrics, each detected by its globals or the events it fires", () => {
     expect(CMP_ADAPTERS).toEqual([
-      { name: "cookiebot", global: "Cookiebot", events: ["CookiebotOnLoad", "CookiebotOnConsentReady"] },
-      { name: "onetrust", global: "OneTrust", events: ["OneTrustGroupsUpdated"] },
-      { name: "usercentrics", global: "UC_UI", events: ["UC_UI_INITIALIZED"] },
+      { name: "cookiebot", globals: ["Cookiebot"], events: ["CookiebotOnLoad", "CookiebotOnConsentReady"] },
+      { name: "onetrust", globals: ["OneTrust"], events: ["OneTrustGroupsUpdated"] },
+      { name: "usercentrics", globals: ["UC_UI", "__ucCmp"], events: ["UC_UI_INITIALIZED", "UC_CONSENT"] },
     ]);
   });
 });
@@ -55,6 +55,11 @@ describe("watchCmpAdapters", () => {
   it("loads the adapter at once when the consent manager's global is there", () => {
     const { load } = setup({ Cookiebot: {} });
     expect(load.mock.calls).toEqual([["cookiebot"]]);
+  });
+
+  it("loads the adapter when any one of the consent manager's globals is there", () => {
+    expect(setup({ UC_UI: {} }).load.mock.calls).toEqual([["usercentrics"]]);
+    expect(setup({ __ucCmp: {} }).load.mock.calls).toEqual([["usercentrics"]]);
   });
 
   it("loads the adapter of a consent manager loaded after the tag, on its first event, once", () => {
