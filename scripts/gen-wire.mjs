@@ -14,7 +14,8 @@
 // each: if a required oneOf property is one of its $refs, then some optional properties are
 // forbidden, else some are required (AAI-1142); an optional property present needs that oneOf
 // property to be one of its $refs (AAI-1146). It types them as a union of an interface for each
-// branch of the oneOf) and throws on anything else, rather than generate a looser type
+// branch of the oneOf, and gives each its own field list, required fields and fields' types in
+// place of the object's) and throws on anything else, rather than generate a looser type
 // or looser rules: an object's or a map's keywords, a $ref's siblings and the rules inside a oneOf
 // of scalars go through allow-lists too, and a minLength other than 1 is refused. An object with a field whose shape the builder couldn't
 // check (a oneOf of objects, an array of scalars, an inline object) gets no shape at all, rather
@@ -459,15 +460,32 @@ export function generate(versionDir) {
         versionDeclared = true;
       }
     }
-    const types = props.map(({ key, type }) => `${key}: ${JSON.stringify(type)}`);
-    const lines = [
-      "",
-      `export const ${prefix}_FIELDS = [${keys.map((key) => JSON.stringify(key)).join(", ")}] as const;`,
-      "",
-      `export const ${prefix}_REQUIRED = [${required.map((key) => JSON.stringify(key)).join(", ")}] as const;`,
-      "",
-      `export const ${prefix}_TYPES = { ${types.join(", ")} } as const;`,
-    ];
+    const cond = conditional(file, name, node);
+    /**
+     * The field list, required fields and fields' types of the object, or of one case of it.
+     * @param {string} at the constants' prefix
+     * @param {string[]} forbidden
+     * @param {string[]} alsoRequired
+     */
+    const listing = (at, forbidden, alsoRequired) => {
+      const allowed = props.filter(({ key }) => !forbidden.includes(key));
+      const needed = [...required, ...alsoRequired.filter((key) => !required.includes(key))];
+      return [
+        "",
+        `export const ${at}_FIELDS = [${allowed.map(({ key }) => JSON.stringify(key)).join(", ")}] as const;`,
+        "",
+        `export const ${at}_REQUIRED = [${needed.map((key) => JSON.stringify(key)).join(", ")}] as const;`,
+        "",
+        `export const ${at}_TYPES = { ${allowed.map(({ key, type }) => `${key}: ${JSON.stringify(type)}`).join(", ")} } as const;`,
+      ];
+    };
+    // An object with an if/then/else or dependentSchemas gets the field list, required fields and
+    // types of each case, as its interfaces do, and none of its own: one list for every case would
+    // allow the fields a case forbids and drop those it requires (AAI-1150). Its rule constants
+    // stay whole, since a rule on a field holds in every case that allows it.
+    const lines = cond
+      ? cond.cases.flatMap(({ refName, forbidden, required: alsoRequired }) => listing(screaming(`${name}With${refName}`), forbidden, alsoRequired))
+      : listing(prefix, [], []);
     /** @type {Set<string>} */
     const has = new Set();
     /**
@@ -497,7 +515,7 @@ export function generate(versionDir) {
     const maps = [];
     /** @type {string | undefined} */
     // An if/then/else or dependentSchemas, which the builder couldn't keep, leaves the object without a shape too.
-    let unshaped = conditional(file, name, node) ? "if" : undefined;
+    let unshaped = cond ? "if" : undefined;
     for (const { key, type, file: at, schema: prop } of props) {
       if (type !== "object" && type !== "array") continue;
       // The object, map or array items it holds, named, so that its shape or rules can be tied in.

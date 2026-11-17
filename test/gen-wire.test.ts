@@ -365,8 +365,21 @@ describe("gen-wire", () => {
       expect(out).toContain("export type Thing = ThingWithA | ThingWithB;");
       expect(out).toContain("export interface ThingWithB {\n  schema_version: 1;\n  x?: never;\n  y?: never;\n  body: B;\n}");
       expect(out).toContain("export interface ThingWithA {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  body: A;\n}");
-      expect(out).toContain('export const THING_REQUIRED = ["schema_version", "body"] as const;');
       expect(out).not.toContain("THING_SHAPE");
+    });
+
+    it("lists each case's fields, required fields and types, and none for the object as a whole (AAI-1150)", () => {
+      conditional();
+      const out = generate(dir);
+      expect(out).toContain('export const THING_WITH_A_FIELDS = ["schema_version", "x", "y", "body"] as const;');
+      expect(out).toContain('export const THING_WITH_A_REQUIRED = ["schema_version", "body", "y"] as const;');
+      expect(out).toContain('export const THING_WITH_A_TYPES = { schema_version: "integer", x: "string", y: "string", body: "object" } as const;');
+      expect(out).toContain('export const THING_WITH_B_FIELDS = ["schema_version", "body"] as const;');
+      expect(out).toContain('export const THING_WITH_B_REQUIRED = ["schema_version", "body"] as const;');
+      expect(out).toContain('export const THING_WITH_B_TYPES = { schema_version: "integer", body: "object" } as const;');
+      expect(out).not.toMatch(/THING_(FIELDS|REQUIRED|TYPES)\b/);
+      // A rule on a field holds in every case that allows it.
+      expect(out).toContain("export const THING_MAX_LENGTH = { x: 4 } as const;");
     });
 
     it("types a dependentSchemas property as never on the branches it doesn't need (AAI-1146)", () => {

@@ -667,11 +667,29 @@ export interface PubSubMessageWithPublishedTagError {
   event: PublishedTagError;
 }
 
-export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "subdivision", "device_class", "browser_family", "browser_major", "os_family", "seq", "page_id", "event"] as const;
+export const PUB_SUB_MESSAGE_WITH_WIRE_EVENT_FIELDS = ["schema_version", "received_at", "region", "country", "subdivision", "device_class", "browser_family", "browser_major", "os_family", "seq", "page_id", "event"] as const;
 
-export const PUB_SUB_MESSAGE_REQUIRED = ["schema_version", "received_at", "region", "event"] as const;
+export const PUB_SUB_MESSAGE_WITH_WIRE_EVENT_REQUIRED = ["schema_version", "received_at", "region", "event", "device_class"] as const;
 
-export const PUB_SUB_MESSAGE_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", subdivision: "string", device_class: "string", browser_family: "string", browser_major: "integer", os_family: "string", seq: "integer", page_id: "string", event: "object" } as const;
+export const PUB_SUB_MESSAGE_WITH_WIRE_EVENT_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", subdivision: "string", device_class: "string", browser_family: "string", browser_major: "integer", os_family: "string", seq: "integer", page_id: "string", event: "object" } as const;
+
+export const PUB_SUB_MESSAGE_WITH_WIRE_PING_FIELDS = ["schema_version", "received_at", "region", "country", "device_class", "event"] as const;
+
+export const PUB_SUB_MESSAGE_WITH_WIRE_PING_REQUIRED = ["schema_version", "received_at", "region", "event", "device_class"] as const;
+
+export const PUB_SUB_MESSAGE_WITH_WIRE_PING_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", device_class: "string", event: "object" } as const;
+
+export const PUB_SUB_MESSAGE_WITH_WIRE_WITHDRAWAL_FIELDS = ["schema_version", "received_at", "region", "country", "device_class", "event"] as const;
+
+export const PUB_SUB_MESSAGE_WITH_WIRE_WITHDRAWAL_REQUIRED = ["schema_version", "received_at", "region", "event", "device_class"] as const;
+
+export const PUB_SUB_MESSAGE_WITH_WIRE_WITHDRAWAL_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", device_class: "string", event: "object" } as const;
+
+export const PUB_SUB_MESSAGE_WITH_PUBLISHED_TAG_ERROR_FIELDS = ["schema_version", "received_at", "region", "event"] as const;
+
+export const PUB_SUB_MESSAGE_WITH_PUBLISHED_TAG_ERROR_REQUIRED = ["schema_version", "received_at", "region", "event"] as const;
+
+export const PUB_SUB_MESSAGE_WITH_PUBLISHED_TAG_ERROR_TYPES = { schema_version: "integer", received_at: "integer", region: "string", event: "object" } as const;
 
 export const PUB_SUB_MESSAGE_VALUES = { schema_version: [1], device_class: ["desktop", "mobile", "tablet", "other"] } as const;
 
