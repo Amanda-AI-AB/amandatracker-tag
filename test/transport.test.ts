@@ -802,6 +802,37 @@ describe("withdrawEvents", () => {
   });
 });
 
+describe("newPage", () => {
+  it("starts a fresh page_id, with seq again from 1, for the batches built after it", async () => {
+    const t = harness();
+    t.transport.event(pageview());
+    t.transport.event(pageview());
+    t.transport.newPage();
+    t.transport.event(pageview());
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(0);
+    const [a, b, c, d] = t.posted();
+    expect([a!.seq, b!.seq, c!.seq, d!.seq]).toEqual([1, 2, 1, 2]);
+    expect(b!.page_id).toBe(a!.page_id);
+    expect(d!.page_id).toBe(c!.page_id);
+    expect(c!.page_id).not.toBe(a!.page_id);
+    for (const batch of t.posted()) expect(validate(batch)).toBe(true);
+  });
+
+  it("leaves a batch built before it as it was, through its retry", async () => {
+    const t = harness([{ ok: false, status: 503 }]);
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(0);
+    t.transport.newPage();
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(60_000);
+    const [first, after, retry] = t.posted();
+    expect(retry).toEqual(first);
+    expect(after).toMatchObject({ seq: 1 });
+    expect(after!.page_id).not.toBe(first!.page_id);
+  });
+});
+
 describe("storage", () => {
   it("never touches localStorage, IndexedDB or cookies", () => {
     const touched: string[] = [];

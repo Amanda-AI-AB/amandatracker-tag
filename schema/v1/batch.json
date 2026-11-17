@@ -12,12 +12,12 @@
       "required": ["seq", "e"],
       "properties": {
         "seq": {
-          "description": "The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). Every event batch carries it, so that a batch sent without it is refused rather than left out of the loss count (AAI-950).",
+          "description": "The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs, and 1 again with each new page_id. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). Every event batch carries it, so that a batch sent without it is refused rather than left out of the loss count (AAI-950).",
           "type": "integer",
           "minimum": 1
         },
         "page_id": {
-          "description": "The pageload's key: the same value on every batch of one pageload, retries included, and a new one on the next, so that the processor can link a pageload's batches and count the gaps in their seq (AAI-106). Optional only because tags up to v0.4.0 send event batches without it; this tag sends it on every event batch.",
+          "description": "The pageload's key: the same value on every batch of one pageload, retries included, and a new one on the next, and a new one when consent is granted again after a withdrawal, so that the fresh visitor id is never joined to the withdrawn one (AAI-1156), and so that the processor can link a pageload's batches and count the gaps in their seq (AAI-106). Optional only because tags up to v0.4.0 send event batches without it; this tag sends it on every event batch.",
           "$ref": "#/$defs/PageId"
         },
         "e": {
@@ -49,7 +49,7 @@
       }
     },
     "PageId": {
-      "description": "A random UUID, version 4, in lower-case hex: 122 random bits and no time. The tag makes it once per pageload and keeps it in memory only: it is never stored on the device, dies with the page and identifies nobody. Only an event batch carries it, never a PingBatch (08 G2).",
+      "description": "A random UUID, version 4, in lower-case hex: 122 random bits and no time. The tag makes it once per pageload, and again when consent is granted again after a withdrawal, and keeps it in memory only: it is never stored on the device, dies with the page and identifies nobody. Only an event batch carries it, never a PingBatch (08 G2).",
       "type": "string",
       "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     }

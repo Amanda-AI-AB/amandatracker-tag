@@ -5,9 +5,9 @@
 
 /** A batch of events, sent while consent allows collection with identifiers. */
 export interface EventBatch {
-  /** The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). Every event batch carries it, so that a batch sent without it is refused rather than left out of the loss count (AAI-950). */
+  /** The per-pageload batch counter: 1 for a page's first batch, one more for each batch after it, retries keeping theirs, and 1 again with each new page_id. It lives in memory only, dies with the page and identifies nobody; the collector reads its gaps as lost batches (AAI-106). Every event batch carries it, so that a batch sent without it is refused rather than left out of the loss count (AAI-950). */
   seq: number;
-  /** The pageload's key: the same value on every batch of one pageload, retries included, and a new one on the next, so that the processor can link a pageload's batches and count the gaps in their seq (AAI-106). Optional only because tags up to v0.4.0 send event batches without it; this tag sends it on every event batch. */
+  /** The pageload's key: the same value on every batch of one pageload, retries included, and a new one on the next, and a new one when consent is granted again after a withdrawal, so that the fresh visitor id is never joined to the withdrawn one (AAI-1156), and so that the processor can link a pageload's batches and count the gaps in their seq (AAI-106). Optional only because tags up to v0.4.0 send event batches without it; this tag sends it on every event batch. */
   page_id?: PageId;
   /** The batch's events, 1 to 10. */
   e: [WireEvent, ...WireEvent[]];
@@ -50,7 +50,7 @@ export const PING_BATCH_MIN_ITEMS = { e: 1 } as const;
 
 export const PING_BATCH_MAX_ITEMS = { e: 10 } as const;
 
-/** A random UUID, version 4, in lower-case hex: 122 random bits and no time. The tag makes it once per pageload and keeps it in memory only: it is never stored on the device, dies with the page and identifies nobody. Only an event batch carries it, never a PingBatch (08 G2). */
+/** A random UUID, version 4, in lower-case hex: 122 random bits and no time. The tag makes it once per pageload, and again when consent is granted again after a withdrawal, and keeps it in memory only: it is never stored on the device, dies with the page and identifies nobody. Only an event batch carries it, never a PingBatch (08 G2). */
 export type PageId = string;
 
 /** The request body of POST /v1/e: one batch of up to 10 events or anonymous pings (01 §6). A batch never mixes the two: it is all events, with the per-pageload batch counter seq, or all pings, without it, so that a ping is never sent beside a seq (02 §2, 08 G2). Its items carry their own schema_version. */

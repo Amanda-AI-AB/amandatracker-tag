@@ -31,7 +31,8 @@ then dropped; one the collector refuses otherwise is dropped and reported as a t
 `pagehide` it sends what is buffered or awaiting a retry with `sendBeacon` (pings, which must not
 carry cookies, and any batch `sendBeacon` refuses go with a `keepalive` fetch instead). Each event
 batch carries `seq`, the page's batch counter from 1, whose gaps show lost batches, `page_id`,
-a random UUIDv4 made once per pageload that links the page's batches, and
+a random UUIDv4 made once per pageload, and a new one when consent is granted again after a
+withdrawal (with `seq` again from 1), that links the page's batches, and
 `"webdriver": true` when `navigator.webdriver` is `true`. Its queues live
 in memory only: no cookie, `localStorage` or IndexedDB.
 
@@ -152,7 +153,9 @@ keeps the first one the browser accepts (a browser refuses a cookie on a public 
   device, and each site keeps its own on its own domain.
 - **Withdrawal deletes both at once**, on every domain they may be on, those the collector re-issued
   through a first-party proxy included. A grant after a denial mints fresh ids, so the anonymous
-  pings sent meanwhile are never linked to the visitor.
+  pings sent meanwhile are never linked to the visitor. It starts a new `page_id`, with `seq`
+  again from 1, too, so the fresh ids' event batches never share a page key with the withdrawn
+  ones'.
 - **Purge on withdrawal, off by default.** A site whose config turns `consent.purge_on_withdrawal`
   on (AAI-226) has the withdrawal erase what is stored about the visitor too: just before deleting
   the cookies, the tag posts the withdrawal signal (`src/core/withdrawal.ts`) to `v1/w` with the
@@ -390,7 +393,8 @@ truth for what the tag sends and what the collector accepts:
 - `batch.json`: the request body of `POST /v1/e`, `{"seq": 3, "page_id": "…", "e": [...]}`. It
   holds 1 to 10 events or pings, never both. A batch of events always carries `seq`, the page's
   batch counter, which the collector reads for loss, and this tag sends `page_id` beside it: a
-  random UUIDv4 made once per pageload, in memory only, that links the page's batches (optional in
+  random UUIDv4 made once per pageload, and a new one when consent is granted again after a
+  withdrawal (with `seq` again from 1), in memory only, that links the page's batches (optional in
   the schema, as tags up to v0.4.0 send event batches without it). A batch of pings never carries
   either. A batch of events from a
   browser driven by automation (`navigator.webdriver === true`) also carries `"webdriver": true`, for
