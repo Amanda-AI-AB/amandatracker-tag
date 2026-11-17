@@ -165,7 +165,7 @@ export function watchUsercentrics(win: UsercentricsHost, api: AdapterApi): void 
   const readV3 = (cmp: unknown): void => {
     if (typeof cmp !== "object" || cmp === null) throw new ConsentError("window.__ucCmp is not an object");
     const ucCmp = cmp as Record<string, unknown>;
-    const read = ++latest;
+    const readId = ++latest;
     Promise.resolve(call(ucCmp, "window.__ucCmp", "isInitialized"))
       .then((initialized) => {
         if (typeof initialized !== "boolean") {
@@ -176,7 +176,7 @@ export function watchUsercentrics(win: UsercentricsHost, api: AdapterApi): void 
         // Whatever getConsentDetails() resolves to, undefined included, is read as ConsentDetails.
         return Promise.resolve(call(ucCmp, "window.__ucCmp", "getConsentDetails")).then((details) =>
           api.guard(() => {
-            if (read === latest) apply(usercentricsV3Signal(details, "window.__ucCmp.getConsentDetails()"));
+            if (readId === latest) apply(usercentricsV3Signal(details, "window.__ucCmp.getConsentDetails()"));
           }),
         );
       })
