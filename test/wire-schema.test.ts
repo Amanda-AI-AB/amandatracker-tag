@@ -446,6 +446,20 @@ describe("wire schema v1: Pub/Sub message", () => {
     expect(validate({ ...message, subdivision: "FR-75C", event: EVENT })).toBe(true);
   });
 
+  it("refuses the subdivision, browser family and major and OS family outside an event's message (06 §3, AAI-1148)", () => {
+    const derived = { subdivision: "SE-AB", browser_family: "Chrome", browser_major: 131, os_family: "Windows" };
+    // The review's proof: a ping's message with a subdivision and a browser family.
+    expect(validate({ ...message, device_class: "desktop", subdivision: "SE-AB", browser_family: "Chrome", event: PING })).toBe(false);
+    for (const [key, value] of Object.entries(derived)) {
+      expect(validate({ ...message, [key]: value, event: PING }), `${key} on a ping's`).toBe(false);
+      expect(validate({ ...message, [key]: value, event: WITHDRAWAL }), `${key} on a withdrawal's`).toBe(false);
+      expect(validate({ ...message, [key]: value, event: EVENT }), `${key} on an event's`).toBe(true);
+    }
+    // Country and device class stay on both.
+    expect(validate({ ...message, event: PING }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...message, event: WITHDRAWAL }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
   it("checks the shape of the subdivision and the user-agent fields", () => {
     for (const subdivision of ["se-ab", "SE", "SE-", "SE-ABCD", "SEAB"]) {
       expect(validate({ ...message, subdivision, event: EVENT }), subdivision).toBe(false);

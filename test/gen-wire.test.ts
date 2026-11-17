@@ -389,6 +389,23 @@ describe("gen-wire", () => {
       expect(out).not.toContain("THING_SHAPE");
     });
 
+    it("types a property then forbids and dependentSchemas needs a branch for as never on every other branch (AAI-1148)", () => {
+      conditional({
+        properties: {
+          schema_version: { const: 1 },
+          x: { type: "string", maxLength: 4 },
+          y: { type: "string" },
+          body: { oneOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }, { $ref: "#/$defs/C" }] },
+        },
+        dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/A" } } } },
+        $defs: Object.fromEntries(["A", "B", "C"].map((tag) => [tag, { type: "object", additionalProperties: false, properties: { [tag.toLowerCase()]: { type: "string" } } }])),
+      });
+      const out = generate(dir);
+      expect(out).toContain("export interface ThingWithA {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  body: A;\n}");
+      expect(out).toContain("export interface ThingWithB {\n  schema_version: 1;\n  x?: never;\n  y?: never;\n  body: B;\n}");
+      expect(out).toContain("export interface ThingWithC {\n  schema_version: 1;\n  x?: never;\n  y: string;\n  body: C;\n}");
+    });
+
     it("types a dependentSchemas alone, with no if/then/else", () => {
       conditional({ if: undefined, then: undefined, else: undefined, dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/B" } } } } });
       const out = generate(dir);
