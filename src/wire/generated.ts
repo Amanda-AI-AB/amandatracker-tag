@@ -84,6 +84,8 @@ export interface TrackedEvent {
   referrer_host?: never;
   utm?: never;
   click_ids?: never;
+  stage?: never;
+  name?: never;
 }
 
 export const TRACKED_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "link_host"] as const;
@@ -127,6 +129,8 @@ export interface PurchaseEvent {
   referrer_host?: never;
   utm?: never;
   click_ids?: never;
+  stage?: never;
+  name?: never;
 }
 
 export const PURCHASE_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "purchase"] as const;
@@ -170,6 +174,8 @@ export interface PageExitEvent {
   referrer_host?: never;
   utm?: never;
   click_ids?: never;
+  stage?: never;
+  name?: never;
 }
 
 export const PAGE_EXIT_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "engagement_ms"] as const;
@@ -213,6 +219,8 @@ export interface ClickSpecialEvent {
   referrer_host?: never;
   utm?: never;
   click_ids?: never;
+  stage?: never;
+  name?: never;
 }
 
 export const CLICK_SPECIAL_EVENT_FIELDS = ["schema_version", "tag_version", "site_id", "event_id", "type", "client_ts", "url", "referrer", "page_title", "language", "visitor_id", "session_id", "consent", "attribution", "props", "user_ref", "link_scheme"] as const;
@@ -482,6 +490,8 @@ export interface WirePing {
   purchase?: never;
   engagement_ms?: never;
   link_scheme?: never;
+  stage?: never;
+  name?: never;
 }
 
 export const WIRE_PING_FIELDS = ["schema_version", "event_id", "site_id", "type", "path", "referrer_host", "utm", "click_ids"] as const;
@@ -501,8 +511,83 @@ export const WIRE_PING_MAX_LENGTH = { site_id: 64, type: 64, path: 2048, referre
 /** The coarse device class the collector derives from the user agent. */
 export type DeviceClass = "desktop" | "mobile" | "tablet" | "other";
 
-/** What the collector publishes to Pub/Sub for each accepted event, ping or withdrawal signal, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it. */
-export interface PubSubMessage {
+/** A tag error (tag-error.json) as the collector publishes it, for the processor to store for the realtime debugger (AAI-1130): only one that names its site, and never its message (amandatracker's 08 §4.1). */
+export interface PublishedTagError {
+  /** The wire schema's major version: this file's. */
+  schema_version: 1;
+  /** The tag error's event_id, which the processor stores it under once. */
+  event_id: Uuidv7;
+  tag_version: TagVersion;
+  /** The site the tag was installed for: the collector publishes no tag error without one. */
+  site_id: SiteId;
+  stage: TagErrorStage;
+  name: TagErrorName;
+  type?: never;
+  client_ts?: never;
+  url?: never;
+  referrer?: never;
+  page_title?: never;
+  language?: never;
+  visitor_id?: never;
+  session_id?: never;
+  consent?: never;
+  attribution?: never;
+  props?: never;
+  user_ref?: never;
+  link_host?: never;
+  purchase?: never;
+  engagement_ms?: never;
+  link_scheme?: never;
+  path?: never;
+  referrer_host?: never;
+  utm?: never;
+  click_ids?: never;
+}
+
+export const PUBLISHED_TAG_ERROR_FIELDS = ["schema_version", "event_id", "tag_version", "site_id", "stage", "name"] as const;
+
+export const PUBLISHED_TAG_ERROR_REQUIRED = ["schema_version", "event_id", "tag_version", "site_id", "stage", "name"] as const;
+
+export const PUBLISHED_TAG_ERROR_TYPES = { schema_version: "integer", event_id: "string", tag_version: "string", site_id: "string", stage: "string", name: "string" } as const;
+
+export const PUBLISHED_TAG_ERROR_VALUES = { schema_version: [1], stage: ["boot", "config", "command", "pageview", "route", "transport", "consent"] } as const;
+
+export const PUBLISHED_TAG_ERROR_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$", tag_version: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$", site_id: "^[A-Za-z0-9_-]+$" } as const;
+
+export const PUBLISHED_TAG_ERROR_MAX_LENGTH = { tag_version: 64, site_id: 64, name: 64 } as const;
+
+/** What the collector publishes to Pub/Sub for each accepted event, ping, withdrawal signal or tag error, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it. A tag error's message (AAI-1142) carries none of the derived geo or user-agent fields, device_class included, which every other message needs. */
+export type PubSubMessage = PubSubMessageIfPublishedTagError | PubSubMessageElse;
+
+/** PubSubMessage when its event is a PublishedTagError. */
+export interface PubSubMessageIfPublishedTagError {
+  /** The wire schema's major version: this file's. */
+  schema_version: 1;
+  /** When the collector received the payload, by the server's clock: Unix epoch milliseconds. */
+  received_at: number;
+  /** The data region that collected it, such as europe-west1. */
+  region: string;
+  /** The ISO 3166-1 alpha-2 country derived from the client's IP address, when one could be; the address itself is dropped. */
+  country?: never;
+  /** The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Never on a ping's message: a ping carries country-level geo only (06 §3). */
+  subdivision?: never;
+  device_class?: never;
+  /** The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Never on a ping's message. */
+  browser_family?: never;
+  /** The browser's major version the collector parses from the user agent, when it could. Never on a ping's message. */
+  browser_major?: never;
+  /** The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message. */
+  os_family?: never;
+  /** The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's. */
+  seq?: number;
+  /** The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's. */
+  page_id?: PageId;
+  /** The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. A tag error's message carries no geo or user-agent field at all. */
+  event: PublishedTagError;
+}
+
+/** PubSubMessage when its event is not a PublishedTagError. */
+export interface PubSubMessageElse {
   /** The wire schema's major version: this file's. */
   schema_version: 1;
   /** When the collector received the payload, by the server's clock: Unix epoch milliseconds. */
@@ -524,13 +609,13 @@ export interface PubSubMessage {
   seq?: number;
   /** The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's. */
   page_id?: PageId;
-  /** The client's payload: an event, an anonymous ping, or a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data. A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. */
+  /** The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. A tag error's message carries no geo or user-agent field at all. */
   event: WireEvent | WirePing | WireWithdrawal;
 }
 
 export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "subdivision", "device_class", "browser_family", "browser_major", "os_family", "seq", "page_id", "event"] as const;
 
-export const PUB_SUB_MESSAGE_REQUIRED = ["schema_version", "received_at", "region", "device_class", "event"] as const;
+export const PUB_SUB_MESSAGE_REQUIRED = ["schema_version", "received_at", "region", "event"] as const;
 
 export const PUB_SUB_MESSAGE_TYPES = { schema_version: "integer", received_at: "integer", region: "string", country: "string", subdivision: "string", device_class: "string", browser_family: "string", browser_major: "integer", os_family: "string", seq: "integer", page_id: "string", event: "object" } as const;
 
@@ -544,6 +629,12 @@ export const PUB_SUB_MESSAGE_MAX_LENGTH = { region: 64, browser_family: 64, os_f
 
 // tag-error.json
 
+/** Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, a route change, the transport that posts batches to POST /v1/e (a batch the collector refused, or a failure in a flush), or a consent source the tag follows (an update read from Google Consent Mode's dataLayer). */
+export type TagErrorStage = "boot" | "config" | "command" | "pageview" | "route" | "transport" | "consent";
+
+/** The error's name, such as TypeError or ConfigError. */
+export type TagErrorName = string;
+
 /** A failure inside the tag, which its error boundary caught instead of throwing into the host page: the request body of POST /v1/t. It is sent in every consent state, so it carries nothing about the visitor or the page: no visitor or session id, no URL, no referrer, no client_ts. It is sent from a sample of page loads, without cookies, at most a few per page. */
 export interface WireTagError {
   /** The wire schema's major version: this file's. */
@@ -553,10 +644,8 @@ export interface WireTagError {
   tag_version: TagVersion;
   /** The site the tag was installed for; absent when the failure is that the snippet names no valid site. */
   site_id?: SiteId;
-  /** Where in the tag it failed: its boot, its config fetch, a command the site called, a pageview, a route change, the transport that posts batches to POST /v1/e (a batch the collector refused, or a failure in a flush), or a consent source the tag follows (an update read from Google Consent Mode's dataLayer). */
-  stage: "boot" | "config" | "command" | "pageview" | "route" | "transport" | "consent";
-  /** The error's name, such as TypeError or ConfigError. */
-  name: string;
+  stage: TagErrorStage;
+  name: TagErrorName;
   /** The error's message, scrubbed by the tag: each URL in it cut to its scheme and host, and each email address replaced. */
   message?: string;
 }
@@ -605,6 +694,8 @@ export interface WireWithdrawal {
   referrer_host?: never;
   utm?: never;
   click_ids?: never;
+  stage?: never;
+  name?: never;
 }
 
 export const WIRE_WITHDRAWAL_FIELDS = ["schema_version", "event_id", "tag_version", "site_id", "visitor_id", "client_ts"] as const;
@@ -650,6 +741,8 @@ export const PURCHASE_EVENT_SHAPE = { fields: PURCHASE_EVENT_FIELDS, required: P
 export const PAGE_EXIT_EVENT_SHAPE = { fields: PAGE_EXIT_EVENT_FIELDS, required: PAGE_EXIT_EVENT_REQUIRED, types: PAGE_EXIT_EVENT_TYPES, values: PAGE_EXIT_EVENT_VALUES, minimum: PAGE_EXIT_EVENT_MINIMUM, pattern: PAGE_EXIT_EVENT_PATTERN, maxLength: PAGE_EXIT_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
 
 export const CLICK_SPECIAL_EVENT_SHAPE = { fields: CLICK_SPECIAL_EVENT_FIELDS, required: CLICK_SPECIAL_EVENT_REQUIRED, types: CLICK_SPECIAL_EVENT_TYPES, values: CLICK_SPECIAL_EVENT_VALUES, minimum: CLICK_SPECIAL_EVENT_MINIMUM, pattern: CLICK_SPECIAL_EVENT_PATTERN, maxLength: CLICK_SPECIAL_EVENT_MAX_LENGTH, minItems: {}, maxItems: {}, nested: { consent: CONSENT_SHAPE, attribution: ATTRIBUTION_SHAPE }, items: {}, maps: { props: PROPS_MAP } } as const;
+
+export const PUBLISHED_TAG_ERROR_SHAPE = { fields: PUBLISHED_TAG_ERROR_FIELDS, required: PUBLISHED_TAG_ERROR_REQUIRED, types: PUBLISHED_TAG_ERROR_TYPES, values: PUBLISHED_TAG_ERROR_VALUES, minimum: {}, pattern: PUBLISHED_TAG_ERROR_PATTERN, maxLength: PUBLISHED_TAG_ERROR_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 
 export const WIRE_TAG_ERROR_SHAPE = { fields: WIRE_TAG_ERROR_FIELDS, required: WIRE_TAG_ERROR_REQUIRED, types: WIRE_TAG_ERROR_TYPES, values: WIRE_TAG_ERROR_VALUES, minimum: {}, pattern: WIRE_TAG_ERROR_PATTERN, maxLength: WIRE_TAG_ERROR_MAX_LENGTH, minItems: {}, maxItems: {}, nested: {}, items: {}, maps: {} } as const;
 

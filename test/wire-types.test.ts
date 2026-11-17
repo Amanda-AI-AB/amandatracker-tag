@@ -2,8 +2,8 @@
 // each `@ts-expect-error` below fails `pnpm typecheck` when the type stops refusing its value, and
 // each test checks that the schema refuses the same value.
 import { describe, expect, it } from "vitest";
-import type { WireBatch, WireEvent, WirePing } from "../src/wire/generated";
-import { CLICK_SPECIAL, EVENT, PAGE_EXIT, PING, PURCHASE, validator } from "./wire-validator";
+import type { PublishedTagError, PubSubMessage, WireBatch, WireEvent, WirePing } from "../src/wire/generated";
+import { CLICK_SPECIAL, EVENT, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
 
 const batch = validator("batch.json");
 const event = validator("event.json");
@@ -73,5 +73,30 @@ describe("WireEvent and WirePing", () => {
     expect(event(tracked)).toBe(false);
     expect(ping(pinged)).toBe(false);
     expect(event(address)).toBe(false);
+  });
+});
+
+describe("PubSubMessage (AAI-1142)", () => {
+  const message = validator("pubsub-message.json");
+  const received = { schema_version: 1, received_at: 1, region: "europe-west1" } as const;
+  const tagError: PublishedTagError = { schema_version: 1, event_id: UUID7, tag_version: "0.4.0", site_id: "site_123", stage: "boot", name: "TypeError" };
+
+  it("takes a tag error without device_class, and an event with it", () => {
+    const published: PubSubMessage = { ...received, event: tagError };
+    const tracked: PubSubMessage = { ...received, device_class: "desktop", event: EVENT };
+    expect(message(published)).toBe(true);
+    expect(message(tracked)).toBe(true);
+  });
+
+  it("refuses device_class or geo on a tag error, its message, and an event without device_class", () => {
+    // @ts-expect-error a tag error's message carries no user-agent field
+    const withDevice: PubSubMessage = { ...received, device_class: "desktop", event: tagError };
+    // @ts-expect-error a tag error's message carries no geo
+    const withCountry: PubSubMessage = { ...received, country: "SE", event: tagError };
+    // @ts-expect-error a published tag error never carries its message
+    const withText: PubSubMessage = { ...received, event: { ...tagError, message: "boom" } };
+    // @ts-expect-error every other message carries device_class
+    const noDevice: PubSubMessage = { ...received, event: EVENT };
+    for (const refused of [withDevice, withCountry, withText, noDevice]) expect(message(refused)).toBe(false);
   });
 });

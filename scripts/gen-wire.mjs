@@ -10,7 +10,9 @@
 // differs from what this generates.
 //
 // It covers the subset of JSON Schema the wire uses (object, map, array, string, number, integer,
-// boolean, const, enum, oneOf, $ref) and throws on anything else, rather than generate a looser type
+// boolean, const, enum, oneOf, $ref, and an object's if/then/else in one form: if a required oneOf
+// property is one of its $refs, then some optional properties are forbidden, else some are required,
+// which it types as a union of an interface for each case, AAI-1142) and throws on anything else, rather than generate a looser type
 // or looser rules: an object's or a map's keywords, a $ref's siblings and the rules inside a oneOf
 // of scalars go through allow-lists too, and a minLength other than 1 is refused. An object with a field whose shape the builder couldn't
 // check (a oneOf of objects, an array of scalars, an inline object) gets no shape at all, rather
@@ -36,6 +38,7 @@ const TYPED = new Set([
 // The keywords of an object with properties, each of which the generator keeps.
 const OBJECT_KEYWORDS = new Set([
   "$schema", "$id", "$defs", "title", "description", "type", "properties", "required", "additionalProperties",
+  "if", "then", "else",
 ]);
 // The keywords of a map, each of which the generator keeps.
 const MAP_KEYWORDS = new Set(["title", "description", "type", "maxProperties", "propertyNames", "additionalProperties"]);
@@ -219,19 +222,89 @@ export function generate(versionDir) {
     if (node.type === "object" && node.properties) {
       checkKeywords(file, name, node, OBJECT_KEYWORDS);
       if (node.additionalProperties !== false) throw new Error(`${file}: ${name} must set additionalProperties: false`);
-      const required = new Set(node.required ?? []);
-      const fields = Object.entries(node.properties).map(([key, prop]) => {
-        const fieldDoc = /** @type {any} */ (prop).description ? `  /** ${/** @type {any} */ (prop).description} */\n` : "";
-        return `${fieldDoc}  ${key}${required.has(key) ? "" : "?"}: ${typeOf(file, prop)};`;
-      });
-      // The properties a sibling oneOf branch has and this one lacks, as never: TypeScript's excess
-      // property check on a union accepts a key any branch declares, so without them a value of
-      // this branch could carry another's field (a PingBatch its seq) and still compile.
-      const foreign = [...(exclusive.get(name) ?? [])].filter((key) => !(key in node.properties));
-      fields.push(...foreign.map((key) => `  ${key}?: never;`));
-      return `${doc}export interface ${name} {\n${fields.join("\n")}\n}`;
+      const cond = conditional(file, name, node);
+      if (!cond) return `${doc}${objectInterface(file, name, node, {})}`;
+      // Each case of the if/then/else is an interface of its own, and the object their union.
+      const ifName = `${name}If${cond.refName}`;
+      const elseName = `${name}Else`;
+      return [
+        `${doc}export type ${name} = ${ifName} | ${elseName};`,
+        `/** ${name} when its ${cond.key} is a ${cond.refName}. */\n${objectInterface(file, ifName, node, {
+          types: { [cond.key]: cond.refName },
+          forbidden: cond.forbidden,
+        })}`,
+        `/** ${name} when its ${cond.key} is not a ${cond.refName}. */\n${objectInterface(file, elseName, node, {
+          types: { [cond.key]: cond.otherTypes },
+          required: cond.required,
+        })}`,
+      ].join("\n\n");
     }
     return `${doc}export type ${name} = ${typeOf(file, node)};`;
+  }
+
+  /**
+   * An object's interface: its fields, with the types, required fields and forbidden fields of one
+   * case of its if/then/else, if it has one, in place of the schema's own.
+   * @param {string} file
+   * @param {string} name
+   * @param {any} node
+   * @param {{ types?: Record<string, string>, required?: string[], forbidden?: string[] }} overrides
+   */
+  function objectInterface(file, name, node, { types = {}, required: alsoRequired = [], forbidden = [] }) {
+    const required = new Set([...(node.required ?? []), ...alsoRequired]);
+    const fields = Object.entries(node.properties).map(([key, prop]) => {
+      const fieldDoc = /** @type {any} */ (prop).description ? `  /** ${/** @type {any} */ (prop).description} */\n` : "";
+      if (forbidden.includes(key)) return `${fieldDoc}  ${key}?: never;`;
+      return `${fieldDoc}  ${key}${required.has(key) ? "" : "?"}: ${types[key] ?? typeOf(file, prop)};`;
+    });
+    // The properties a sibling oneOf branch has and this one lacks, as never: TypeScript's excess
+    // property check on a union accepts a key any branch declares, so without them a value of
+    // this branch could carry another's field (a PingBatch its seq) and still compile.
+    const foreign = [...(exclusive.get(name) ?? [])].filter((key) => !(key in node.properties));
+    fields.push(...foreign.map((key) => `  ${key}?: never;`));
+    return `export interface ${name} {\n${fields.join("\n")}\n}`;
+  }
+
+  /**
+   * An object's if/then/else, in the one form the generator types: if a required property that is a
+   * oneOf of $refs is one of them, then some optional properties are forbidden (false), else some
+   * are required. Undefined when the object has no if; throws on any other form.
+   * @param {string} file
+   * @param {string} name
+   * @param {any} node
+   * @returns {{ key: string, refName: string, otherTypes: string, forbidden: string[], required: string[] } | undefined}
+   */
+  function conditional(file, name, node) {
+    if (!("if" in node) && !("then" in node) && !("else" in node)) return undefined;
+    const fail = (/** @type {string} */ why) => new Error(`${file}: ${name}'s if/then/else ${why}`);
+    const { if: test, then: yes, else: no } = node;
+    if (!test || !yes || !no) throw fail("needs all three of if, then and else");
+    checkKeywords(file, `${name}'s if`, test, new Set(["required", "properties"]));
+    checkKeywords(file, `${name}'s then`, yes, new Set(["properties"]));
+    checkKeywords(file, `${name}'s else`, no, new Set(["required"]));
+    const [key, ...more] = Object.keys(test.properties ?? {});
+    if (key === undefined || more.length > 0 || JSON.stringify(test.required) !== JSON.stringify([key])) {
+      throw fail("must test one property, which it requires");
+    }
+    const branch = test.properties[key];
+    if (Object.keys(branch).join() !== "$ref") throw fail(`must test ${key} with a $ref alone`);
+    const refName = resolveRef(file, branch.$ref).name;
+    const prop = node.properties[key];
+    if (!(node.required ?? []).includes(key) || !Array.isArray(prop?.oneOf) || prop.oneOf.some((/** @type {any} */ b) => !b.$ref)) {
+      throw fail(`must test ${key}, a required oneOf of $refs`);
+    }
+    const others = prop.oneOf.map((/** @type {any} */ b) => resolveRef(file, b.$ref).name).filter((/** @type {string} */ n) => n !== refName);
+    if (others.length !== prop.oneOf.length - 1) throw fail(`tests ${key} with ${refName}, which isn't one of its branches`);
+    /** @param {string[]} keys */
+    const optional = (keys) => {
+      for (const k of keys) if (!(k in node.properties) || (node.required ?? []).includes(k)) throw fail(`names ${k}, which isn't an optional property of it`);
+      return keys;
+    };
+    const forbidden = optional(Object.keys(yes.properties ?? {}));
+    if (forbidden.length === 0 || forbidden.some((k) => yes.properties[k] !== false)) throw fail("must forbid properties (false) in then");
+    const required = optional(no.required ?? []);
+    if (required.length === 0) throw fail("must require properties in else");
+    return { key, refName, otherTypes: others.join(" | "), forbidden, required };
   }
 
   /** @param {any} node */
@@ -357,7 +430,8 @@ export function generate(versionDir) {
     /** @type {[string, string][]} */
     const maps = [];
     /** @type {string | undefined} */
-    let unshaped;
+    // An if/then/else the builder couldn't keep leaves the object without a shape too.
+    let unshaped = conditional(file, name, node) ? "if" : undefined;
     for (const { key, type, file: at, schema: prop } of props) {
       if (type !== "object" && type !== "array") continue;
       // The object, map or array items it holds, named, so that its shape or rules can be tied in.

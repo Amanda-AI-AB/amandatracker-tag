@@ -336,6 +336,54 @@ describe("gen-wire", () => {
     expect(() => generate(dir)).toThrow("unsupported keyword anyOf");
   });
 
+  describe("an if/then/else on a oneOf property (AAI-1142)", () => {
+    /** A Thing whose body is an A or a B, and which forbids x and requires y when it is a B. */
+    function conditional(overrides: Record<string, unknown> = {}): void {
+      const branch = (tag: string) => ({ type: "object", additionalProperties: false, properties: { [tag]: { type: "string" } } });
+      schema("a.json", {
+        title: "Thing",
+        type: "object",
+        additionalProperties: false,
+        required: ["schema_version", "body"],
+        properties: {
+          schema_version: { const: 1 },
+          x: { type: "string", maxLength: 4 },
+          y: { type: "string" },
+          body: { oneOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }] },
+        },
+        if: { required: ["body"], properties: { body: { $ref: "#/$defs/B" } } },
+        then: { properties: { x: false, y: false } },
+        else: { required: ["y"] },
+        $defs: { A: branch("a"), B: branch("b"), Kind: { enum: ["a", "b"] } },
+        ...overrides,
+      });
+    }
+
+    it("types each case as an interface and the object as their union, with no shape", () => {
+      conditional();
+      const out = generate(dir);
+      expect(out).toContain("export type Thing = ThingIfB | ThingElse;");
+      expect(out).toContain("export interface ThingIfB {\n  schema_version: 1;\n  x?: never;\n  y?: never;\n  body: B;\n}");
+      expect(out).toContain("export interface ThingElse {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  body: A;\n}");
+      expect(out).toContain('export const THING_REQUIRED = ["schema_version", "body"] as const;');
+      expect(out).not.toContain("THING_SHAPE");
+    });
+
+    it.each([
+      ["a missing else", { else: undefined }, "needs all three of if, then and else"],
+      ["an if on a property it doesn't require", { if: { properties: { body: { $ref: "#/$defs/B" } } } }, "must test one property, which it requires"],
+      ["an if with a rule beside its $ref", { if: { required: ["body"], properties: { body: { $ref: "#/$defs/B", title: "B" } } } }, "must test body with a $ref alone"],
+      ["an if on a property that is no oneOf", { if: { required: ["schema_version"], properties: { schema_version: { $ref: "#/$defs/B" } } } }, "a required oneOf of $refs"],
+      ["an if on a $ref that is no branch", { if: { required: ["body"], properties: { body: { $ref: "#/$defs/Kind" } } } }, "isn't one of its branches"],
+      ["a then that constrains rather than forbids", { then: { properties: { x: { maxLength: 2 } } } }, "must forbid properties (false) in then"],
+      ["a then on a required property", { then: { properties: { body: false } } }, "names body, which isn't an optional property of it"],
+      ["an else with another keyword", { else: { required: ["y"], properties: {} } }, "has keyword properties"],
+    ])("refuses %s, rather than loosen the type", (_what, overrides, message) => {
+      conditional(overrides);
+      expect(() => generate(dir)).toThrow(message);
+    });
+  });
+
   it.each([
     ["a field", { n: { type: "string", minLength: 2 } }, {}],
     ["a field, through a $ref", { n: { $ref: "#/$defs/Code" } }, { Code: { type: "string", minLength: 0 } }],

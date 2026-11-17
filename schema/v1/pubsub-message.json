@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/pubsub-message.json",
   "title": "PubSubMessage",
-  "description": "What the collector publishes to Pub/Sub for each accepted event, ping or withdrawal signal, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it.",
+  "description": "What the collector publishes to Pub/Sub for each accepted event, ping, withdrawal signal or tag error, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it. A tag error's message (AAI-1142) carries none of the derived geo or user-agent fields, device_class included, which every other message needs.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "received_at", "region", "device_class", "event"],
+  "required": ["schema_version", "received_at", "region", "event"],
   "properties": {
     "schema_version": {
       "description": "The wire schema's major version: this file's.",
@@ -63,14 +63,60 @@
       "$ref": "batch.json#/$defs/PageId"
     },
     "event": {
-      "description": "The client's payload: an event, an anonymous ping, or a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data. A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them.",
-      "oneOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }, { "$ref": "withdrawal.json" }]
+      "description": "The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. A tag error's message carries no geo or user-agent field at all.",
+      "oneOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }, { "$ref": "withdrawal.json" }, { "$ref": "#/$defs/PublishedTagError" }]
     }
+  },
+  "if": {
+    "required": ["event"],
+    "properties": { "event": { "$ref": "#/$defs/PublishedTagError" } }
+  },
+  "then": {
+    "properties": {
+      "country": false,
+      "subdivision": false,
+      "device_class": false,
+      "browser_family": false,
+      "browser_major": false,
+      "os_family": false
+    }
+  },
+  "else": {
+    "required": ["device_class"]
   },
   "$defs": {
     "DeviceClass": {
       "description": "The coarse device class the collector derives from the user agent.",
       "enum": ["desktop", "mobile", "tablet", "other"]
+    },
+    "PublishedTagError": {
+      "description": "A tag error (tag-error.json) as the collector publishes it, for the processor to store for the realtime debugger (AAI-1130): only one that names its site, and never its message (amandatracker's 08 §4.1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "event_id", "tag_version", "site_id", "stage", "name"],
+      "properties": {
+        "schema_version": {
+          "description": "The wire schema's major version: this file's.",
+          "const": 1
+        },
+        "event_id": {
+          "description": "The tag error's event_id, which the processor stores it under once.",
+          "$ref": "event.json#/$defs/Uuidv7"
+        },
+        "tag_version": {
+          "$ref": "event.json#/$defs/TagVersion"
+        },
+        "site_id": {
+          "description": "The site the tag was installed for: the collector publishes no tag error without one.",
+          "$ref": "event.json#/$defs/SiteId"
+        },
+        "stage": {
+          "$ref": "tag-error.json#/$defs/TagErrorStage"
+        },
+        "name": {
+          "$ref": "tag-error.json#/$defs/TagErrorName"
+        }
+      }
     }
   }
 }

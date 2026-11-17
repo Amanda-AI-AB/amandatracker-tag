@@ -1,5 +1,7 @@
+import Ajv2020 from "ajv/dist/2020";
 import { describe, expect, it } from "vitest";
-import { CLICK_OUTBOUND, CLICK_SPECIAL, EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
+import { SCHEMA_BASE } from "../scripts/schema-files.mjs";
+import { CLICK_OUTBOUND, CLICK_SPECIAL, EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator, WITHDRAWAL } from "./wire-validator";
 
 /** A batch's page_id: a UUIDv4 (AAI-1050). */
 const PAGE_ID = "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b";
@@ -465,6 +467,63 @@ describe("wire schema v1: Pub/Sub message", () => {
   it("checks the shape of seq and page_id", () => {
     for (const seq of [0, 1.5, "1"]) expect(validate({ ...message, seq, event: EVENT }), String(seq)).toBe(false);
     expect(validate({ ...message, seq: 1, page_id: EVENT.visitor_id, event: EVENT })).toBe(false);
+  });
+
+  describe("a tag error (AAI-1142)", () => {
+    const tagError = { schema_version: 1, event_id: UUID7, tag_version: "0.4.0", site_id: "site_123", stage: "transport", name: "TypeError" };
+    const tagErrorMessage = { schema_version: 1, received_at: 1_731_400_000_123, region: "europe-west1", event: tagError };
+
+    it("is carried without device_class, geo or user-agent fields", () => {
+      expect(validate(tagErrorMessage), JSON.stringify(validate.errors)).toBe(true);
+      expect(validator("tag-error.json")(tagError)).toBe(true);
+    });
+
+    it("is refused with its message", () => {
+      expect(validate({ ...tagErrorMessage, event: { ...tagError, message: "x is not a function" } })).toBe(false);
+    });
+
+    it.each([
+      ["country", "SE"],
+      ["subdivision", "SE-AB"],
+      ["device_class", "desktop"],
+      ["browser_family", "Chrome"],
+      ["browser_major", 131],
+      ["os_family", "Windows"],
+    ])("is refused with %s", (field, value) => {
+      expect(validate({ ...tagErrorMessage, [field]: value })).toBe(false);
+    });
+
+    it("is refused without its site_id", () => {
+      const { site_id, ...noSite } = tagError;
+      expect(validator("tag-error.json")(noSite)).toBe(true);
+      expect(validate({ ...tagErrorMessage, event: noSite })).toBe(false);
+    });
+
+    it("is refused without its stage or name, or with a stage the tag doesn't send", () => {
+      const { stage, ...noStage } = tagError;
+      const { name, ...noName } = tagError;
+      expect(validate({ ...tagErrorMessage, event: noStage })).toBe(false);
+      expect(validate({ ...tagErrorMessage, event: noName })).toBe(false);
+      expect(validate({ ...tagErrorMessage, event: { ...tagError, stage: "render" } })).toBe(false);
+    });
+
+    it("matches exactly one branch of event, so the oneOf stays exclusive", () => {
+      const ajv = new Ajv2020({ strict: true });
+      for (const schema of Object.values(loadSchemas())) ajv.addSchema(schema);
+      const branches = ["event.json", "ping.json", "withdrawal.json", "pubsub-message.json#/$defs/PublishedTagError"];
+      for (const payload of [tagError, EVENT, PURCHASE, PING, WITHDRAWAL]) {
+        const matching = branches.filter((branch) => ajv.getSchema(`${SCHEMA_BASE}/v1/${branch}`)!(payload));
+        expect(matching, JSON.stringify(payload)).toHaveLength(1);
+      }
+    });
+  });
+
+  it("still needs device_class on an event, a ping and a withdrawal signal (AAI-1142)", () => {
+    const { device_class, ...noDevice } = message;
+    for (const event of [EVENT, PING, WITHDRAWAL]) {
+      expect(validate({ ...message, event }), JSON.stringify(validate.errors)).toBe(true);
+      expect(validate({ ...noDevice, event })).toBe(false);
+    }
   });
 });
 
