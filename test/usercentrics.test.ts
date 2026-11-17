@@ -289,6 +289,22 @@ describe("watchUsercentrics", () => {
       ]);
     });
 
+    it("reports a getConsentDetails() that resolves undefined once initialized", async () => {
+      const { signals, reports } = setup(undefined, ucCmp(true, () => undefined));
+      await flush();
+
+      expect(signals).toEqual([]);
+      expect(reports).toEqual([{ stage: "consent", name: "ConsentError", message: `${WHERE} is not an object` }]);
+    });
+
+    it("reads nothing, and reports nothing, while __ucCmp isn't initialized", async () => {
+      const { signals, reports } = setup(undefined, ucCmp(false, () => undefined));
+      await flush();
+
+      expect(signals).toEqual([]);
+      expect(reports).toEqual([]);
+    });
+
     it("reports a UC_CONSENT detail it can't read inside the boundary, never throwing to Usercentrics", async () => {
       const { signals, reports, fire } = setup(undefined, ucCmp(false, () => undefined));
       await flush();

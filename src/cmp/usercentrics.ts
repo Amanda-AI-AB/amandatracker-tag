@@ -172,17 +172,18 @@ export function watchUsercentrics(win: UsercentricsHost, api: AdapterApi): void 
           throw new ConsentError(`window.__ucCmp.isInitialized() is not a boolean: ${String(initialized)}`);
         }
         // Not initialized yet: UC_UI_INITIALIZED and UC_CONSENT follow once it is.
-        return initialized ? call(ucCmp, "window.__ucCmp", "getConsentDetails") : undefined;
+        if (!initialized) return;
+        // Whatever getConsentDetails() resolves to, undefined included, is read as ConsentDetails.
+        return Promise.resolve(call(ucCmp, "window.__ucCmp", "getConsentDetails")).then((details) =>
+          api.guard(() => {
+            if (read === latest) apply(usercentricsV3Signal(details, "window.__ucCmp.getConsentDetails()"));
+          }),
+        );
       })
-      .then(
-        (details) =>
-          api.guard(() => {
-            if (details !== undefined && read === latest) apply(usercentricsV3Signal(details, "window.__ucCmp.getConsentDetails()"));
-          }),
-        (error: unknown) =>
-          api.guard(() => {
-            throw error;
-          }),
+      .then(undefined, (error: unknown) =>
+        api.guard(() => {
+          throw error;
+        }),
       );
   };
   const read = (): void =>
