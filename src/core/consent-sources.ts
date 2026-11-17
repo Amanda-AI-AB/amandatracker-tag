@@ -13,7 +13,8 @@
 //             by an adapter the core loads only once it detects that consent manager
 //             (watchCmpAdapters; Cookiebot, AAI-163);
 //   onetrust -> the same, for OneTrust (AAI-164), below Cookiebot: a page has one or the other;
-//   usercentrics -> the same, for Usercentrics (AAI-165), below OneTrust.
+//   usercentrics -> the same, for Usercentrics (AAI-165), below OneTrust: its Browser UI (v2)
+//             and its CMP (v3, AAI-973).
 //
 // The first source to give a definitive signal (a category granted or denied) wins, and the
 // winner's later signals always apply. A higher rung takes over when it signals: once the site
@@ -312,7 +313,7 @@ export function watchTcf(win: TcfHost, boundary: ErrorBoundary, ladder: ConsentL
 // A consent manager set up without Consent Mode or TCF is read through its own API, by an adapter
 // built to its own file (src/adapters/<name>.ts, scripts/build.mjs), so it costs the core nothing on
 // the sites that don't use it. The core loads one only once it detects its consent manager: the
-// global that manager defines is there at boot, or one of the window events it fires on loading
+// one of the globals that manager defines is there at boot, or one of the window events it fires on loading
 // comes later. The adapter then connects through amanda('adapter', name, connect)
 // (adapter-api.ts), and its signals drive the ladder as its own source, below TCF.
 
@@ -325,21 +326,22 @@ export interface CmpHost {
 export interface CmpAdapter {
   /** The adapter's name, its file's (adapters/<version>/<name>.js), and the consent source it signals as. */
   readonly name: ConsentSource;
-  /** The window property the consent manager defines once its script runs. */
-  readonly global: string;
+  /** The window properties the consent manager defines once its script runs: any one of them is enough. */
+  readonly globals: readonly string[];
   /** The window events the consent manager fires as it loads or decides, for one loaded after the tag. */
   readonly events: readonly string[];
 }
 
 export const CMP_ADAPTERS: readonly CmpAdapter[] = [
-  { name: "cookiebot", global: "Cookiebot", events: ["CookiebotOnLoad", "CookiebotOnConsentReady"] },
-  { name: "onetrust", global: "OneTrust", events: ["OneTrustGroupsUpdated"] },
-  { name: "usercentrics", global: "UC_UI", events: ["UC_UI_INITIALIZED"] },
+  { name: "cookiebot", globals: ["Cookiebot"], events: ["CookiebotOnLoad", "CookiebotOnConsentReady"] },
+  { name: "onetrust", globals: ["OneTrust"], events: ["OneTrustGroupsUpdated"] },
+  // Usercentrics' Browser UI (v2) defines UC_UI, and its CMP (v3) __ucCmp and UC_CONSENT.
+  { name: "usercentrics", globals: ["UC_UI", "__ucCmp"], events: ["UC_UI_INITIALIZED", "UC_CONSENT"] },
 ];
 
 /**
  * Loads the adapter of each consent manager in `adapters` the page has, with `load`, at once when
- * the manager's global is there and else on the first of its events; at most once per adapter, and
+ * one of the manager's globals is there and else on the first of its events; at most once per adapter, and
  * never for a manager the page doesn't have. A load that fails is reported. Returns the `adapter`
  * command, through which a loaded adapter connects, once: it throws ConsentError for an adapter
  * that wasn't loaded or has connected already, so a page can't open a second channel for one.
@@ -363,7 +365,7 @@ export function watchCmpAdapters(
         boundary.watch("consent", load(adapter.name));
       });
     };
-    if ((win as unknown as Record<string, unknown>)[adapter.global] !== undefined) detect();
+    if (adapter.globals.some((global) => (win as unknown as Record<string, unknown>)[global] !== undefined)) detect();
     else for (const type of adapter.events) win.addEventListener(type, detect);
   }
   return (name: unknown, connect: unknown) => {
