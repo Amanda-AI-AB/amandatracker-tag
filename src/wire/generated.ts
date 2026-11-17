@@ -557,37 +557,10 @@ export const PUBLISHED_TAG_ERROR_PATTERN = { event_id: "^[0-9a-f]{8}-[0-9a-f]{4}
 export const PUBLISHED_TAG_ERROR_MAX_LENGTH = { tag_version: 64, site_id: 64, name: 64 } as const;
 
 /** What the collector publishes to Pub/Sub for each accepted event, ping, withdrawal signal or tag error, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it. A tag error's message (AAI-1142) carries none of the derived geo or user-agent fields, device_class included, which every other message needs. */
-export type PubSubMessage = PubSubMessageIfPublishedTagError | PubSubMessageElse;
+export type PubSubMessage = PubSubMessageWithWireEvent | PubSubMessageWithWirePing | PubSubMessageWithWireWithdrawal | PubSubMessageWithPublishedTagError;
 
-/** PubSubMessage when its event is a PublishedTagError. */
-export interface PubSubMessageIfPublishedTagError {
-  /** The wire schema's major version: this file's. */
-  schema_version: 1;
-  /** When the collector received the payload, by the server's clock: Unix epoch milliseconds. */
-  received_at: number;
-  /** The data region that collected it, such as europe-west1. */
-  region: string;
-  /** The ISO 3166-1 alpha-2 country derived from the client's IP address, when one could be; the address itself is dropped. */
-  country?: never;
-  /** The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Never on a ping's message: a ping carries country-level geo only (06 §3). */
-  subdivision?: never;
-  device_class?: never;
-  /** The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Never on a ping's message. */
-  browser_family?: never;
-  /** The browser's major version the collector parses from the user agent, when it could. Never on a ping's message. */
-  browser_major?: never;
-  /** The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message. */
-  os_family?: never;
-  /** The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's. */
-  seq?: number;
-  /** The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's. */
-  page_id?: PageId;
-  /** The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. A tag error's message carries no geo or user-agent field at all. */
-  event: PublishedTagError;
-}
-
-/** PubSubMessage when its event is not a PublishedTagError. */
-export interface PubSubMessageElse {
+/** PubSubMessage when its event is a WireEvent. */
+export interface PubSubMessageWithWireEvent {
   /** The wire schema's major version: this file's. */
   schema_version: 1;
   /** When the collector received the payload, by the server's clock: Unix epoch milliseconds. */
@@ -605,12 +578,93 @@ export interface PubSubMessageElse {
   browser_major?: number;
   /** The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message. */
   os_family?: string;
-  /** The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's. */
+  /** The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146). */
   seq?: number;
-  /** The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's. */
+  /** The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146). */
   page_id?: PageId;
   /** The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. A tag error's message carries no geo or user-agent field at all. */
-  event: WireEvent | WirePing | WireWithdrawal;
+  event: WireEvent;
+}
+
+/** PubSubMessage when its event is a WirePing. */
+export interface PubSubMessageWithWirePing {
+  /** The wire schema's major version: this file's. */
+  schema_version: 1;
+  /** When the collector received the payload, by the server's clock: Unix epoch milliseconds. */
+  received_at: number;
+  /** The data region that collected it, such as europe-west1. */
+  region: string;
+  /** The ISO 3166-1 alpha-2 country derived from the client's IP address, when one could be; the address itself is dropped. */
+  country?: string;
+  /** The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Never on a ping's message: a ping carries country-level geo only (06 §3). */
+  subdivision?: string;
+  device_class: DeviceClass;
+  /** The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Never on a ping's message. */
+  browser_family?: string;
+  /** The browser's major version the collector parses from the user agent, when it could. Never on a ping's message. */
+  browser_major?: number;
+  /** The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message. */
+  os_family?: string;
+  /** The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146). */
+  seq?: never;
+  /** The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146). */
+  page_id?: never;
+  /** The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. A tag error's message carries no geo or user-agent field at all. */
+  event: WirePing;
+}
+
+/** PubSubMessage when its event is a WireWithdrawal. */
+export interface PubSubMessageWithWireWithdrawal {
+  /** The wire schema's major version: this file's. */
+  schema_version: 1;
+  /** When the collector received the payload, by the server's clock: Unix epoch milliseconds. */
+  received_at: number;
+  /** The data region that collected it, such as europe-west1. */
+  region: string;
+  /** The ISO 3166-1 alpha-2 country derived from the client's IP address, when one could be; the address itself is dropped. */
+  country?: string;
+  /** The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Never on a ping's message: a ping carries country-level geo only (06 §3). */
+  subdivision?: string;
+  device_class: DeviceClass;
+  /** The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Never on a ping's message. */
+  browser_family?: string;
+  /** The browser's major version the collector parses from the user agent, when it could. Never on a ping's message. */
+  browser_major?: number;
+  /** The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message. */
+  os_family?: string;
+  /** The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146). */
+  seq?: never;
+  /** The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146). */
+  page_id?: never;
+  /** The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. A tag error's message carries no geo or user-agent field at all. */
+  event: WireWithdrawal;
+}
+
+/** PubSubMessage when its event is a PublishedTagError. */
+export interface PubSubMessageWithPublishedTagError {
+  /** The wire schema's major version: this file's. */
+  schema_version: 1;
+  /** When the collector received the payload, by the server's clock: Unix epoch milliseconds. */
+  received_at: number;
+  /** The data region that collected it, such as europe-west1. */
+  region: string;
+  /** The ISO 3166-1 alpha-2 country derived from the client's IP address, when one could be; the address itself is dropped. */
+  country?: never;
+  /** The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Never on a ping's message: a ping carries country-level geo only (06 §3). */
+  subdivision?: never;
+  device_class?: never;
+  /** The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Never on a ping's message. */
+  browser_family?: never;
+  /** The browser's major version the collector parses from the user agent, when it could. Never on a ping's message. */
+  browser_major?: never;
+  /** The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message. */
+  os_family?: never;
+  /** The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146). */
+  seq?: never;
+  /** The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146). */
+  page_id?: never;
+  /** The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them. A tag error's message carries no geo or user-agent field at all. */
+  event: PublishedTagError;
 }
 
 export const PUB_SUB_MESSAGE_FIELDS = ["schema_version", "received_at", "region", "country", "subdivision", "device_class", "browser_family", "browser_major", "os_family", "seq", "page_id", "event"] as const;

@@ -3,7 +3,9 @@
 // each test checks that the schema refuses the same value.
 import { describe, expect, it } from "vitest";
 import type { PublishedTagError, PubSubMessage, WireBatch, WireEvent, WirePing } from "../src/wire/generated";
-import { CLICK_SPECIAL, EVENT, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
+import { CLICK_SPECIAL, EVENT, PAGE_EXIT, PING, PURCHASE, UUID7, validator, WITHDRAWAL } from "./wire-validator";
+
+const PAGE_ID = "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 
 const batch = validator("batch.json");
 const event = validator("event.json");
@@ -76,7 +78,7 @@ describe("WireEvent and WirePing", () => {
   });
 });
 
-describe("PubSubMessage (AAI-1142)", () => {
+describe("PubSubMessage (AAI-1142, AAI-1146)", () => {
   const message = validator("pubsub-message.json");
   const received = { schema_version: 1, received_at: 1, region: "europe-west1" } as const;
   const tagError: PublishedTagError = { schema_version: 1, event_id: UUID7, tag_version: "0.4.0", site_id: "site_123", stage: "boot", name: "TypeError" };
@@ -98,5 +100,17 @@ describe("PubSubMessage (AAI-1142)", () => {
     // @ts-expect-error every other message carries device_class
     const noDevice: PubSubMessage = { ...received, event: EVENT };
     for (const refused of [withDevice, withCountry, withText, noDevice]) expect(message(refused)).toBe(false);
+  });
+
+  it("takes seq and page_id on an event's message, and refuses them on any other (08 G2, AAI-1146)", () => {
+    const tracked: PubSubMessage = { ...received, device_class: "desktop", seq: 3, page_id: PAGE_ID, event: EVENT };
+    // @ts-expect-error a ping's message carries no seq, which would link the pings
+    const pinged: PubSubMessage = { ...received, device_class: "desktop", seq: 3, event: PING };
+    // @ts-expect-error a withdrawal signal's message carries no page_id
+    const withdrawn: PubSubMessage = { ...received, device_class: "desktop", page_id: PAGE_ID, event: WITHDRAWAL };
+    // @ts-expect-error a tag error's message carries no seq or page_id
+    const published: PubSubMessage = { ...received, seq: 3, page_id: PAGE_ID, event: tagError };
+    expect(message(tracked), JSON.stringify(message.errors)).toBe(true);
+    for (const refused of [pinged, withdrawn, published]) expect(message(refused)).toBe(false);
   });
 });

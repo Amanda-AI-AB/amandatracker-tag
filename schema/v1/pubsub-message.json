@@ -54,12 +54,12 @@
       "maxLength": 64
     },
     "seq": {
-      "description": "The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's.",
+      "description": "The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146).",
       "type": "integer",
       "minimum": 1
     },
     "page_id": {
-      "description": "The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's or a withdrawal signal's.",
+      "description": "The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146).",
       "$ref": "batch.json#/$defs/PageId"
     },
     "event": {
@@ -83,6 +83,10 @@
   },
   "else": {
     "required": ["device_class"]
+  },
+  "dependentSchemas": {
+    "seq": { "properties": { "event": { "$ref": "event.json" } } },
+    "page_id": { "properties": { "event": { "$ref": "event.json" } } }
   },
   "$defs": {
     "DeviceClass": {

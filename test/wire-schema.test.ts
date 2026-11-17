@@ -464,6 +464,19 @@ describe("wire schema v1: Pub/Sub message", () => {
     expect(validate({ ...message, seq: 3, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
   });
 
+  it("refuses seq and page_id outside an event's message, which would link pings (08 G2, AAI-1146)", () => {
+    const tagError = { schema_version: 1, event_id: UUID7, tag_version: "0.4.0", site_id: "site_123", stage: "transport", name: "TypeError" };
+    const { device_class, ...noDevice } = message;
+    expect(validate({ ...message, seq: 3, page_id: PAGE_ID, event: PING })).toBe(false);
+    expect(validate({ ...message, seq: 3, event: PING })).toBe(false);
+    expect(validate({ ...message, page_id: PAGE_ID, event: PING })).toBe(false);
+    expect(validate({ ...message, seq: 3, event: WITHDRAWAL })).toBe(false);
+    expect(validate({ ...message, page_id: PAGE_ID, event: WITHDRAWAL })).toBe(false);
+    expect(validate({ ...noDevice, seq: 3, page_id: PAGE_ID, event: tagError })).toBe(false);
+    expect(validate({ ...noDevice, seq: 3, event: tagError })).toBe(false);
+    expect(validate({ ...noDevice, page_id: PAGE_ID, event: tagError })).toBe(false);
+  });
+
   it("checks the shape of seq and page_id", () => {
     for (const seq of [0, 1.5, "1"]) expect(validate({ ...message, seq, event: EVENT }), String(seq)).toBe(false);
     expect(validate({ ...message, seq: 1, page_id: EVENT.visitor_id, event: EVENT })).toBe(false);

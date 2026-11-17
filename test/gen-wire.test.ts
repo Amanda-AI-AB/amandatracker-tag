@@ -359,14 +359,41 @@ describe("gen-wire", () => {
       });
     }
 
-    it("types each case as an interface and the object as their union, with no shape", () => {
+    it("types each branch as an interface and the object as their union, with no shape", () => {
       conditional();
       const out = generate(dir);
-      expect(out).toContain("export type Thing = ThingIfB | ThingElse;");
-      expect(out).toContain("export interface ThingIfB {\n  schema_version: 1;\n  x?: never;\n  y?: never;\n  body: B;\n}");
-      expect(out).toContain("export interface ThingElse {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  body: A;\n}");
+      expect(out).toContain("export type Thing = ThingWithA | ThingWithB;");
+      expect(out).toContain("export interface ThingWithB {\n  schema_version: 1;\n  x?: never;\n  y?: never;\n  body: B;\n}");
+      expect(out).toContain("export interface ThingWithA {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  body: A;\n}");
       expect(out).toContain('export const THING_REQUIRED = ["schema_version", "body"] as const;');
       expect(out).not.toContain("THING_SHAPE");
+    });
+
+    it("types a dependentSchemas property as never on the branches it doesn't need (AAI-1146)", () => {
+      conditional({
+        properties: {
+          schema_version: { const: 1 },
+          x: { type: "string", maxLength: 4 },
+          y: { type: "string" },
+          z: { type: "integer" },
+          body: { oneOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }, { $ref: "#/$defs/C" }] },
+        },
+        dependentSchemas: { z: { properties: { body: { $ref: "#/$defs/A" } } } },
+        $defs: Object.fromEntries(["A", "B", "C"].map((tag) => [tag, { type: "object", additionalProperties: false, properties: { [tag.toLowerCase()]: { type: "string" } } }])),
+      });
+      const out = generate(dir);
+      expect(out).toContain("export type Thing = ThingWithA | ThingWithB | ThingWithC;");
+      expect(out).toContain("export interface ThingWithA {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  z?: number;\n  body: A;\n}");
+      expect(out).toContain("export interface ThingWithB {\n  schema_version: 1;\n  x?: never;\n  y?: never;\n  z?: never;\n  body: B;\n}");
+      expect(out).toContain("export interface ThingWithC {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  z?: never;\n  body: C;\n}");
+      expect(out).not.toContain("THING_SHAPE");
+    });
+
+    it("types a dependentSchemas alone, with no if/then/else", () => {
+      conditional({ if: undefined, then: undefined, else: undefined, dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/B" } } } } });
+      const out = generate(dir);
+      expect(out).toContain("export interface ThingWithA {\n  schema_version: 1;\n  x?: never;\n  y?: string;\n  body: A;\n}");
+      expect(out).toContain("export interface ThingWithB {\n  schema_version: 1;\n  x?: string;\n  y?: string;\n  body: B;\n}");
     });
 
     it.each([
@@ -378,6 +405,11 @@ describe("gen-wire", () => {
       ["a then that constrains rather than forbids", { then: { properties: { x: { maxLength: 2 } } } }, "must forbid properties (false) in then"],
       ["a then on a required property", { then: { properties: { body: false } } }, "names body, which isn't an optional property of it"],
       ["an else with another keyword", { else: { required: ["y"], properties: {} } }, "has keyword properties"],
+      ["a dependentSchemas on a required property", { dependentSchemas: { body: { properties: { body: { $ref: "#/$defs/A" } } } } }, "names body, which isn't an optional property of it"],
+      ["a dependentSchemas with another keyword", { dependentSchemas: { x: { required: ["body"], properties: { body: { $ref: "#/$defs/A" } } } } }, "has keyword required"],
+      ["a dependentSchemas on two properties", { dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/A" }, schema_version: { const: 1 } } } } }, "on x must test one property"],
+      ["a dependentSchemas on a $ref that is no branch", { dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/Kind" } } } } }, "isn't one of its branches"],
+      ["a dependentSchemas that forbids what else requires", { dependentSchemas: { y: { properties: { body: { $ref: "#/$defs/B" } } } } }, "both forbid and require y when its body is a A"],
     ])("refuses %s, rather than loosen the type", (_what, overrides, message) => {
       conditional(overrides);
       expect(() => generate(dir)).toThrow(message);
