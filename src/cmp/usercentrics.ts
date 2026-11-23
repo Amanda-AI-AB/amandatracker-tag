@@ -27,6 +27,7 @@
 
 import type { AdapterApi } from "../core/adapter-api";
 import { ConsentError, type Category, type ConsentSignal } from "../core/consent";
+import { isRecord } from "../core/guards";
 
 /** The page's window, as far as Usercentrics goes. */
 export interface UsercentricsHost {
@@ -75,13 +76,13 @@ function signalOf(counts: Counts): ConsentSignal {
 /** Whether the visitor explicitly consented to service, one of getServicesBaseInfo()'s entries. */
 function explicitlyGranted(service: unknown, index: number): boolean {
   const where = `window.UC_UI.getServicesBaseInfo()[${index}]`;
-  const consent = typeof service === "object" && service !== null ? (service as Record<string, unknown>).consent : undefined;
-  if (typeof consent !== "object" || consent === null) throw new ConsentError(`${where} has no consent`);
-  const { status, history } = consent as Record<string, unknown>;
+  const consent = isRecord(service) ? service.consent : undefined;
+  if (!isRecord(consent)) throw new ConsentError(`${where} has no consent`);
+  const { status, history } = consent;
   if (typeof status !== "boolean") throw new ConsentError(`${where}.consent.status is not a boolean: ${String(status)}`);
   if (!Array.isArray(history)) throw new ConsentError(`${where}.consent.history is not an array`);
   const latest: unknown = history[history.length - 1];
-  return status && typeof latest === "object" && latest !== null && (latest as Record<string, unknown>).type === "explicit";
+  return status && isRecord(latest) && latest.type === "explicit";
 }
 
 /**
@@ -90,14 +91,13 @@ function explicitlyGranted(service: unknown, index: number): boolean {
  * services aren't a list of entries, each with a category slug and a consent status and history.
  */
 export function usercentricsSignal(ui: unknown): ConsentSignal | undefined {
-  if (typeof ui !== "object" || ui === null) throw new ConsentError("window.UC_UI is not an object");
-  const api = ui as Record<string, unknown>;
-  if (call(api, "window.UC_UI", "isConsentRequired") !== false) return undefined;
-  const services = call(api, "window.UC_UI", "getServicesBaseInfo");
+  if (!isRecord(ui)) throw new ConsentError("window.UC_UI is not an object");
+  if (call(ui, "window.UC_UI", "isConsentRequired") !== false) return undefined;
+  const services = call(ui, "window.UC_UI", "getServicesBaseInfo");
   if (!Array.isArray(services)) throw new ConsentError("window.UC_UI.getServicesBaseInfo() is not an array");
   const counts: Counts = {};
   services.forEach((service: unknown, index) => {
-    const slug = typeof service === "object" && service !== null ? (service as Record<string, unknown>).categorySlug : undefined;
+    const slug = isRecord(service) ? service.categorySlug : undefined;
     if (typeof slug !== "string") {
       throw new ConsentError(`window.UC_UI.getServicesBaseInfo()[${index}].categorySlug is not a string: ${String(slug)}`);
     }
@@ -113,8 +113,8 @@ function explicitlyGivenV3(service: Record<string, unknown>, where: string): boo
   const consent = service.consent;
   // ServiceData.consent is optional: a service without one has had no consent given.
   if (consent === undefined) return false;
-  if (typeof consent !== "object" || consent === null) throw new ConsentError(`${where}.consent is not an object`);
-  const { given, type } = consent as Record<string, unknown>;
+  if (!isRecord(consent)) throw new ConsentError(`${where}.consent is not an object`);
+  const { given, type } = consent;
   if (typeof given !== "boolean") throw new ConsentError(`${where}.consent.given is not a boolean: ${String(given)}`);
   if (type !== "EXPLICIT" && type !== "IMPLICIT") {
     throw new ConsentError(`${where}.consent.type is not EXPLICIT or IMPLICIT: ${String(type)}`);
@@ -130,23 +130,21 @@ function explicitlyGivenV3(service: Record<string, unknown>, where: string): boo
  * has a consent, a boolean given and an EXPLICIT or IMPLICIT type.
  */
 export function usercentricsV3Signal(details: unknown, where: string): ConsentSignal | undefined {
-  if (typeof details !== "object" || details === null) throw new ConsentError(`${where} is not an object`);
-  const { consent, services } = details as Record<string, unknown>;
-  if (typeof consent !== "object" || consent === null) throw new ConsentError(`${where}.consent is not an object`);
-  const required = (consent as Record<string, unknown>).required;
+  if (!isRecord(details)) throw new ConsentError(`${where} is not an object`);
+  const { consent, services } = details;
+  if (!isRecord(consent)) throw new ConsentError(`${where}.consent is not an object`);
+  const required = consent.required;
   if (typeof required !== "boolean") throw new ConsentError(`${where}.consent.required is not a boolean: ${String(required)}`);
   if (required) return undefined;
-  if (typeof services !== "object" || services === null || Array.isArray(services)) {
-    throw new ConsentError(`${where}.services is not an object`);
-  }
+  if (!isRecord(services)) throw new ConsentError(`${where}.services is not an object`);
   const counts: Counts = {};
   for (const id of Object.keys(services)) {
     const at = `${where}.services[${JSON.stringify(id)}]`;
-    const service = (services as Record<string, unknown>)[id];
-    if (typeof service !== "object" || service === null) throw new ConsentError(`${at} is not an object`);
-    const category = (service as Record<string, unknown>).category;
+    const service = services[id];
+    if (!isRecord(service)) throw new ConsentError(`${at} is not an object`);
+    const category = service.category;
     if (typeof category !== "string") throw new ConsentError(`${at}.category is not a string: ${String(category)}`);
-    count(counts, category, explicitlyGivenV3(service as Record<string, unknown>, at));
+    count(counts, category, explicitlyGivenV3(service, at));
   }
   return signalOf(counts);
 }
@@ -163,8 +161,8 @@ export function watchUsercentrics(win: UsercentricsHost, api: AdapterApi): void 
     if (signal) api.signal(signal);
   };
   const readV3 = (cmp: unknown): void => {
-    if (typeof cmp !== "object" || cmp === null) throw new ConsentError("window.__ucCmp is not an object");
-    const ucCmp = cmp as Record<string, unknown>;
+    if (!isRecord(cmp)) throw new ConsentError("window.__ucCmp is not an object");
+    const ucCmp = cmp;
     const readId = ++latest;
     Promise.resolve(call(ucCmp, "window.__ucCmp", "isInitialized"))
       .then((initialized) => {
@@ -196,7 +194,7 @@ export function watchUsercentrics(win: UsercentricsHost, api: AdapterApi): void 
     api.guard(() => {
       if (win.__ucCmp === undefined) return;
       latest++;
-      const detail = typeof event === "object" && event !== null ? (event as { detail?: unknown }).detail : undefined;
+      const detail = isRecord(event) ? event.detail : undefined;
       apply(usercentricsV3Signal(detail, "UC_CONSENT's event.detail"));
     }),
   );

@@ -294,6 +294,7 @@ describe("mapGa4Event", () => {
   it("does not send a GA4 event without its params, with a warning", () => {
     expect(map({ event: "add_to_cart" })).toEqual({ mapping: undefined, warnings: ["amanda: GA4 event add_to_cart without its e-commerce params is not sent"] });
     expect(map(gtag("event", "begin_checkout")).mapping).toBeUndefined();
+    expect(map({ event: "view_item", ecommerce: [] })).toEqual({ mapping: undefined, warnings: ["amanda: GA4 event view_item without its e-commerce params is not sent"] });
   });
 
   it("ignores an entry whose event names an inherited property", () => {

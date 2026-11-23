@@ -30,6 +30,7 @@
 
 import type { Purchase, PurchaseItem } from "../wire/generated";
 import { warn, type ErrorBoundary } from "./boundary";
+import { isRecord } from "./guards";
 import { pageviewInput, type PageSource, type PageviewInput } from "./pageview";
 
 /** GA4's e-commerce events the tag reads, and the event each maps to. */
@@ -86,10 +87,6 @@ function idOf(value: unknown): string | undefined {
   if (typeof value === "string") return value === "" ? undefined : value;
   if (typeof value === "number" && isFinite(value)) return String(value);
   return undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function isGa4Event(name: unknown): name is Ga4EventName {

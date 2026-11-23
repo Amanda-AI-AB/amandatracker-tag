@@ -23,6 +23,7 @@ import {
   type WireTagError,
   type WireWithdrawal,
 } from "./generated";
+import { isRecord } from "../core/guards";
 
 export type TrackedEventInput = Omit<TrackedEvent, "schema_version" | "event_id">;
 export type PurchaseEventInput = Omit<PurchaseEvent, "schema_version" | "event_id">;
@@ -271,10 +272,6 @@ export function compiledPattern(pattern: string): RegExp {
     PATTERNS.set(pattern, compiled);
   }
   return compiled;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
