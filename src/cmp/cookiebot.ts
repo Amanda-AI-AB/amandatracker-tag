@@ -10,6 +10,7 @@
 
 import type { AdapterApi } from "../core/adapter-api";
 import { ConsentError, type Category, type ConsentSignal } from "../core/consent";
+import { isRecord } from "../core/guards";
 
 /** The page's window, as far as Cookiebot goes. */
 export interface CookiebotHost {
@@ -26,15 +27,14 @@ export const COOKIEBOT_CATEGORIES: Readonly<Record<Category, string>> = { analyt
  * each category the tag reads.
  */
 export function cookiebotSignal(cookiebot: unknown): ConsentSignal | undefined {
-  if (typeof cookiebot !== "object" || cookiebot === null) throw new ConsentError("window.Cookiebot is not an object");
-  const bot = cookiebot as Record<string, unknown>;
-  if (bot.hasResponse !== true) return undefined;
-  const consent = bot.consent;
-  if (typeof consent !== "object" || consent === null) throw new ConsentError("window.Cookiebot has a response but no consent");
+  if (!isRecord(cookiebot)) throw new ConsentError("window.Cookiebot is not an object");
+  if (cookiebot.hasResponse !== true) return undefined;
+  const consent = cookiebot.consent;
+  if (!isRecord(consent)) throw new ConsentError("window.Cookiebot has a response but no consent");
   const signal: ConsentSignal = {};
   for (const category of ["analytics", "ads"] as const) {
     const key = COOKIEBOT_CATEGORIES[category];
-    const value = (consent as Record<string, unknown>)[key];
+    const value = consent[key];
     if (typeof value !== "boolean") throw new ConsentError(`window.Cookiebot.consent.${key} is not a boolean: ${String(value)}`);
     signal[category] = value ? "granted" : "denied";
   }

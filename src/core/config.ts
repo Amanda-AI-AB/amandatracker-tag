@@ -12,6 +12,7 @@
 import { CUSTOM_PARAMS_MAP, TRACKED_EVENT_MAX_LENGTH, TRACKED_EVENT_PATTERN } from "../wire/generated";
 import type { DeclinedMode, NoCmpPolicy } from "./consent";
 import { configRequestInit, configUrl } from "./endpoint";
+import { isRecord } from "./guards";
 
 /** The config layout this tag reads. */
 export const CONFIG_SCHEMA_VERSION = 1;
@@ -45,10 +46,8 @@ export function checkSiteId(value: string | null | undefined): string {
  * site's settings could collect what the site turned off.
  */
 export function parseConfig(json: unknown, site: string): SiteConfig {
-  if (typeof json !== "object" || json === null || Array.isArray(json)) {
-    throw new ConfigError("the config is not a JSON object");
-  }
-  const config = json as Record<string, unknown>;
+  if (!isRecord(json)) throw new ConfigError("the config is not a JSON object");
+  const config = json;
   if (config.schema_version !== CONFIG_SCHEMA_VERSION) {
     throw new ConfigError(`the config's schema_version is ${String(config.schema_version)}, not ${CONFIG_SCHEMA_VERSION}`);
   }
@@ -145,11 +144,9 @@ export function paused(config: SiteConfig): boolean {
  */
 function checkFeatures(features: unknown): void {
   if (features === undefined) return;
-  if (typeof features !== "object" || features === null || Array.isArray(features)) {
-    throw new ConfigError("the config's features is not an object");
-  }
+  if (!isRecord(features)) throw new ConfigError("the config's features is not an object");
   for (const toggle of ["identify_enabled", "outbound_clicks_enabled", "ga4_ecommerce_enabled"]) {
-    const value = (features as Record<string, unknown>)[toggle];
+    const value = features[toggle];
     if (value !== undefined && typeof value !== "boolean") {
       throw new ConfigError(`the config's features.${toggle} is not a boolean: ${String(value)}`);
     }
@@ -253,10 +250,8 @@ const NO_CMP_POLICIES: readonly NoCmpPolicy[] = ["geo", "assume_denied", "assume
  */
 function checkConsent(consent: unknown): void {
   if (consent === undefined) return;
-  if (typeof consent !== "object" || consent === null || Array.isArray(consent)) {
-    throw new ConfigError("the config's consent is not an object");
-  }
-  const section = consent as Record<string, unknown>;
+  if (!isRecord(consent)) throw new ConfigError("the config's consent is not an object");
+  const section = consent;
   const mode = section.declined_mode;
   if (mode !== undefined && DECLINED_MODES.indexOf(mode as DeclinedMode) < 0) {
     throw new ConfigError(`the config's consent.declined_mode is not one of ${DECLINED_MODES.join(", ")}: ${String(mode)}`);
@@ -340,10 +335,8 @@ export function gpcHonored(config: SiteConfig): boolean {
  */
 function checkTelemetry(telemetry: unknown): void {
   if (telemetry === undefined) return;
-  if (typeof telemetry !== "object" || telemetry === null || Array.isArray(telemetry)) {
-    throw new ConfigError("the config's telemetry is not an object");
-  }
-  const rate = (telemetry as Record<string, unknown>).error_sample_rate;
+  if (!isRecord(telemetry)) throw new ConfigError("the config's telemetry is not an object");
+  const rate = telemetry.error_sample_rate;
   if (rate !== undefined && (typeof rate !== "number" || !(rate >= 0 && rate <= 1))) {
     throw new ConfigError(`the config's telemetry.error_sample_rate is not between 0 and 1: ${String(rate)}`);
   }

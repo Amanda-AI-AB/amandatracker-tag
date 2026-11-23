@@ -14,6 +14,7 @@
 
 import type { AdapterApi } from "../core/adapter-api";
 import { ConsentError, type Category, type ConsentSignal } from "../core/consent";
+import { isRecord } from "../core/guards";
 
 /** The page's window, as far as OneTrust goes. */
 export interface OneTrustHost {
@@ -32,8 +33,8 @@ export const ONETRUST_GROUPS: Readonly<Record<Category, string>> = { analytics: 
  * IsAlertBoxClosed(), or that has an answer without a string of active groups.
  */
 export function oneTrustSignal(oneTrust: unknown, activeGroups: unknown): ConsentSignal | undefined {
-  if (typeof oneTrust !== "object" || oneTrust === null) throw new ConsentError("window.OneTrust is not an object");
-  const closed = (oneTrust as Record<string, unknown>).IsAlertBoxClosed;
+  if (!isRecord(oneTrust)) throw new ConsentError("window.OneTrust is not an object");
+  const closed = oneTrust.IsAlertBoxClosed;
   if (typeof closed !== "function") throw new ConsentError("window.OneTrust.IsAlertBoxClosed is not a function");
   if ((closed as () => unknown).call(oneTrust) !== true) return undefined;
   if (typeof activeGroups !== "string") {
