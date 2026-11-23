@@ -16,11 +16,11 @@ import { boot } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
 import { DEFAULT_ENDPOINT } from "../src/core/endpoint";
 import { createFeed } from "../src/core/feed";
-import { readCookie, SESSION_COOKIE, VISITOR_COOKIE } from "../src/core/identity";
+import { readCookie, SESSION_COOKIE, VISITOR_COOKIE, VISITOR_MAX_AGE_S } from "../src/core/identity";
 import type { AmandaFunction } from "../src/core/queue";
 import { defaultTarget } from "../src/core/telemetry";
 import { CookieJar } from "./cookie-jar";
-import { fakeWindow, jsonResponse, PAGE, scriptTag, type FakeWindow } from "./fake-window";
+import { fakeWindow, jsonResponse, PAGE, scriptTag, type FakeResponse, type FakeWindow } from "./fake-window";
 import { validator } from "./wire-validator";
 
 const CONFIG_URL = `${DEFAULT_ENDPOINT}/cfg/site_123.json`;
@@ -905,5 +905,123 @@ describe("purge on withdrawal (AAI-785)", () => {
     expect(p.withdrawals).toEqual([]);
     expect(p.requests()).not.toContain(WITHDRAWAL_URL);
     expect(p.jar.live()).toEqual([]);
+  });
+});
+
+describe("no cookie respawn after a withdrawal (AAI-1128)", () => {
+  /**
+   * A granted visitor's page whose collector answers an accepted event batch sent with cookies, by
+   * fetch or by beacon, with Set-Cookie for the ids of its first event, as it does through a
+   * first-party proxy (AAI-827): the browser stores them as the response comes. Each event batch's
+   * answer is the next of statuses, then 204; while held, the answers wait for release().
+   */
+  async function proxiedCollector(declinedMode: "off" | "pings", statuses: number[] = [], held = false) {
+    const p = page(declinedMode, [["consent", { analytics: "granted", ads: "granted" }]]);
+    const answer = p.win.fetchMock.getMockImplementation()!;
+    const waiting: (() => void)[] = [];
+    let holding = held;
+    const setCookie = (body: string): void => {
+      const [event] = (JSON.parse(body) as { e: { visitor_id: string; session_id: string }[] }).e;
+      p.jar.serverSet({ name: VISITOR_COOKIE, value: `v1.${event!.visitor_id}`, domain: "example.com", path: "/", maxAge: VISITOR_MAX_AGE_S });
+      p.jar.serverSet({ name: SESSION_COOKIE, value: `v1.${event!.session_id}.${Date.now()}`, domain: "example.com", path: "/", maxAge: 1800 });
+    };
+    p.win.fetchMock.mockImplementation((url: string, init: RequestInit) => {
+      if (url !== EVENTS_URL || init.credentials === "omit") return answer(url, init);
+      const status = statuses.shift() ?? 204;
+      const respond = (): FakeResponse => {
+        if (status < 300) setCookie(init.body as string);
+        return jsonResponse(null, status);
+      };
+      return holding ? new Promise<FakeResponse>((resolve) => waiting.push(() => resolve(respond()))) : Promise.resolve(respond());
+    });
+    const beacons: string[] = [];
+    p.win.navigator.sendBeacon = (_url: string, body?: BodyInit | null) => {
+      beacons.push(body as string);
+      setCookie(body as string);
+      return true;
+    };
+    await p.booted;
+    await vi.advanceTimersByTimeAsync(0);
+    return {
+      ...p,
+      beacons,
+      /** The ids in the cookies the page holds now. */
+      cookieIds: () => [readCookie(p.jar.cookie, VISITOR_COOKIE), readCookie(p.jar.cookie, SESSION_COOKIE)],
+      release: async () => {
+        holding = false;
+        for (const respond of waiting.splice(0)) respond();
+        await vi.advanceTimersByTimeAsync(0);
+      },
+    };
+  }
+
+  it("is set up as the ticket says: the collector's answer to an accepted batch sets the cookies for its ids", async () => {
+    const p = await proxiedCollector("off");
+    const [batch] = p.batches();
+    expect(p.cookieIds()[0]).toBe(`v1.${batch.e[0].visitor_id}`);
+  });
+
+  it("an event queued before the withdrawal never goes after it, by its timer or the pagehide flush", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const p = await proxiedCollector("off");
+    p.win.amanda!("event", "signup");
+    const before = p.requests().length;
+
+    p.win.amanda!("consent", { analytics: "denied" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await p.leave();
+
+    expect(p.requests().slice(before)).toEqual([]);
+    expect(p.beacons).toEqual([]);
+    expect(p.jar.live()).toEqual([]);
+    expect(p.reports).toEqual([]);
+  });
+
+  it("a batch awaiting its retry is never retried after the withdrawal", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const p = await proxiedCollector("off", [503]);
+    expect(p.batches()).toHaveLength(1);
+
+    p.win.amanda!("consent", { analytics: "denied" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    await p.leave();
+
+    expect(p.batches()).toHaveLength(1);
+    expect(p.beacons).toEqual([]);
+    expect(p.jar.live()).toEqual([]);
+  });
+
+  it.each(["off", "pings"] as const)(
+    "declined mode %s: a batch in flight as the visitor withdraws has the cookies its response sets deleted again",
+    async (declinedMode) => {
+      const p = await proxiedCollector(declinedMode, [], true);
+      expect(p.batches()).toHaveLength(1);
+
+      p.win.amanda!("consent", { analytics: "denied" });
+      expect(p.jar.live()).toEqual([]);
+      await p.release();
+
+      expect(p.jar.live()).toEqual([]);
+      await p.leave();
+      expect(p.batches()).toHaveLength(1);
+      expect(p.beacons).toEqual([]);
+      expect(p.jar.live()).toEqual([]);
+      expect(p.reports).toEqual([]);
+    },
+  );
+
+  it("a batch in flight as the visitor withdraws and grants again leaves the fresh ids in the cookies, not the withdrawn ones", async () => {
+    const p = await proxiedCollector("off", [], true);
+    const withdrawn = p.batches()[0].e[0];
+
+    p.win.amanda!("consent", { analytics: "denied" });
+    p.win.amanda!("consent", { analytics: "granted" });
+    const renewed = p.cookieIds();
+    expect(renewed[0]).not.toBe(`v1.${withdrawn.visitor_id}`);
+    await p.release();
+
+    expect(p.cookieIds()).toEqual(renewed);
+    expect(p.jar.live().map((c) => c.value)).not.toContain(`v1.${withdrawn.visitor_id}`);
+    expect(p.reports).toEqual([]);
   });
 });

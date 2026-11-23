@@ -25,7 +25,8 @@
 //                 pending item that is an event only goes as a declined one does, which is nowhere.
 //
 // The machine's withdraw is the transport's withdrawEvents, so that nothing goes after a decline
-// (AAI-86), with one exception the site opts into: with the config's consent.purge_on_withdrawal on,
+// (AAI-86), and an event batch already in flight then has the cookies its response may set again
+// deleted once more as it settles (identity.discard, AAI-1128); with one exception the site opts into: with the config's consent.purge_on_withdrawal on,
 // forgetting a visitor first posts the withdrawal signal with their visitor id (withdrawal.ts,
 // AAI-785), so that their stored data is erased, and only then deletes their cookies. A grant after a
 // denial renews the visitor's ids and, with them, the transport's page key (transport.newPage,
@@ -121,7 +122,11 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
       );
       // Before createTransport, which registers the transport's own pagehide flush.
       win.addEventListener("pagehide", () => boundary.guard("consent", () => machine!.pagehide()));
-      const transport = createTransport(win, target.endpoint, boundary);
+      // A batch in flight as the visitor withdrew may come back with the collector's Set-Cookie for
+      // its ids, through a proxy: those cookies are deleted again as it settles (AAI-1128).
+      const transport = createTransport(win, target.endpoint, boundary, {
+        afterWithdrawn: (events) => identity.discard(events.map((e) => ({ visitorId: e.visitor_id, sessionId: e.session_id }))),
+      });
       const pingOptions = { clickIds: pingsIncludeClickIds(config) };
       machine = createConsent<FeedItem>({
         declinedMode: declinedMode(config),

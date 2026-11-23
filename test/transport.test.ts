@@ -28,6 +28,9 @@ type Answer = { ok: boolean; status: number } | Error | "pending";
 
 interface Harness {
   transport: Transport;
+  /** The stand-in window and the boundary the transport was made with, for a second one. */
+  win: TransportWindow;
+  boundary: ErrorBoundary;
   fetchMock: ReturnType<typeof vi.fn>;
   beacon: ReturnType<typeof vi.fn>;
   reports: ErrorReport[];
@@ -63,6 +66,8 @@ function harness(answers: Answer[] = [], options: { beacon?: boolean | "missing"
   const transport = createTransport(win, ENDPOINT, boundary);
   return {
     transport,
+    win,
+    boundary,
     fetchMock,
     beacon,
     reports,
@@ -837,6 +842,85 @@ describe("withdrawEvents", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     harness().transport.withdrawEvents();
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("afterWithdrawn (AAI-1128)", () => {
+  /** A transport whose next fetch stays in flight until settle(answer), and the afterWithdrawn calls. */
+  function inFlight(afterWithdrawn: (events: readonly WireEvent[]) => void = () => undefined, beacon: boolean | "missing" = true) {
+    const t = harness([], { beacon });
+    const calls: (readonly WireEvent[])[] = [];
+    const transport = createTransport(t.win, ENDPOINT, t.boundary, {
+      afterWithdrawn: (events) => {
+        calls.push(events);
+        afterWithdrawn(events);
+      },
+    });
+    let settle: (answer: { ok: boolean; status: number } | Error) => void = () => undefined;
+    t.fetchMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          settle = (answer) => (answer instanceof Error ? reject(answer) : resolve(answer));
+        }),
+    );
+    return { ...t, transport, calls, settle: (answer: { ok: boolean; status: number } | Error) => settle(answer) };
+  }
+
+  it.each([
+    ["a 204", { ok: true, status: 204 }],
+    ["a 503", { ok: false, status: 503 }],
+    ["a network error", new TypeError("Failed to fetch")],
+  ] as const)("hands over the events of a batch withdrawn in flight once its fetch settles with %s", async (_, answer) => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = inFlight();
+    t.transport.event(pageview());
+    t.transport.withdrawEvents();
+    expect(t.calls).toEqual([]);
+
+    t.settle(answer);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.calls).toEqual([[pageview()]]);
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+    expect(t.reports).toEqual([]);
+  });
+
+  it("hands over a pagehide fetch's events withdrawn in flight, and doesn't recover them", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = inFlight(undefined, "missing");
+    t.transport.event(click(1));
+    t.pagehide();
+    t.transport.withdrawEvents();
+
+    t.settle(new TypeError("Failed to fetch"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.calls).toEqual([[click(1)]]);
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("is never called for a batch settled before the withdrawal, nor for a ping batch", async () => {
+    const t = inFlight();
+    t.transport.ping(pingOf("pageview"));
+    t.transport.withdrawEvents();
+    t.settle({ ok: true, status: 204 });
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(0);
+    t.transport.withdrawEvents();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.calls).toEqual([]);
+  });
+
+  it("reports a failure of its own, and still drops the batch rather than retrying it", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = inFlight(() => {
+      throw new Error("boom");
+    });
+    t.transport.event(pageview());
+    t.transport.withdrawEvents();
+    t.settle({ ok: false, status: 503 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.reports).toHaveLength(1);
+    expect(t.reports[0]).toMatchObject({ message: "boom" });
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 

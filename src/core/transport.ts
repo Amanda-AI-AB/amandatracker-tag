@@ -10,6 +10,10 @@
 // sent once more in two smaller bodies, and a body rejected again once more without keepalive
 // (AAI-951). An ordinary batch goes without keepalive, whatever its size.
 // When the visitor declines, the events not sent yet are dropped instead (withdrawEvents, AAI-86).
+// An event batch already in flight then can't be called back, and behind a first-party proxy its
+// response may carry the collector's Set-Cookie for the ids it holds (AAI-827), which the browser
+// stores after the withdrawal deleted them: so once such a batch's fetch settles, its events go to
+// the transport's afterWithdrawn option, which deletes them again (AAI-1128).
 //
 // Everything lives in memory: no cookie, localStorage or IndexedDB, so a visitor who declined
 // accrues no storage, and what the page hasn't sent when it dies is lost. Loss is measured
@@ -43,6 +47,15 @@ export interface TransportWindow {
   addEventListener(type: "pagehide", listener: () => void): void;
 }
 
+export interface TransportOptions {
+  /**
+   * Called with the events of an event batch the visitor withdrew while its fetch was in flight,
+   * once that fetch settles, however it settles: its response may have set the cookies again
+   * (AAI-1128). It runs inside the boundary, before the batch's outcome is handled.
+   */
+  readonly afterWithdrawn?: (events: readonly WireEvent[]) => void;
+}
+
 /** POST /v1/e answered with a status other than 2xx or 5xx: the collector refused what the tag sent. */
 export class CollectorRefusedError extends Error {
   override name = "CollectorRefusedError";
@@ -61,7 +74,8 @@ export interface Transport {
    * that none goes after the decline, with a warning saying how many. Pings are left as they are.
    * An event batch whose fetch is already in flight can't be called back, but it is never sent
    * again: a 5xx or a network error drops it with a warning rather than retrying it (AAI-1206),
-   * and a rejected pagehide fetch isn't recovered (split and sent again) (AAI-1204).
+   * and a rejected pagehide fetch isn't recovered (split and sent again) (AAI-1204). Once its fetch
+   * settles, its events go to the afterWithdrawn option (AAI-1128).
    */
   withdrawEvents(): void;
   /**
@@ -115,7 +129,12 @@ interface Batch {
  * failure inside a flush. A batch dropped after its retries, or on pagehide, is logged with
  * console.warn: a network failure isn't the tag's, and seq's gap counts the lost events.
  */
-export function createTransport(win: TransportWindow, endpoint: string, boundary: ErrorBoundary): Transport {
+export function createTransport(
+  win: TransportWindow,
+  endpoint: string,
+  boundary: ErrorBoundary,
+  options: TransportOptions = {},
+): Transport {
   const url = eventsUrl(endpoint);
   const buffers: { events: WireEvent[]; pings: WirePing[] } = { events: [], pings: [] };
   const awaitingRetry = new Set<Batch>();
@@ -213,6 +232,18 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     throw new CollectorRefusedError(`POST ${url}: HTTP ${status}, ${batch.items.length} ${batch.kind} dropped`);
   };
 
+  /**
+   * A batch's fetch settled: it is no longer in flight, and an event batch the visitor withdrew
+   * meanwhile goes to afterWithdrawn, whose failure is reported without stopping the batch's own
+   * outcome.
+   */
+  const settled = (batch: Batch): void => {
+    inFlight.delete(batch);
+    const afterWithdrawn = options.afterWithdrawn;
+    if (batch.withdrawn !== true || afterWithdrawn === undefined) return;
+    boundary.guard("transport", () => afterWithdrawn(batch.items as readonly WireEvent[]));
+  };
+
   const retryOrDrop = (batch: Batch, why: string, error?: unknown): void => {
     if (batch.withdrawn === true) return dropped(batch, `${why}, and the visitor declined since`, error);
     const delay = RETRY_DELAYS_MS[batch.tries - 1];
@@ -235,13 +266,13 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     if (batch.kind === "events") inFlight.add(batch);
     const sent = win.fetch(url, batchRequestInit(batch.body, batch.kind)).then(
       (response) => {
-        inFlight.delete(batch);
+        settled(batch);
         if (response.ok) return;
         if (response.status >= 500) return retryOrDrop(batch, `HTTP ${response.status}`);
         refused(batch, response.status);
       },
       (error: unknown) => {
-        inFlight.delete(batch);
+        settled(batch);
         // fetch rejects with a TypeError on a network error; anything else isn't one, and is reported.
         if (!(error instanceof TypeError)) throw error;
         retryOrDrop(batch, "network error", error);
@@ -274,14 +305,14 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     const sent = win.fetch(url, init).then(
       (response) => {
         keepaliveInFlight -= bytes;
-        inFlight.delete(batch);
+        settled(batch);
         if (response.ok) return;
         if (response.status >= 500) return dropped(batch, `HTTP ${response.status} on pagehide`);
         refused(batch, response.status);
       },
       (error: unknown) => {
         keepaliveInFlight -= bytes;
-        inFlight.delete(batch);
+        settled(batch);
         // fetch rejects with a TypeError for the keepalive quota and for a network error alike.
         if (!(error instanceof TypeError)) throw error;
         recoverOnUnload(batch, step, error);

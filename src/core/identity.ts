@@ -20,7 +20,8 @@
 // only on a grant. forget() deletes both cookies at once, those the collector re-issued through a
 // first-party proxy too (AAI-827; it never sets them HttpOnly), first handing the visitor id to
 // beforeForget, the withdrawal signal of a site that purges on withdrawal (AAI-785), and a grant after a denial renews
-// both ids, so earlier anonymous pings are never linked to the visitor (consent.ts).
+// both ids, so earlier anonymous pings are never linked to the visitor (consent.ts). discard() deletes
+// them once more when a response to a batch sent before the withdrawal set them again (AAI-1128).
 //
 // Safari's ITP caps script-written cookies at 7 days, or 24 hours after a link with tracking
 // decoration: an accepted limitation. A first-party proxy the customer runs is the documented way
@@ -66,6 +67,14 @@ export interface Identity extends IdentityControl {
    * cookies are written again, with their lifetimes renewed.
    */
   ids(): Ids;
+  /**
+   * Deletes both cookies again when either holds an id of `stale`, the ids of a request sent before
+   * forget() whose response came after it: behind a proxy, the collector's Set-Cookie for those ids
+   * (AAI-827) would otherwise bring the forgotten visitor back (AAI-1128). When the visitor has
+   * granted again since, the fresh ids renew() minted are written back in their place. Cookies
+   * holding no stale id are left as they are.
+   */
+  discard(stale: readonly Ids[]): void;
 }
 
 export interface IdentityOptions {
@@ -167,8 +176,9 @@ export function createIdentity(host: IdentityHost, options: IdentityOptions = {}
   };
 
   const store = (): void => {
+    if (visitor === undefined || session === undefined) return;
     const target = resolveDomain();
-    if (target === null || visitor === undefined || session === undefined) return;
+    if (target === null) return;
     doc.cookie = cookieString(VISITOR_COOKIE, `${COOKIE_VERSION}.${visitor}`, VISITOR_MAX_AGE_S, target);
     doc.cookie = cookieString(
       SESSION_COOKIE,
@@ -208,6 +218,16 @@ export function createIdentity(host: IdentityHost, options: IdentityOptions = {}
       } finally {
         deleteCookies();
       }
+    },
+    discard(stale) {
+      const cookies = doc.cookie;
+      const visitorId = parseVisitor(readCookie(cookies, VISITOR_COOKIE));
+      const sessionId = parseSession(readCookie(cookies, SESSION_COOKIE))?.id;
+      const respawned = stale.some((ids) => ids.visitorId === visitorId || ids.sessionId === sessionId);
+      if (!respawned) return;
+      deleteCookies();
+      // Undefined since forget(), unless a grant renewed them: those are the visitor's ids now.
+      store();
     },
   };
 
