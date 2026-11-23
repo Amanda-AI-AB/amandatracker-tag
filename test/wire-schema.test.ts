@@ -491,6 +491,28 @@ describe("wire schema v1: Pub/Sub message", () => {
     expect(validate({ ...noDevice, page_id: PAGE_ID, event: tagError })).toBe(false);
   });
 
+  it("carries an event's or a ping's bot mark, and is valid without it (AAI-1001)", () => {
+    expect(validate({ ...message, is_bot: true, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...message, is_bot: true, event: PING }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...message, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...message, event: PING }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("refuses an is_bot other than true: the collector leaves it out instead (AAI-1001)", () => {
+    for (const is_bot of [false, "true", 1, null]) {
+      expect(validate({ ...message, is_bot, event: EVENT }), JSON.stringify(is_bot)).toBe(false);
+      expect(validate({ ...message, is_bot, event: PING }), JSON.stringify(is_bot)).toBe(false);
+    }
+  });
+
+  it("refuses is_bot on a withdrawal signal's or a tag error's message (AAI-1001)", () => {
+    const tagError = { schema_version: 1, event_id: UUID7, tag_version: "0.4.0", site_id: "site_123", stage: "transport", name: "TypeError" };
+    const { country, device_class, ...bare } = message;
+    expect(validate({ ...message, is_bot: true, event: WITHDRAWAL })).toBe(false);
+    expect(validate({ ...bare, is_bot: true, event: tagError })).toBe(false);
+    expect(validate({ ...bare, event: tagError }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
   it("checks the shape of seq and page_id", () => {
     for (const seq of [0, 1.5, "1"]) expect(validate({ ...message, seq, event: EVENT }), String(seq)).toBe(false);
     expect(validate({ ...message, seq: 1, page_id: EVENT.visitor_id, event: EVENT })).toBe(false);

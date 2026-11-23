@@ -129,4 +129,18 @@ describe("PubSubMessage (AAI-1142, AAI-1146)", () => {
     expect(message(pingedCountry), JSON.stringify(message.errors)).toBe(true);
     for (const refused of [pinged, browsed, withdrawn, versioned]) expect(message(refused)).toBe(false);
   });
+
+  it("takes is_bot as true on an event's or a ping's message only (AAI-1001)", () => {
+    const tracked: PubSubMessage = { ...received, device_class: "desktop", is_bot: true, event: EVENT };
+    const pinged: PubSubMessage = { ...received, device_class: "desktop", is_bot: true, event: PING };
+    // @ts-expect-error the collector leaves is_bot out rather than send false
+    const human: PubSubMessage = { ...received, device_class: "desktop", is_bot: false, event: EVENT };
+    // @ts-expect-error a withdrawal signal's message is never marked
+    const withdrawn: PubSubMessage = { ...received, device_class: "desktop", is_bot: true, event: WITHDRAWAL };
+    // @ts-expect-error a tag error's message is never marked
+    const published: PubSubMessage = { ...received, is_bot: true, event: tagError };
+    expect(message(tracked), JSON.stringify(message.errors)).toBe(true);
+    expect(message(pinged), JSON.stringify(message.errors)).toBe(true);
+    for (const refused of [human, withdrawn, published]) expect(message(refused)).toBe(false);
+  });
 });

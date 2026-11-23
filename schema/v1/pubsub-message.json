@@ -53,6 +53,10 @@
       "minLength": 1,
       "maxLength": 64
     },
+    "is_bot": {
+      "description": "Set, as true, when the collector marked the payload a bot's (a known-bot User-Agent, its heuristics, or the batch's webdriver flag, 03 §5, AAI-76): stored, but excluded from aggregates and dashboards by default. Absent otherwise: the collector never sends false. Set on an event's or a ping's message only, never on a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1001). It is server-derived, so a ping's client field list (ping.json) doesn't change.",
+      "const": true
+    },
     "seq": {
       "description": "The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146).",
       "type": "integer",
@@ -89,6 +93,7 @@
     "browser_family": { "properties": { "event": { "$ref": "event.json" } } },
     "browser_major": { "properties": { "event": { "$ref": "event.json" } } },
     "os_family": { "properties": { "event": { "$ref": "event.json" } } },
+    "is_bot": { "properties": { "event": { "anyOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }] } } },
     "seq": { "properties": { "event": { "$ref": "event.json" } } },
     "page_id": { "properties": { "event": { "$ref": "event.json" } } }
   },

@@ -13,7 +13,7 @@
 // boolean, const, enum, oneOf, $ref, and an object's if/then/else and dependentSchemas in one form
 // each: if a required oneOf property is one of its $refs, then some optional properties are
 // forbidden, else some are required (AAI-1142); an optional property present needs that oneOf
-// property to be one of its $refs (AAI-1146). It types them as a union of an interface for each
+// property to be one of its $refs (AAI-1146), or one of an anyOf of them (AAI-1001). It types them as a union of an interface for each
 // branch of the oneOf, and gives each its own field list, required fields and fields' types in
 // place of the object's) and throws on anything else, rather than generate a looser type
 // or looser rules: an object's or a map's keywords, a $ref's siblings and the rules inside a oneOf
@@ -272,8 +272,8 @@ export function generate(versionDir) {
    * property:
    * - an if/then/else: if the property is one of its $refs, then some optional properties are
    *   forbidden (false), else some are required (AAI-1142);
-   * - dependentSchemas: an optional property present means the property is one of its $refs, so
-   *   every other branch forbids it (AAI-1146).
+   * - dependentSchemas: an optional property present means the property is one of its $refs, or
+   *   one of an anyOf of them, so every other branch forbids it (AAI-1146, AAI-1001).
    * Undefined when the object has neither; throws on any other form.
    * @param {string} file
    * @param {string} name
@@ -287,28 +287,38 @@ export function generate(versionDir) {
     /** @type {string | undefined} the property the rules test */
     let tested;
     /**
-     * The branch a test names: the property it tests must be the one the object's other tests do,
-     * a required oneOf of $refs, and the $ref one of its branches.
+     * The branches a test names: the property it tests must be the one the object's other tests do,
+     * a required oneOf of $refs, and each $ref one of its branches. An if names one, with a $ref
+     * alone; a dependentSchemas one or more, with a $ref alone or an anyOf of $refs (AAI-1001).
      * @param {(why: string) => Error} fail
      * @param {any} test
      * @param {boolean} requires whether the test must require the property, as an if must
+     * @returns {string[]}
      */
-    function testedBranch(fail, test, requires) {
+    function testedBranches(fail, test, requires) {
       const [key, ...more] = Object.keys(test.properties ?? {});
       if (key === undefined || more.length > 0 || (requires && JSON.stringify(test.required) !== JSON.stringify([key]))) {
         throw fail(requires ? "must test one property, which it requires" : "must test one property");
       }
       const branch = test.properties[key];
-      if (Object.keys(branch).join() !== "$ref") throw fail(`must test ${key} with a $ref alone`);
+      /** @type {any[]} */
+      let refs;
+      if (Object.keys(branch).join() === "$ref") refs = [branch];
+      else if (!requires && Object.keys(branch).join() === "anyOf" && Array.isArray(branch.anyOf) && branch.anyOf.length >= 2
+        && branch.anyOf.every((/** @type {any} */ b) => b !== null && typeof b === "object" && Object.keys(b).join() === "$ref")) refs = branch.anyOf;
+      else throw fail(requires ? `must test ${key} with a $ref alone` : `must test ${key} with a $ref alone or an anyOf of two or more $refs`);
       const prop = node.properties[key];
       if (!(node.required ?? []).includes(key) || !Array.isArray(prop?.oneOf) || prop.oneOf.some((/** @type {any} */ b) => !b.$ref)) {
         throw fail(`must test ${key}, a required oneOf of $refs`);
       }
       if (tested !== undefined && tested !== key) throw fail(`tests ${key}, where the object's other rules test ${tested}`);
       tested = key;
-      const refName = resolveRef(file, branch.$ref).name;
-      if (!branchNames(key).includes(refName)) throw fail(`tests ${key} with ${refName}, which isn't one of its branches`);
-      return refName;
+      const refNames = refs.map((ref) => resolveRef(file, ref.$ref).name);
+      for (const refName of refNames) {
+        if (!branchNames(key).includes(refName)) throw fail(`tests ${key} with ${refName}, which isn't one of its branches`);
+      }
+      if (new Set(refNames).size !== refNames.length) throw fail(`tests ${key} with the same branch twice`);
+      return refNames;
     }
     /** @param {string} key */
     const branchNames = (key) => node.properties[key].oneOf.map((/** @type {any} */ b) => resolveRef(file, b.$ref).name);
@@ -337,14 +347,15 @@ export function generate(versionDir) {
       checkKeywords(file, `${name}'s if`, test, new Set(["required", "properties"]));
       checkKeywords(file, `${name}'s then`, yes, new Set(["properties"]));
       checkKeywords(file, `${name}'s else`, no, new Set(["required"]));
-      const refName = testedBranch(fail, test, true);
+      // An if names one branch, with a $ref alone.
+      const refName = /** @type {string} */ (testedBranches(fail, test, true)[0]);
       const forbidden = optional(fail, Object.keys(yes.properties ?? {}));
       if (forbidden.length === 0 || forbidden.some((k) => yes.properties[k] !== false)) throw fail("must forbid properties (false) in then");
       const required = optional(fail, no.required ?? []);
       if (required.length === 0) throw fail("must require properties in else");
       ifThenElse = { refName, forbidden, required };
     }
-    /** @type {[string, string][]} each dependent property, with the branch it needs */
+    /** @type {[string, string[]][]} each dependent property, with the branches it needs one of */
     const dependents = [];
     if (deps !== undefined) {
       const fail = (/** @type {string} */ why) => new Error(`${file}: ${name}'s dependentSchemas ${why}`);
@@ -353,7 +364,7 @@ export function generate(versionDir) {
         const failOn = (/** @type {string} */ why) => fail(`on ${dependent} ${why}`);
         optional(fail, [dependent]);
         checkKeywords(file, `${name}'s dependentSchemas on ${dependent}`, test, new Set(["properties"]));
-        dependents.push([dependent, testedBranch(failOn, test, false)]);
+        dependents.push([dependent, testedBranches(failOn, test, false)]);
       }
     }
     const key = /** @type {string} */ (tested);
@@ -363,7 +374,7 @@ export function generate(versionDir) {
         const target = refName === ifThenElse.refName ? own.forbidden : own.required;
         for (const k of refName === ifThenElse.refName ? ifThenElse.forbidden : ifThenElse.required) target.add(k);
       }
-      for (const [dependent, needs] of dependents) if (refName !== needs) own.forbidden.add(dependent);
+      for (const [dependent, needs] of dependents) if (!needs.includes(refName)) own.forbidden.add(dependent);
       const both = [...own.required].filter((k) => own.forbidden.has(k));
       // The schema would refuse every such object, which no type can say.
       if (both.length > 0) throw new Error(`${file}: ${name}'s rules both forbid and require ${both.join(", ")} when its ${key} is a ${refName}`);
