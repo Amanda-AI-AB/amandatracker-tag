@@ -190,6 +190,19 @@ keeps the first one the browser accepts (a browser refuses a cookie on a public 
   The tag keeps no ref, in memory or in a cookie: the site calls identify on each page its user is
   logged in on. Like every event, the identify event goes only under granted analytics, never as a
   ping.
+- **The cross-domain linker, off by default.** On a site whose config lists `linker.domains` (the
+  site's DNS-verified same-owner domains, which the control plane publishes only while the site's
+  badge-gated linker setting is on, AAI-789), `src/core/linker.ts` carries a granted visitor's ids
+  from one of those domains to another, so the visitor is counted once. When the visitor clicks, or
+  middle-clicks, a link to another domain of the set, the tag adds
+  `_amnda_lnk=v1.<visitor id>.<session id>.<ms>` to its href. It decorates only under granted
+  analytics, never a link to a domain outside the set, and never one to a host under the page's own
+  listed domain, which shares its cookies. The landing page adopts the ids as the visitor's only
+  when it is on a domain of the set and the value is at most two minutes old, so a shared or
+  bookmarked link carries no one's identity. Like any id, they are written only under granted
+  consent: a decline drops them, and a later grant mints fresh ones. The parameter is taken out of
+  the address bar on every landing that has it, and no `url` or `referrer` the tag sends holds it.
+  Forms and links the browser opens from its context menu are not decorated.
 - **purchase().** `amanda('purchase', {order_id, revenue, currency, items})` (`src/core/purchase.ts`),
   on the order confirmation page, sends one `purchase` event carrying the order as its `purchase`:
   `order_id`, `revenue` (0 or more, in the currency's major unit), `currency` (ISO 4217; lower case

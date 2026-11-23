@@ -6,7 +6,8 @@
 // (AAI-149, canary.ts), and features, whose identify_enabled turns amanda('identify') on (AAI-786,
 // identify.ts), outbound_clicks_enabled turns outbound link clicks off (AAI-167, outbound.ts) and
 // ga4_ecommerce_enabled turns the GA4 e-commerce auto-map on (AAI-974, ecommerce.ts), and domains,
-// the site's own, whose links aren't outbound. The tag checks what it reads here; the tickets that use a section (consent AAI-84, ...) check that
+// the site's own, whose links aren't outbound, and linker, the cross-domain linker's verified
+// same-owner domains (AAI-218, linker.ts). The tag checks what it reads here; the tickets that use a section (consent AAI-84, ...) check that
 // section's fields. Sections it doesn't read pass through unchecked, such as geo ({ city: true }),
 // which only the collector reads (AAI-199, AAI-1144).
 
@@ -65,8 +66,31 @@ export function parseConfig(json: unknown, site: string): SiteConfig {
   checkCustomParams(config.custom_params);
   checkBundleVersion(config.bundle_version);
   checkFeatures(config.features);
-  checkDomains(config.domains);
+  checkDomains(config.domains, "domains");
+  checkLinker(config.linker);
   return config as SiteConfig;
+}
+
+/**
+ * The config's optional linker section (AAI-789, AAI-218): { domains }, the site's verified
+ * same-owner domains the cross-domain linker (linker.ts) carries the visitor's ids between, a list
+ * of hostnames as domains is; the publisher lists none while the linker is off. A section of another
+ * shape throws ConfigError, since guessing the set could carry the visitor's ids to a domain the
+ * owner never verified.
+ */
+function checkLinker(linker: unknown): void {
+  if (linker === undefined) return;
+  if (!isRecord(linker)) throw new ConfigError("the config's linker is not an object");
+  checkDomains(linker.domains, "linker.domains");
+}
+
+/**
+ * The domains the cross-domain linker carries the visitor's ids between: the config's
+ * linker.domains, read as ownDomains reads domains. None, the linker off, when it sets none.
+ */
+export function linkerDomains(config: SiteConfig): string[] {
+  const linker = config.linker as { domains?: string[] } | undefined;
+  return ((linker && linker.domains) || []).map((domain) => hostnameOf(domain)!);
 }
 
 /** A hostname, as the wire schema's LinkHost has it: what a browser's URL parser makes of one. */
@@ -81,12 +105,12 @@ const NOT_A_HOSTNAME = /[\s/\\?#@:[\]]/;
  * guessing which hosts are the site's own could send the hosts of its internal links as outbound,
  * or miss its outbound ones.
  */
-function checkDomains(domains: unknown): void {
+function checkDomains(domains: unknown, name: string): void {
   if (domains === undefined) return;
-  if (!Array.isArray(domains)) throw new ConfigError("the config's domains is not a list");
+  if (!Array.isArray(domains)) throw new ConfigError(`the config's ${name} is not a list`);
   for (const domain of domains) {
     const host = typeof domain === "string" && !NOT_A_HOSTNAME.test(domain) ? hostnameOf(domain) : undefined;
-    if (host === undefined) throw new ConfigError(`the config's domains holds a value that is not a hostname: ${String(domain)}`);
+    if (host === undefined) throw new ConfigError(`the config's ${name} holds a value that is not a hostname: ${String(domain)}`);
   }
 }
 

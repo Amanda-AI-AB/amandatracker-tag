@@ -20,7 +20,8 @@
 // AAI-985), goes as the auto-map's does: an event, or a count-only ping in declined mode `pings`.
 // A form_submit (forms.ts) goes as a page_exit does, an event only, and so do a click_special
 // (special-clicks.ts), a click_outbound (outbound.ts) and an identify event (identify.ts), whose
-// command refuses unless the site's config turns identify on (AAI-988).
+// command refuses unless the site's config turns identify on (AAI-988). The cross-domain linker
+// (linker.ts, AAI-218) reads and adopts the visitor's ids through the feed, under its machine.
 //
 // Still to come: scroll depth (scroll.ts) is off by default, and the tag passes no onScrollDepth:
 // the per-site toggle that turns it on is AAI-791's.
@@ -66,6 +67,7 @@ export function startTag(install?: Install): Promise<Tag | undefined> | undefine
       onClickOutbound: feed.clickOutbound,
       onIdentify: feed.identify,
       onPurchase: feed.purchase,
+      linker: feed.linker,
     });
   });
 }

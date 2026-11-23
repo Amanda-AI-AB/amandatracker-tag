@@ -36,7 +36,7 @@ const WEB_SCHEMES = ["http:", "https:"];
 const LINK_HOST_PATTERN = new RegExp(TRACKED_EVENT_PATTERN.link_host);
 
 /** Whether host is domain or one of its subdomains. */
-function within(host: string, domain: string): boolean {
+export function within(host: string, domain: string): boolean {
   return host === domain || host.slice(-domain.length - 1) === `.${domain}`;
 }
 
