@@ -473,6 +473,27 @@ describe("wire schema v1: Pub/Sub message", () => {
     expect(validate({ ...message, browser_major: "131", event: EVENT })).toBe(false);
   });
 
+  it("carries an event's city, for a site that turned city-level geo on, and is valid without it (AAI-1144)", () => {
+    for (const city of ["Stockholm", "São Paulo", "x", "x".repeat(128)]) {
+      expect(validate({ ...message, subdivision: "SE-AB", city, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+    }
+    expect(validate({ ...message, subdivision: "SE-AB", event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("refuses a city that isn't a non-empty string of at most 128 characters (AAI-1144)", () => {
+    for (const city of ["", "x".repeat(129), 1, true, null, ["Stockholm"], { name: "Stockholm" }]) {
+      expect(validate({ ...message, city, event: EVENT }), JSON.stringify(city)).toBe(false);
+    }
+  });
+
+  it("refuses the city on a ping's, a withdrawal signal's or a tag error's message (06 §3, AAI-1144)", () => {
+    const tagError = { schema_version: 1, event_id: UUID7, tag_version: "0.4.0", site_id: "site_123", stage: "transport", name: "TypeError" };
+    const { country, device_class, ...bare } = message;
+    expect(validate({ ...message, city: "Stockholm", event: PING })).toBe(false);
+    expect(validate({ ...message, city: "Stockholm", event: WITHDRAWAL })).toBe(false);
+    expect(validate({ ...bare, city: "Stockholm", event: tagError })).toBe(false);
+  });
+
   it("carries an event's batch seq and page_id, for the seq-gap loss metric (AAI-1050)", () => {
     expect(validate({ ...message, seq: 3, page_id: PAGE_ID, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
     expect(validate({ ...message, seq: 3, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
@@ -534,6 +555,7 @@ describe("wire schema v1: Pub/Sub message", () => {
     it.each([
       ["country", "SE"],
       ["subdivision", "SE-AB"],
+      ["city", "Stockholm"],
       ["device_class", "desktop"],
       ["browser_family", "Chrome"],
       ["browser_major", 131],

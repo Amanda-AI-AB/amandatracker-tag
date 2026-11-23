@@ -412,8 +412,9 @@ truth for what the tag sends and what the collector accepts:
 - `pubsub-message.json`: what the collector publishes to Pub/Sub. It holds the client's event,
   ping or withdrawal signal and the fields the collector derives (received time, region, country,
   device class). For an event it may also carry the ISO 3166-2 `subdivision`, `browser_family`,
-  `browser_major` and `os_family`; a ping's or a withdrawal signal's message leaves them off, as a
-  ping carries country-level geo only. An event's message also carries its batch's `seq` and
+  `browser_major` and `os_family`, and, for a site that turned city-level geo on (its config's
+  `geo.city`, off by default), the `city`; a ping's or a withdrawal signal's message leaves them
+  off, as a ping carries country-level geo only. An event's message also carries its batch's `seq` and
   `page_id` (when the batch had one), which the processor stores for the seq-gap loss metric; a
   ping's or a withdrawal signal's never does. It never includes the IP address.
 

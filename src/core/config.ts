@@ -7,7 +7,8 @@
 // identify.ts), outbound_clicks_enabled turns outbound link clicks off (AAI-167, outbound.ts) and
 // ga4_ecommerce_enabled turns the GA4 e-commerce auto-map on (AAI-974, ecommerce.ts), and domains,
 // the site's own, whose links aren't outbound. The tag checks what it reads here; the tickets that use a section (consent AAI-84, ...) check that
-// section's fields.
+// section's fields. Sections it doesn't read pass through unchecked, such as geo ({ city: true }),
+// which only the collector reads (AAI-199, AAI-1144).
 
 import { CUSTOM_PARAMS_MAP, TRACKED_EVENT_MAX_LENGTH, TRACKED_EVENT_PATTERN } from "../wire/generated";
 import type { DeclinedMode, NoCmpPolicy } from "./consent";

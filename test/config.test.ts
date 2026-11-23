@@ -41,6 +41,10 @@ describe("parseConfig", () => {
     expect(parseConfig(CONFIG, "site_123")).toEqual(CONFIG);
   });
 
+  it("lets the collector's geo section through, which the tag doesn't read (AAI-1144)", () => {
+    expect(parseConfig({ ...CONFIG, geo: { city: true } }, "site_123")).toEqual({ ...CONFIG, geo: { city: true } });
+  });
+
   it("refuses what isn't a config object", () => {
     for (const json of [null, [], "x", 1]) {
       expect(() => parseConfig(json, "site_123")).toThrow("not a JSON object");

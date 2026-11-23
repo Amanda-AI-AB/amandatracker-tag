@@ -65,6 +65,17 @@ describe("boot", () => {
     expect(win.amanda!.loaded).toBe(true);
   });
 
+  it("boots as usual from a config with a geo section, which is the collector's (AAI-1144)", async () => {
+    const config = { ...CONFIG, geo: { city: true } };
+    const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(config));
+    const { reports, pageviews, booted } = setup(win);
+
+    expect(await booted).toEqual({ endpoint: DEFAULT_ENDPOINT, site: "site_123", config });
+    expect(pageviews).toHaveLength(1);
+    expect(reports).toEqual([]);
+    expect(win.amanda!.loaded).toBe(true);
+  });
+
   it("sends a pageview the wire schema accepts once the ids and consent are added", async () => {
     const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
     const { pageviews, booted } = setup(win);

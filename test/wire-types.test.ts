@@ -130,6 +130,18 @@ describe("PubSubMessage (AAI-1142, AAI-1146)", () => {
     for (const refused of [pinged, browsed, withdrawn, versioned]) expect(message(refused)).toBe(false);
   });
 
+  it("takes the city on an event's message only (06 §3, AAI-1144)", () => {
+    const tracked: PubSubMessage = { ...received, device_class: "desktop", subdivision: "SE-AB", city: "Stockholm", event: EVENT };
+    // @ts-expect-error a ping's message carries country-level geo only
+    const pinged: PubSubMessage = { ...received, device_class: "desktop", city: "Stockholm", event: PING };
+    // @ts-expect-error a withdrawal signal's message carries no city
+    const withdrawn: PubSubMessage = { ...received, device_class: "desktop", city: "Stockholm", event: WITHDRAWAL };
+    // @ts-expect-error a tag error's message carries no geo
+    const published: PubSubMessage = { ...received, city: "Stockholm", event: tagError };
+    expect(message(tracked), JSON.stringify(message.errors)).toBe(true);
+    for (const refused of [pinged, withdrawn, published]) expect(message(refused)).toBe(false);
+  });
+
   it("takes is_bot as true on an event's or a ping's message only (AAI-1001)", () => {
     const tracked: PubSubMessage = { ...received, device_class: "desktop", is_bot: true, event: EVENT };
     const pinged: PubSubMessage = { ...received, device_class: "desktop", is_bot: true, event: PING };
