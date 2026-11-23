@@ -783,6 +783,44 @@ describe("withdrawEvents", () => {
     expect(t.reports).toEqual([]);
   });
 
+  it.each([
+    ["HTTP 503", { ok: false, status: 503 }],
+    ["network error", new TypeError("Failed to fetch")],
+  ] as const)("drops an event batch in flight that meets a %s after it, rather than retrying it", async (why, answer) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let settle: () => void = () => undefined;
+    const t = harness();
+    t.fetchMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          settle = () => (answer instanceof Error ? reject(answer) : resolve(answer));
+        }),
+    );
+    t.transport.event(pageview());
+    t.transport.withdrawEvents();
+    settle();
+    await vi.advanceTimersByTimeAsync(60_000);
+    t.pagehide();
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+    expect(t.beacon).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      `amanda: dropped a batch of 1 events to ${URL_E}: ${why}, and the visitor declined since`,
+      ...(answer instanceof Error ? [answer] : []),
+    );
+    expect(t.reports).toEqual([]);
+  });
+
+  it("keeps a ping batch in flight, which is retried after a withdrawal", async () => {
+    let settle: () => void = () => undefined;
+    const t = harness();
+    t.fetchMock.mockImplementationOnce(() => new Promise((resolve) => (settle = () => resolve({ ok: false, status: 503 }))));
+    t.transport.ping(pingOf("pageview"));
+    t.transport.withdrawEvents();
+    settle();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps pings, buffered or awaiting a retry, and the events that come after", async () => {
     const t = harness([{ ok: false, status: 503 }]);
     t.transport.ping(pingOf("pageview"));

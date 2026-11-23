@@ -58,9 +58,10 @@ export interface Transport {
   ping(ping: WirePing): void;
   /**
    * The visitor declined: drops the buffered events and the event batches awaiting a retry, so
-   * that none goes after the decline, with a warning saying how many. Pings, and a batch whose
-   * request is already in flight, are left as they are, but an event batch whose pagehide fetch is
-   * in flight is no longer recovered (split and sent again) if that fetch is rejected (AAI-1204).
+   * that none goes after the decline, with a warning saying how many. Pings are left as they are.
+   * An event batch whose fetch is already in flight can't be called back, but it is never sent
+   * again: a 5xx or a network error drops it with a warning rather than retrying it (AAI-1206),
+   * and a rejected pagehide fetch isn't recovered (split and sent again) (AAI-1204).
    */
   withdrawEvents(): void;
   /**
@@ -100,7 +101,10 @@ interface Batch {
   tries: number;
   /** The pending retry's timer, while the batch awaits one. */
   timer?: unknown;
-  /** The visitor declined while its pagehide fetch was in flight: it isn't recovered (AAI-1204). */
+  /**
+   * The visitor declined while its fetch was in flight: it isn't retried (AAI-1206), nor recovered
+   * on pagehide (AAI-1204).
+   */
   withdrawn?: boolean;
 }
 
@@ -121,8 +125,8 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
    * starts a new key when consent is granted again after a withdrawal.
    */
   let page: PageKey = { id: uuidv4(), seq: 0 };
-  /** The event batches whose pagehide fetch is in flight, which withdrawEvents marks. */
-  const unloading = new Set<Batch>();
+  /** The event batches whose fetch is in flight, ordinary or on pagehide, which withdrawEvents marks. */
+  const inFlight = new Set<Batch>();
   /** The UTF-8 bytes of the tag's own keepalive fetches still in flight. */
   let keepaliveInFlight = 0;
   // Only a strict true marks the browser as automated: a missing or odd value sends nothing.
@@ -210,6 +214,7 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
   };
 
   const retryOrDrop = (batch: Batch, why: string, error?: unknown): void => {
+    if (batch.withdrawn === true) return dropped(batch, `${why}, and the visitor declined since`, error);
     const delay = RETRY_DELAYS_MS[batch.tries - 1];
     if (delay === undefined) {
       dropped(batch, `${why}, after ${batch.tries} tries`, error);
@@ -227,13 +232,16 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
 
   const post = (batch: Batch): void => {
     batch.tries++;
+    if (batch.kind === "events") inFlight.add(batch);
     const sent = win.fetch(url, batchRequestInit(batch.body, batch.kind)).then(
       (response) => {
+        inFlight.delete(batch);
         if (response.ok) return;
         if (response.status >= 500) return retryOrDrop(batch, `HTTP ${response.status}`);
         refused(batch, response.status);
       },
       (error: unknown) => {
+        inFlight.delete(batch);
         // fetch rejects with a TypeError on a network error; anything else isn't one, and is reported.
         if (!(error instanceof TypeError)) throw error;
         retryOrDrop(batch, "network error", error);
@@ -262,18 +270,18 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     const init = batchRequestInit(batch.body, batch.kind, keepalive);
     const bytes = keepalive ? bodyBytes(batch.body) : 0;
     keepaliveInFlight += bytes;
-    if (batch.kind === "events") unloading.add(batch);
+    if (batch.kind === "events") inFlight.add(batch);
     const sent = win.fetch(url, init).then(
       (response) => {
         keepaliveInFlight -= bytes;
-        unloading.delete(batch);
+        inFlight.delete(batch);
         if (response.ok) return;
         if (response.status >= 500) return dropped(batch, `HTTP ${response.status} on pagehide`);
         refused(batch, response.status);
       },
       (error: unknown) => {
         keepaliveInFlight -= bytes;
-        unloading.delete(batch);
+        inFlight.delete(batch);
         // fetch rejects with a TypeError for the keepalive quota and for a network error alike.
         if (!(error instanceof TypeError)) throw error;
         recoverOnUnload(batch, step, error);
@@ -379,7 +387,7 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
         awaitingRetry.delete(batch);
         dropped(batch, "the visitor declined");
       }
-      for (const batch of unloading) batch.withdrawn = true;
+      for (const batch of inFlight) batch.withdrawn = true;
     },
     newPage() {
       page = { id: uuidv4(), seq: 0 };
