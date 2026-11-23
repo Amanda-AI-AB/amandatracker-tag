@@ -262,8 +262,9 @@ describe("Consent Mode's state", () => {
     const gcm = new ConsentModeState();
     expect(gcm.read(["consent", "update", { analytics_storage: "yes" }])).toBe(false);
     expect(gcm.read(["consent", "update"])).toBe(false);
+    expect(gcm.read(["consent", "update", ["analytics_storage", "granted"]])).toBe(false);
     expect(gcm.signal()).toEqual({});
-    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -412,8 +413,10 @@ describe("TCF's signal", () => {
 
   it.each([
     ["not an object", null],
+    ["an array", []],
     ["an unknown eventStatus", { ...tcData("tcloaded", []), eventStatus: "done" }],
     ["no purpose consents", { ...tcData("tcloaded", []), purpose: {} }],
+    ["purpose consents that are an array", { ...tcData("tcloaded", []), purpose: { consents: [false, true, true, true, true, true, true, true, true] } }],
   ])("refuses TCData that is %s", (_name, data) => {
     expect(() => tcfSignal(data)).toThrow(ConsentError);
   });

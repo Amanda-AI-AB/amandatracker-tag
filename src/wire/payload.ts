@@ -23,6 +23,7 @@ import {
   type WireTagError,
   type WireWithdrawal,
 } from "./generated";
+import { isRecord } from "../core/guards";
 
 export type TrackedEventInput = Omit<TrackedEvent, "schema_version" | "event_id">;
 export type PurchaseEventInput = Omit<PurchaseEvent, "schema_version" | "event_id">;
@@ -45,7 +46,21 @@ export function uuidv7(nowMs: number = Date.now(), random: Uint8Array = randomBy
     ms = Math.floor(ms / 256);
   }
   bytes.set(random.subarray(0, 10), 6);
-  bytes[6] = 0x70 | (bytes[6]! & 0x0f);
+  return uuidString(bytes, 0x70);
+}
+
+/**
+ * A UUIDv4 (RFC 9562): 122 random bits, and no time. Built from getRandomValues rather than
+ * crypto.randomUUID, which browsers expose in secure contexts only, and a site may serve http.
+ */
+export function uuidv4(random: Uint8Array = randomBytes(16)): string {
+  if (random.length < 16) throw new Error("uuidv4 needs 16 random bytes");
+  return uuidString(random.slice(0, 16), 0x40);
+}
+
+/** The 16 `bytes` as a lower-case UUID string, with `version` (0x40, 0x70) and the RFC variant set in them. */
+function uuidString(bytes: Uint8Array, version: number): string {
+  bytes[6] = version | (bytes[6]! & 0x0f);
   bytes[8] = 0x80 | (bytes[8]! & 0x3f);
   let out = "";
   for (let i = 0; i < 16; i++) {
@@ -257,10 +272,6 @@ export function compiledPattern(pattern: string): RegExp {
     PATTERNS.set(pattern, compiled);
   }
   return compiled;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**

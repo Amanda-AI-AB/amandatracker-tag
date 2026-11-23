@@ -13,7 +13,8 @@
 //             by an adapter the core loads only once it detects that consent manager
 //             (watchCmpAdapters; Cookiebot, AAI-163);
 //   onetrust -> the same, for OneTrust (AAI-164), below Cookiebot: a page has one or the other;
-//   usercentrics -> the same, for Usercentrics (AAI-165), below OneTrust.
+//   usercentrics -> the same, for Usercentrics (AAI-165), below OneTrust: its Browser UI (v2)
+//             and its CMP (v3, AAI-973).
 //
 // The first source to give a definitive signal (a category granted or denied) wins, and the
 // winner's later signals always apply. A higher rung takes over when it signals: once the site
@@ -27,6 +28,7 @@ import type { AdapterConnect } from "./adapter-api";
 import type { ErrorBoundary } from "./boundary";
 import { warn } from "./boundary";
 import { ConsentError, type Category, type ConsentSignal, type ConsentSource } from "./consent";
+import { isRecord } from "./guards";
 import type { Command } from "./queue";
 
 /** What the ladder drives: the state machine's update (ConsentMachine). */
@@ -113,13 +115,11 @@ export function manualSignal(value: unknown): ConsentSignal {
 
 /** value checked as manualSignal checks it; `caller` names who gave it in the errors. */
 function checkedSignal(value: unknown, caller: string): ConsentSignal {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new ConsentError(`${caller} takes an object: {analytics, ads}`);
-  }
+  if (!isRecord(value)) throw new ConsentError(`${caller} takes an object: {analytics, ads}`);
   const signal: ConsentSignal = {};
   for (const key of Object.keys(value)) {
     if (key !== "analytics" && key !== "ads") throw new ConsentError(`unknown consent category: ${key}`);
-    const state = (value as Record<string, unknown>)[key];
+    const state = value[key];
     if (MANUAL_STATES.indexOf(state as string) < 0) {
       throw new ConsentError(`consent ${key} is granted or denied, not ${String(state)}`);
     }
@@ -171,11 +171,11 @@ export class ConsentModeState {
     const kind = command[1];
     const params = command[2];
     if (kind !== "default" && kind !== "update") return false;
-    if (typeof params !== "object" || params === null) {
+    if (!isRecord(params)) {
       warn(`amanda: gtag('consent', '${kind}') without its parameters is ignored`);
       return false;
     }
-    const values = params as Record<string, unknown>;
+    const values = params;
     if (kind === "default" && values.region !== undefined) return false;
     let read = false;
     for (const type of GCM_TYPES) {
@@ -263,20 +263,18 @@ export interface TcfSignal {
  * anything. Throws ConsentError on TCData that is not TCF v2's.
  */
 export function tcfSignal(tcData: unknown): TcfSignal | undefined {
-  if (typeof tcData !== "object" || tcData === null) throw new ConsentError("__tcfapi gave TCData that is not an object");
-  const data = tcData as Record<string, unknown>;
+  if (!isRecord(tcData)) throw new ConsentError("__tcfapi gave TCData that is not an object");
+  const data = tcData;
   const status = data.eventStatus;
   if (status === "cmpuishown") return undefined;
   if (status !== "tcloaded" && status !== "useractioncomplete") {
     throw new ConsentError(`__tcfapi gave an unknown eventStatus: ${String(status)}`);
   }
   if (data.gdprApplies === false) return undefined;
-  const purpose = data.purpose as { consents?: unknown } | undefined;
-  const consents = typeof purpose === "object" && purpose !== null ? purpose.consents : undefined;
-  if (typeof consents !== "object" || consents === null) {
-    throw new ConsentError("__tcfapi gave TCData without purpose.consents");
-  }
-  const granted = (id: number): boolean => (consents as Record<string, unknown>)[id] === true;
+  const purpose = data.purpose;
+  const consents = isRecord(purpose) ? purpose.consents : undefined;
+  if (!isRecord(consents)) throw new ConsentError("__tcfapi gave TCData without purpose.consents");
+  const granted = (id: number): boolean => consents[id] === true;
   const signal: ConsentSignal = {};
   for (const category of ["analytics", "ads"] as const) {
     signal[category] = TCF_PURPOSES[category].every(granted) ? "granted" : "denied";
@@ -312,7 +310,7 @@ export function watchTcf(win: TcfHost, boundary: ErrorBoundary, ladder: ConsentL
 // A consent manager set up without Consent Mode or TCF is read through its own API, by an adapter
 // built to its own file (src/adapters/<name>.ts, scripts/build.mjs), so it costs the core nothing on
 // the sites that don't use it. The core loads one only once it detects its consent manager: the
-// global that manager defines is there at boot, or one of the window events it fires on loading
+// one of the globals that manager defines is there at boot, or one of the window events it fires on loading
 // comes later. The adapter then connects through amanda('adapter', name, connect)
 // (adapter-api.ts), and its signals drive the ladder as its own source, below TCF.
 
@@ -325,21 +323,22 @@ export interface CmpHost {
 export interface CmpAdapter {
   /** The adapter's name, its file's (adapters/<version>/<name>.js), and the consent source it signals as. */
   readonly name: ConsentSource;
-  /** The window property the consent manager defines once its script runs. */
-  readonly global: string;
+  /** The window properties the consent manager defines once its script runs: any one of them is enough. */
+  readonly globals: readonly string[];
   /** The window events the consent manager fires as it loads or decides, for one loaded after the tag. */
   readonly events: readonly string[];
 }
 
 export const CMP_ADAPTERS: readonly CmpAdapter[] = [
-  { name: "cookiebot", global: "Cookiebot", events: ["CookiebotOnLoad", "CookiebotOnConsentReady"] },
-  { name: "onetrust", global: "OneTrust", events: ["OneTrustGroupsUpdated"] },
-  { name: "usercentrics", global: "UC_UI", events: ["UC_UI_INITIALIZED"] },
+  { name: "cookiebot", globals: ["Cookiebot"], events: ["CookiebotOnLoad", "CookiebotOnConsentReady"] },
+  { name: "onetrust", globals: ["OneTrust"], events: ["OneTrustGroupsUpdated"] },
+  // Usercentrics' Browser UI (v2) defines UC_UI, and its CMP (v3) __ucCmp and UC_CONSENT.
+  { name: "usercentrics", globals: ["UC_UI", "__ucCmp"], events: ["UC_UI_INITIALIZED", "UC_CONSENT"] },
 ];
 
 /**
  * Loads the adapter of each consent manager in `adapters` the page has, with `load`, at once when
- * the manager's global is there and else on the first of its events; at most once per adapter, and
+ * one of the manager's globals is there and else on the first of its events; at most once per adapter, and
  * never for a manager the page doesn't have. A load that fails is reported. Returns the `adapter`
  * command, through which a loaded adapter connects, once: it throws ConsentError for an adapter
  * that wasn't loaded or has connected already, so a page can't open a second channel for one.
@@ -363,7 +362,7 @@ export function watchCmpAdapters(
         boundary.watch("consent", load(adapter.name));
       });
     };
-    if ((win as unknown as Record<string, unknown>)[adapter.global] !== undefined) detect();
+    if (adapter.globals.some((global) => (win as unknown as Record<string, unknown>)[global] !== undefined)) detect();
     else for (const type of adapter.events) win.addEventListener(type, detect);
   }
   return (name: unknown, connect: unknown) => {

@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Amanda-AI-AB/amandatracker-tag/schema/v1/pubsub-message.json",
   "title": "PubSubMessage",
-  "description": "What the collector publishes to Pub/Sub for each accepted event, ping or withdrawal signal, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it.",
+  "description": "What the collector publishes to Pub/Sub for each accepted event, ping, withdrawal signal or tag error, and the processor re-validates: the client's payload as received, and the fields the collector derives. The client's IP address is never part of it. A tag error's message (AAI-1142) carries none of the derived geo or user-agent fields, device_class included, which every other message needs.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "received_at", "region", "device_class", "event"],
+  "required": ["schema_version", "received_at", "region", "event"],
   "properties": {
     "schema_version": {
       "description": "The wire schema's major version: this file's.",
@@ -29,7 +29,7 @@
       "pattern": "^[A-Z]{2}$"
     },
     "subdivision": {
-      "description": "The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Never on a ping's message: a ping carries country-level geo only (06 §3).",
+      "description": "The ISO 3166-2 subdivision derived from the client's IP address, when one could be, such as SE-AB. Set on an event's message only: never on a ping's, which carries country-level geo only (06 §3), nor a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1148).",
       "type": "string",
       "pattern": "^[A-Z]{2}-[A-Z0-9]{1,3}$"
     },
@@ -37,31 +37,94 @@
       "$ref": "#/$defs/DeviceClass"
     },
     "browser_family": {
-      "description": "The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Never on a ping's message.",
+      "description": "The browser family the collector parses from the user agent, such as Chrome or Firefox, when it could. Set on an event's message only, which dependentSchemas enforces (AAI-1148).",
       "type": "string",
       "minLength": 1,
       "maxLength": 64
     },
     "browser_major": {
-      "description": "The browser's major version the collector parses from the user agent, when it could. Never on a ping's message.",
+      "description": "The browser's major version the collector parses from the user agent, when it could. Set on an event's message only, which dependentSchemas enforces (AAI-1148).",
       "type": "integer",
       "minimum": 0
     },
     "os_family": {
-      "description": "The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Never on a ping's message.",
+      "description": "The operating system family the collector parses from the user agent, such as Windows or iOS, when it could. Set on an event's message only, which dependentSchemas enforces (AAI-1148).",
       "type": "string",
       "minLength": 1,
       "maxLength": 64
     },
+    "seq": {
+      "description": "The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146).",
+      "type": "integer",
+      "minimum": 1
+    },
+    "page_id": {
+      "description": "The page_id of the event batch the event came in (batch.json), when the batch carried one: the pageload whose seq gaps the processor counts (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146).",
+      "$ref": "batch.json#/$defs/PageId"
+    },
     "event": {
-      "description": "The client's payload: an event, an anonymous ping, or a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data. A withdrawal signal's message, like a ping's, leaves off the subdivision and the user-agent fields: the erasure needs none of them.",
-      "oneOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }, { "$ref": "withdrawal.json" }]
+      "description": "The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision, browser family and major and OS family: the erasure needs none of them (AAI-1148). A tag error's message carries no geo or user-agent field at all.",
+      "oneOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }, { "$ref": "withdrawal.json" }, { "$ref": "#/$defs/PublishedTagError" }]
     }
+  },
+  "if": {
+    "required": ["event"],
+    "properties": { "event": { "$ref": "#/$defs/PublishedTagError" } }
+  },
+  "then": {
+    "properties": {
+      "country": false,
+      "subdivision": false,
+      "device_class": false,
+      "browser_family": false,
+      "browser_major": false,
+      "os_family": false
+    }
+  },
+  "else": {
+    "required": ["device_class"]
+  },
+  "dependentSchemas": {
+    "subdivision": { "properties": { "event": { "$ref": "event.json" } } },
+    "browser_family": { "properties": { "event": { "$ref": "event.json" } } },
+    "browser_major": { "properties": { "event": { "$ref": "event.json" } } },
+    "os_family": { "properties": { "event": { "$ref": "event.json" } } },
+    "seq": { "properties": { "event": { "$ref": "event.json" } } },
+    "page_id": { "properties": { "event": { "$ref": "event.json" } } }
   },
   "$defs": {
     "DeviceClass": {
       "description": "The coarse device class the collector derives from the user agent.",
       "enum": ["desktop", "mobile", "tablet", "other"]
+    },
+    "PublishedTagError": {
+      "description": "A tag error (tag-error.json) as the collector publishes it, for the processor to store for the realtime debugger (AAI-1130): only one that names its site, and never its message (amandatracker's 08 §4.1).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "event_id", "tag_version", "site_id", "stage", "name"],
+      "properties": {
+        "schema_version": {
+          "description": "The wire schema's major version: this file's.",
+          "const": 1
+        },
+        "event_id": {
+          "description": "The tag error's event_id, which the processor stores it under once.",
+          "$ref": "event.json#/$defs/Uuidv7"
+        },
+        "tag_version": {
+          "$ref": "event.json#/$defs/TagVersion"
+        },
+        "site_id": {
+          "description": "The site the tag was installed for: the collector publishes no tag error without one.",
+          "$ref": "event.json#/$defs/SiteId"
+        },
+        "stage": {
+          "$ref": "tag-error.json#/$defs/TagErrorStage"
+        },
+        "name": {
+          "$ref": "tag-error.json#/$defs/TagErrorName"
+        }
+      }
     }
   }
 }

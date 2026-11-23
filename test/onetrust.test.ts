@@ -27,6 +27,7 @@ describe("oneTrustSignal", () => {
   it.each([
     ["not an object", "yes", ",C0001,", "window.OneTrust is not an object"],
     ["null", null, ",C0001,", "window.OneTrust is not an object"],
+    ["an array", [], ",C0001,", "window.OneTrust is not an object"],
     ["no IsAlertBoxClosed", {}, ",C0001,", "window.OneTrust.IsAlertBoxClosed is not a function"],
     ["an answer without active groups", oneTrust(true), undefined, "window.OnetrustActiveGroups is not a string: undefined"],
     ["active groups that aren't a string", oneTrust(true), ["C0002"], "window.OnetrustActiveGroups is not a string: C0002"],

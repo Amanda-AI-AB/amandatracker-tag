@@ -23,6 +23,7 @@
 
 import { PROPS_MAP, TRACKED_EVENT_MAX_LENGTH, TRACKED_EVENT_PATTERN, type Props } from "../wire/generated";
 import { compiledPattern, cutText } from "../wire/payload";
+import { isRecord } from "./guards";
 import { pageviewInput, type PageSource, type PageviewInput } from "./pageview";
 import { CommandError, type Command } from "./queue";
 
@@ -86,10 +87,8 @@ export function checkEventName(name: unknown): string {
  * CommandError on anything else, naming the key and never quoting its value.
  */
 export function checkProps(props: unknown): Props {
-  if (typeof props !== "object" || props === null || Array.isArray(props)) {
-    throw new CommandError(`${USAGE} takes props as a flat object`);
-  }
-  const given = props as Record<string, unknown>;
+  if (!isRecord(props)) throw new CommandError(`${USAGE} takes props as a flat object`);
+  const given = props;
   const keyPattern = compiledPattern(PROPS_MAP.keyPattern);
   const kept: Record<string, string | number | boolean> = {};
   let count = 0;

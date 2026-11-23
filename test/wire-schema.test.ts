@@ -1,5 +1,10 @@
+import Ajv2020 from "ajv/dist/2020";
 import { describe, expect, it } from "vitest";
-import { CLICK_OUTBOUND, CLICK_SPECIAL, EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator } from "./wire-validator";
+import { SCHEMA_BASE } from "../scripts/schema-files.mjs";
+import { CLICK_OUTBOUND, CLICK_SPECIAL, EVENT, loadSchemas, PAGE_EXIT, PING, PURCHASE, UUID7, validator, WITHDRAWAL } from "./wire-validator";
+
+/** A batch's page_id: a UUIDv4 (AAI-1050). */
+const PAGE_ID = "3f1c2a4b-5d6e-4f70-8a9b-0c1d2e3f4a5b";
 
 describe("wire schema v1: event", () => {
   const validate = validator("event.json");
@@ -441,6 +446,20 @@ describe("wire schema v1: Pub/Sub message", () => {
     expect(validate({ ...message, subdivision: "FR-75C", event: EVENT })).toBe(true);
   });
 
+  it("refuses the subdivision, browser family and major and OS family outside an event's message (06 §3, AAI-1148)", () => {
+    const derived = { subdivision: "SE-AB", browser_family: "Chrome", browser_major: 131, os_family: "Windows" };
+    // The review's proof: a ping's message with a subdivision and a browser family.
+    expect(validate({ ...message, device_class: "desktop", subdivision: "SE-AB", browser_family: "Chrome", event: PING })).toBe(false);
+    for (const [key, value] of Object.entries(derived)) {
+      expect(validate({ ...message, [key]: value, event: PING }), `${key} on a ping's`).toBe(false);
+      expect(validate({ ...message, [key]: value, event: WITHDRAWAL }), `${key} on a withdrawal's`).toBe(false);
+      expect(validate({ ...message, [key]: value, event: EVENT }), `${key} on an event's`).toBe(true);
+    }
+    // Country and device class stay on both.
+    expect(validate({ ...message, event: PING }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...message, event: WITHDRAWAL }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
   it("checks the shape of the subdivision and the user-agent fields", () => {
     for (const subdivision of ["se-ab", "SE", "SE-", "SE-ABCD", "SEAB"]) {
       expect(validate({ ...message, subdivision, event: EVENT }), subdivision).toBe(false);
@@ -452,6 +471,86 @@ describe("wire schema v1: Pub/Sub message", () => {
     expect(validate({ ...message, browser_major: -1, event: EVENT })).toBe(false);
     expect(validate({ ...message, browser_major: 131.5, event: EVENT })).toBe(false);
     expect(validate({ ...message, browser_major: "131", event: EVENT })).toBe(false);
+  });
+
+  it("carries an event's batch seq and page_id, for the seq-gap loss metric (AAI-1050)", () => {
+    expect(validate({ ...message, seq: 3, page_id: PAGE_ID, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ ...message, seq: 3, event: EVENT }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("refuses seq and page_id outside an event's message, which would link pings (08 G2, AAI-1146)", () => {
+    const tagError = { schema_version: 1, event_id: UUID7, tag_version: "0.4.0", site_id: "site_123", stage: "transport", name: "TypeError" };
+    const { device_class, ...noDevice } = message;
+    expect(validate({ ...message, seq: 3, page_id: PAGE_ID, event: PING })).toBe(false);
+    expect(validate({ ...message, seq: 3, event: PING })).toBe(false);
+    expect(validate({ ...message, page_id: PAGE_ID, event: PING })).toBe(false);
+    expect(validate({ ...message, seq: 3, event: WITHDRAWAL })).toBe(false);
+    expect(validate({ ...message, page_id: PAGE_ID, event: WITHDRAWAL })).toBe(false);
+    expect(validate({ ...noDevice, seq: 3, page_id: PAGE_ID, event: tagError })).toBe(false);
+    expect(validate({ ...noDevice, seq: 3, event: tagError })).toBe(false);
+    expect(validate({ ...noDevice, page_id: PAGE_ID, event: tagError })).toBe(false);
+  });
+
+  it("checks the shape of seq and page_id", () => {
+    for (const seq of [0, 1.5, "1"]) expect(validate({ ...message, seq, event: EVENT }), String(seq)).toBe(false);
+    expect(validate({ ...message, seq: 1, page_id: EVENT.visitor_id, event: EVENT })).toBe(false);
+  });
+
+  describe("a tag error (AAI-1142)", () => {
+    const tagError = { schema_version: 1, event_id: UUID7, tag_version: "0.4.0", site_id: "site_123", stage: "transport", name: "TypeError" };
+    const tagErrorMessage = { schema_version: 1, received_at: 1_731_400_000_123, region: "europe-west1", event: tagError };
+
+    it("is carried without device_class, geo or user-agent fields", () => {
+      expect(validate(tagErrorMessage), JSON.stringify(validate.errors)).toBe(true);
+      expect(validator("tag-error.json")(tagError)).toBe(true);
+    });
+
+    it("is refused with its message", () => {
+      expect(validate({ ...tagErrorMessage, event: { ...tagError, message: "x is not a function" } })).toBe(false);
+    });
+
+    it.each([
+      ["country", "SE"],
+      ["subdivision", "SE-AB"],
+      ["device_class", "desktop"],
+      ["browser_family", "Chrome"],
+      ["browser_major", 131],
+      ["os_family", "Windows"],
+    ])("is refused with %s", (field, value) => {
+      expect(validate({ ...tagErrorMessage, [field]: value })).toBe(false);
+    });
+
+    it("is refused without its site_id", () => {
+      const { site_id, ...noSite } = tagError;
+      expect(validator("tag-error.json")(noSite)).toBe(true);
+      expect(validate({ ...tagErrorMessage, event: noSite })).toBe(false);
+    });
+
+    it("is refused without its stage or name, or with a stage the tag doesn't send", () => {
+      const { stage, ...noStage } = tagError;
+      const { name, ...noName } = tagError;
+      expect(validate({ ...tagErrorMessage, event: noStage })).toBe(false);
+      expect(validate({ ...tagErrorMessage, event: noName })).toBe(false);
+      expect(validate({ ...tagErrorMessage, event: { ...tagError, stage: "render" } })).toBe(false);
+    });
+
+    it("matches exactly one branch of event, so the oneOf stays exclusive", () => {
+      const ajv = new Ajv2020({ strict: true });
+      for (const schema of Object.values(loadSchemas())) ajv.addSchema(schema);
+      const branches = ["event.json", "ping.json", "withdrawal.json", "pubsub-message.json#/$defs/PublishedTagError"];
+      for (const payload of [tagError, EVENT, PURCHASE, PING, WITHDRAWAL]) {
+        const matching = branches.filter((branch) => ajv.getSchema(`${SCHEMA_BASE}/v1/${branch}`)!(payload));
+        expect(matching, JSON.stringify(payload)).toHaveLength(1);
+      }
+    });
+  });
+
+  it("still needs device_class on an event, a ping and a withdrawal signal (AAI-1142)", () => {
+    const { device_class, ...noDevice } = message;
+    for (const event of [EVENT, PING, WITHDRAWAL]) {
+      expect(validate({ ...message, event }), JSON.stringify(validate.errors)).toBe(true);
+      expect(validate({ ...noDevice, event })).toBe(false);
+    }
   });
 });
 
@@ -511,6 +610,21 @@ describe("wire schema v1: batch (the body of POST /v1/e)", () => {
 
   it("rejects webdriver on a batch of pings, whose field list is frozen", () => {
     expect(validate({ e: [PING], webdriver: true })).toBe(false);
+  });
+
+  it("accepts a UUIDv4 page_id on a batch of events, and a batch without one from a tag up to v0.4.0 (AAI-1050)", () => {
+    expect(validate({ seq: 1, page_id: PAGE_ID, e: [EVENT] }), JSON.stringify(validate.errors)).toBe(true);
+    expect(validate({ seq: 1, e: [EVENT] }), JSON.stringify(validate.errors)).toBe(true);
+  });
+
+  it("rejects a page_id that isn't a lower-case UUIDv4, such as a UUIDv7 that carries a time", () => {
+    for (const pageId of [EVENT.visitor_id, PAGE_ID.toUpperCase(), PAGE_ID.replace(/-/g, ""), "", 42]) {
+      expect(validate({ seq: 1, page_id: pageId, e: [EVENT] }), String(pageId)).toBe(false);
+    }
+  });
+
+  it("rejects page_id on a batch of pings, which are never sequence-linkable (08 G2)", () => {
+    expect(validate({ page_id: PAGE_ID, e: [PING] })).toBe(false);
   });
 
   it("rejects a key the schema doesn't list", () => {

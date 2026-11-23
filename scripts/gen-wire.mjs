@@ -10,7 +10,12 @@
 // differs from what this generates.
 //
 // It covers the subset of JSON Schema the wire uses (object, map, array, string, number, integer,
-// boolean, const, enum, oneOf, $ref) and throws on anything else, rather than generate a looser type
+// boolean, const, enum, oneOf, $ref, and an object's if/then/else and dependentSchemas in one form
+// each: if a required oneOf property is one of its $refs, then some optional properties are
+// forbidden, else some are required (AAI-1142); an optional property present needs that oneOf
+// property to be one of its $refs (AAI-1146). It types them as a union of an interface for each
+// branch of the oneOf, and gives each its own field list, required fields and fields' types in
+// place of the object's) and throws on anything else, rather than generate a looser type
 // or looser rules: an object's or a map's keywords, a $ref's siblings and the rules inside a oneOf
 // of scalars go through allow-lists too, and a minLength other than 1 is refused. An object with a field whose shape the builder couldn't
 // check (a oneOf of objects, an array of scalars, an inline object) gets no shape at all, rather
@@ -36,6 +41,7 @@ const TYPED = new Set([
 // The keywords of an object with properties, each of which the generator keeps.
 const OBJECT_KEYWORDS = new Set([
   "$schema", "$id", "$defs", "title", "description", "type", "properties", "required", "additionalProperties",
+  "if", "then", "else", "dependentSchemas",
 ]);
 // The keywords of a map, each of which the generator keeps.
 const MAP_KEYWORDS = new Set(["title", "description", "type", "maxProperties", "propertyNames", "additionalProperties"]);
@@ -219,19 +225,153 @@ export function generate(versionDir) {
     if (node.type === "object" && node.properties) {
       checkKeywords(file, name, node, OBJECT_KEYWORDS);
       if (node.additionalProperties !== false) throw new Error(`${file}: ${name} must set additionalProperties: false`);
-      const required = new Set(node.required ?? []);
-      const fields = Object.entries(node.properties).map(([key, prop]) => {
-        const fieldDoc = /** @type {any} */ (prop).description ? `  /** ${/** @type {any} */ (prop).description} */\n` : "";
-        return `${fieldDoc}  ${key}${required.has(key) ? "" : "?"}: ${typeOf(file, prop)};`;
-      });
-      // The properties a sibling oneOf branch has and this one lacks, as never: TypeScript's excess
-      // property check on a union accepts a key any branch declares, so without them a value of
-      // this branch could carry another's field (a PingBatch its seq) and still compile.
-      const foreign = [...(exclusive.get(name) ?? [])].filter((key) => !(key in node.properties));
-      fields.push(...foreign.map((key) => `  ${key}?: never;`));
-      return `${doc}export interface ${name} {\n${fields.join("\n")}\n}`;
+      const cond = conditional(file, name, node);
+      if (!cond) return `${doc}${objectInterface(file, name, node, {})}`;
+      // Each branch of the tested oneOf is an interface of its own, and the object their union.
+      const caseName = (/** @type {string} */ refName) => `${name}With${refName}`;
+      return [
+        `${doc}export type ${name} = ${cond.cases.map(({ refName }) => caseName(refName)).join(" | ")};`,
+        ...cond.cases.map(({ refName, forbidden, required }) =>
+          `/** ${name} when its ${cond.key} is a ${refName}. */\n${objectInterface(file, caseName(refName), node, {
+            types: { [cond.key]: refName },
+            forbidden,
+            required,
+          })}`,
+        ),
+      ].join("\n\n");
     }
     return `${doc}export type ${name} = ${typeOf(file, node)};`;
+  }
+
+  /**
+   * An object's interface: its fields, with the types, required fields and forbidden fields of one
+   * case of its if/then/else, if it has one, in place of the schema's own.
+   * @param {string} file
+   * @param {string} name
+   * @param {any} node
+   * @param {{ types?: Record<string, string>, required?: string[], forbidden?: string[] }} overrides
+   */
+  function objectInterface(file, name, node, { types = {}, required: alsoRequired = [], forbidden = [] }) {
+    const required = new Set([...(node.required ?? []), ...alsoRequired]);
+    const fields = Object.entries(node.properties).map(([key, prop]) => {
+      const fieldDoc = /** @type {any} */ (prop).description ? `  /** ${/** @type {any} */ (prop).description} */\n` : "";
+      if (forbidden.includes(key)) return `${fieldDoc}  ${key}?: never;`;
+      return `${fieldDoc}  ${key}${required.has(key) ? "" : "?"}: ${types[key] ?? typeOf(file, prop)};`;
+    });
+    // The properties a sibling oneOf branch has and this one lacks, as never: TypeScript's excess
+    // property check on a union accepts a key any branch declares, so without them a value of
+    // this branch could carry another's field (a PingBatch its seq) and still compile.
+    const foreign = [...(exclusive.get(name) ?? [])].filter((key) => !(key in node.properties));
+    fields.push(...foreign.map((key) => `  ${key}?: never;`));
+    return `export interface ${name} {\n${fields.join("\n")}\n}`;
+  }
+
+  /**
+   * An object's rules on which of its optional properties each branch of a required oneOf of $refs
+   * allows, in the two forms the generator types, alone or together, which must test the same
+   * property:
+   * - an if/then/else: if the property is one of its $refs, then some optional properties are
+   *   forbidden (false), else some are required (AAI-1142);
+   * - dependentSchemas: an optional property present means the property is one of its $refs, so
+   *   every other branch forbids it (AAI-1146).
+   * Undefined when the object has neither; throws on any other form.
+   * @param {string} file
+   * @param {string} name
+   * @param {any} node
+   * @returns {{ key: string, cases: { refName: string, forbidden: string[], required: string[] }[] } | undefined}
+   */
+  function conditional(file, name, node) {
+    const hasIf = "if" in node || "then" in node || "else" in node;
+    const deps = node.dependentSchemas;
+    if (!hasIf && deps === undefined) return undefined;
+    /** @type {string | undefined} the property the rules test */
+    let tested;
+    /**
+     * The branch a test names: the property it tests must be the one the object's other tests do,
+     * a required oneOf of $refs, and the $ref one of its branches.
+     * @param {(why: string) => Error} fail
+     * @param {any} test
+     * @param {boolean} requires whether the test must require the property, as an if must
+     */
+    function testedBranch(fail, test, requires) {
+      const [key, ...more] = Object.keys(test.properties ?? {});
+      if (key === undefined || more.length > 0 || (requires && JSON.stringify(test.required) !== JSON.stringify([key]))) {
+        throw fail(requires ? "must test one property, which it requires" : "must test one property");
+      }
+      const branch = test.properties[key];
+      if (Object.keys(branch).join() !== "$ref") throw fail(`must test ${key} with a $ref alone`);
+      const prop = node.properties[key];
+      if (!(node.required ?? []).includes(key) || !Array.isArray(prop?.oneOf) || prop.oneOf.some((/** @type {any} */ b) => !b.$ref)) {
+        throw fail(`must test ${key}, a required oneOf of $refs`);
+      }
+      if (tested !== undefined && tested !== key) throw fail(`tests ${key}, where the object's other rules test ${tested}`);
+      tested = key;
+      const refName = resolveRef(file, branch.$ref).name;
+      if (!branchNames(key).includes(refName)) throw fail(`tests ${key} with ${refName}, which isn't one of its branches`);
+      return refName;
+    }
+    /** @param {string} key */
+    const branchNames = (key) => node.properties[key].oneOf.map((/** @type {any} */ b) => resolveRef(file, b.$ref).name);
+    /**
+     * @param {(why: string) => Error} fail
+     * @param {string[]} keys
+     */
+    const optional = (fail, keys) => {
+      for (const k of keys) if (!(k in node.properties) || (node.required ?? []).includes(k)) throw fail(`names ${k}, which isn't an optional property of it`);
+      return keys;
+    };
+    /** @type {Map<string, { forbidden: Set<string>, required: Set<string> }>} each branch's rules, by its name */
+    const rules = new Map();
+    /** @param {string} refName */
+    const rulesOf = (refName) => {
+      const found = rules.get(refName) ?? { forbidden: new Set(), required: new Set() };
+      rules.set(refName, found);
+      return found;
+    };
+    /** @type {{ refName: string, forbidden: string[], required: string[] } | undefined} */
+    let ifThenElse;
+    if (hasIf) {
+      const fail = (/** @type {string} */ why) => new Error(`${file}: ${name}'s if/then/else ${why}`);
+      const { if: test, then: yes, else: no } = node;
+      if (!test || !yes || !no) throw fail("needs all three of if, then and else");
+      checkKeywords(file, `${name}'s if`, test, new Set(["required", "properties"]));
+      checkKeywords(file, `${name}'s then`, yes, new Set(["properties"]));
+      checkKeywords(file, `${name}'s else`, no, new Set(["required"]));
+      const refName = testedBranch(fail, test, true);
+      const forbidden = optional(fail, Object.keys(yes.properties ?? {}));
+      if (forbidden.length === 0 || forbidden.some((k) => yes.properties[k] !== false)) throw fail("must forbid properties (false) in then");
+      const required = optional(fail, no.required ?? []);
+      if (required.length === 0) throw fail("must require properties in else");
+      ifThenElse = { refName, forbidden, required };
+    }
+    /** @type {[string, string][]} each dependent property, with the branch it needs */
+    const dependents = [];
+    if (deps !== undefined) {
+      const fail = (/** @type {string} */ why) => new Error(`${file}: ${name}'s dependentSchemas ${why}`);
+      if (deps === null || typeof deps !== "object" || Object.keys(deps).length === 0) throw fail("must name properties");
+      for (const [dependent, test] of Object.entries(deps)) {
+        const failOn = (/** @type {string} */ why) => fail(`on ${dependent} ${why}`);
+        optional(fail, [dependent]);
+        checkKeywords(file, `${name}'s dependentSchemas on ${dependent}`, test, new Set(["properties"]));
+        dependents.push([dependent, testedBranch(failOn, test, false)]);
+      }
+    }
+    const key = /** @type {string} */ (tested);
+    for (const refName of branchNames(key)) {
+      const own = rulesOf(refName);
+      if (ifThenElse) {
+        const target = refName === ifThenElse.refName ? own.forbidden : own.required;
+        for (const k of refName === ifThenElse.refName ? ifThenElse.forbidden : ifThenElse.required) target.add(k);
+      }
+      for (const [dependent, needs] of dependents) if (refName !== needs) own.forbidden.add(dependent);
+      const both = [...own.required].filter((k) => own.forbidden.has(k));
+      // The schema would refuse every such object, which no type can say.
+      if (both.length > 0) throw new Error(`${file}: ${name}'s rules both forbid and require ${both.join(", ")} when its ${key} is a ${refName}`);
+    }
+    return {
+      key,
+      cases: [...rules].map(([refName, { forbidden, required }]) => ({ refName, forbidden: [...forbidden], required: [...required] })),
+    };
   }
 
   /** @param {any} node */
@@ -320,15 +460,32 @@ export function generate(versionDir) {
         versionDeclared = true;
       }
     }
-    const types = props.map(({ key, type }) => `${key}: ${JSON.stringify(type)}`);
-    const lines = [
-      "",
-      `export const ${prefix}_FIELDS = [${keys.map((key) => JSON.stringify(key)).join(", ")}] as const;`,
-      "",
-      `export const ${prefix}_REQUIRED = [${required.map((key) => JSON.stringify(key)).join(", ")}] as const;`,
-      "",
-      `export const ${prefix}_TYPES = { ${types.join(", ")} } as const;`,
-    ];
+    const cond = conditional(file, name, node);
+    /**
+     * The field list, required fields and fields' types of the object, or of one case of it.
+     * @param {string} at the constants' prefix
+     * @param {string[]} forbidden
+     * @param {string[]} alsoRequired
+     */
+    const listing = (at, forbidden, alsoRequired) => {
+      const allowed = props.filter(({ key }) => !forbidden.includes(key));
+      const needed = [...required, ...alsoRequired.filter((key) => !required.includes(key))];
+      return [
+        "",
+        `export const ${at}_FIELDS = [${allowed.map(({ key }) => JSON.stringify(key)).join(", ")}] as const;`,
+        "",
+        `export const ${at}_REQUIRED = [${needed.map((key) => JSON.stringify(key)).join(", ")}] as const;`,
+        "",
+        `export const ${at}_TYPES = { ${allowed.map(({ key, type }) => `${key}: ${JSON.stringify(type)}`).join(", ")} } as const;`,
+      ];
+    };
+    // An object with an if/then/else or dependentSchemas gets the field list, required fields and
+    // types of each case, as its interfaces do, and none of its own: one list for every case would
+    // allow the fields a case forbids and drop those it requires (AAI-1150). Its rule constants
+    // stay whole, since a rule on a field holds in every case that allows it.
+    const lines = cond
+      ? cond.cases.flatMap(({ refName, forbidden, required: alsoRequired }) => listing(screaming(`${name}With${refName}`), forbidden, alsoRequired))
+      : listing(prefix, [], []);
     /** @type {Set<string>} */
     const has = new Set();
     /**
@@ -357,7 +514,8 @@ export function generate(versionDir) {
     /** @type {[string, string][]} */
     const maps = [];
     /** @type {string | undefined} */
-    let unshaped;
+    // An if/then/else or dependentSchemas, which the builder couldn't keep, leaves the object without a shape too.
+    let unshaped = cond ? "if" : undefined;
     for (const { key, type, file: at, schema: prop } of props) {
       if (type !== "object" && type !== "array") continue;
       // The object, map or array items it holds, named, so that its shape or rules can be tied in.

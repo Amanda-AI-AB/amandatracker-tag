@@ -336,6 +336,116 @@ describe("gen-wire", () => {
     expect(() => generate(dir)).toThrow("unsupported keyword anyOf");
   });
 
+  describe("an if/then/else on a oneOf property (AAI-1142)", () => {
+    /** A Thing whose body is an A or a B, and which forbids x and requires y when it is a B. */
+    function conditional(overrides: Record<string, unknown> = {}): void {
+      const branch = (tag: string) => ({ type: "object", additionalProperties: false, properties: { [tag]: { type: "string" } } });
+      schema("a.json", {
+        title: "Thing",
+        type: "object",
+        additionalProperties: false,
+        required: ["schema_version", "body"],
+        properties: {
+          schema_version: { const: 1 },
+          x: { type: "string", maxLength: 4 },
+          y: { type: "string" },
+          body: { oneOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }] },
+        },
+        if: { required: ["body"], properties: { body: { $ref: "#/$defs/B" } } },
+        then: { properties: { x: false, y: false } },
+        else: { required: ["y"] },
+        $defs: { A: branch("a"), B: branch("b"), Kind: { enum: ["a", "b"] } },
+        ...overrides,
+      });
+    }
+
+    it("types each branch as an interface and the object as their union, with no shape", () => {
+      conditional();
+      const out = generate(dir);
+      expect(out).toContain("export type Thing = ThingWithA | ThingWithB;");
+      expect(out).toContain("export interface ThingWithB {\n  schema_version: 1;\n  x?: never;\n  y?: never;\n  body: B;\n}");
+      expect(out).toContain("export interface ThingWithA {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  body: A;\n}");
+      expect(out).not.toContain("THING_SHAPE");
+    });
+
+    it("lists each case's fields, required fields and types, and none for the object as a whole (AAI-1150)", () => {
+      conditional();
+      const out = generate(dir);
+      expect(out).toContain('export const THING_WITH_A_FIELDS = ["schema_version", "x", "y", "body"] as const;');
+      expect(out).toContain('export const THING_WITH_A_REQUIRED = ["schema_version", "body", "y"] as const;');
+      expect(out).toContain('export const THING_WITH_A_TYPES = { schema_version: "integer", x: "string", y: "string", body: "object" } as const;');
+      expect(out).toContain('export const THING_WITH_B_FIELDS = ["schema_version", "body"] as const;');
+      expect(out).toContain('export const THING_WITH_B_REQUIRED = ["schema_version", "body"] as const;');
+      expect(out).toContain('export const THING_WITH_B_TYPES = { schema_version: "integer", body: "object" } as const;');
+      expect(out).not.toMatch(/THING_(FIELDS|REQUIRED|TYPES)\b/);
+      // A rule on a field holds in every case that allows it.
+      expect(out).toContain("export const THING_MAX_LENGTH = { x: 4 } as const;");
+    });
+
+    it("types a dependentSchemas property as never on the branches it doesn't need (AAI-1146)", () => {
+      conditional({
+        properties: {
+          schema_version: { const: 1 },
+          x: { type: "string", maxLength: 4 },
+          y: { type: "string" },
+          z: { type: "integer" },
+          body: { oneOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }, { $ref: "#/$defs/C" }] },
+        },
+        dependentSchemas: { z: { properties: { body: { $ref: "#/$defs/A" } } } },
+        $defs: Object.fromEntries(["A", "B", "C"].map((tag) => [tag, { type: "object", additionalProperties: false, properties: { [tag.toLowerCase()]: { type: "string" } } }])),
+      });
+      const out = generate(dir);
+      expect(out).toContain("export type Thing = ThingWithA | ThingWithB | ThingWithC;");
+      expect(out).toContain("export interface ThingWithA {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  z?: number;\n  body: A;\n}");
+      expect(out).toContain("export interface ThingWithB {\n  schema_version: 1;\n  x?: never;\n  y?: never;\n  z?: never;\n  body: B;\n}");
+      expect(out).toContain("export interface ThingWithC {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  z?: never;\n  body: C;\n}");
+      expect(out).not.toContain("THING_SHAPE");
+    });
+
+    it("types a property then forbids and dependentSchemas needs a branch for as never on every other branch (AAI-1148)", () => {
+      conditional({
+        properties: {
+          schema_version: { const: 1 },
+          x: { type: "string", maxLength: 4 },
+          y: { type: "string" },
+          body: { oneOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }, { $ref: "#/$defs/C" }] },
+        },
+        dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/A" } } } },
+        $defs: Object.fromEntries(["A", "B", "C"].map((tag) => [tag, { type: "object", additionalProperties: false, properties: { [tag.toLowerCase()]: { type: "string" } } }])),
+      });
+      const out = generate(dir);
+      expect(out).toContain("export interface ThingWithA {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  body: A;\n}");
+      expect(out).toContain("export interface ThingWithB {\n  schema_version: 1;\n  x?: never;\n  y?: never;\n  body: B;\n}");
+      expect(out).toContain("export interface ThingWithC {\n  schema_version: 1;\n  x?: never;\n  y: string;\n  body: C;\n}");
+    });
+
+    it("types a dependentSchemas alone, with no if/then/else", () => {
+      conditional({ if: undefined, then: undefined, else: undefined, dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/B" } } } } });
+      const out = generate(dir);
+      expect(out).toContain("export interface ThingWithA {\n  schema_version: 1;\n  x?: never;\n  y?: string;\n  body: A;\n}");
+      expect(out).toContain("export interface ThingWithB {\n  schema_version: 1;\n  x?: string;\n  y?: string;\n  body: B;\n}");
+    });
+
+    it.each([
+      ["a missing else", { else: undefined }, "needs all three of if, then and else"],
+      ["an if on a property it doesn't require", { if: { properties: { body: { $ref: "#/$defs/B" } } } }, "must test one property, which it requires"],
+      ["an if with a rule beside its $ref", { if: { required: ["body"], properties: { body: { $ref: "#/$defs/B", title: "B" } } } }, "must test body with a $ref alone"],
+      ["an if on a property that is no oneOf", { if: { required: ["schema_version"], properties: { schema_version: { $ref: "#/$defs/B" } } } }, "a required oneOf of $refs"],
+      ["an if on a $ref that is no branch", { if: { required: ["body"], properties: { body: { $ref: "#/$defs/Kind" } } } }, "isn't one of its branches"],
+      ["a then that constrains rather than forbids", { then: { properties: { x: { maxLength: 2 } } } }, "must forbid properties (false) in then"],
+      ["a then on a required property", { then: { properties: { body: false } } }, "names body, which isn't an optional property of it"],
+      ["an else with another keyword", { else: { required: ["y"], properties: {} } }, "has keyword properties"],
+      ["a dependentSchemas on a required property", { dependentSchemas: { body: { properties: { body: { $ref: "#/$defs/A" } } } } }, "names body, which isn't an optional property of it"],
+      ["a dependentSchemas with another keyword", { dependentSchemas: { x: { required: ["body"], properties: { body: { $ref: "#/$defs/A" } } } } }, "has keyword required"],
+      ["a dependentSchemas on two properties", { dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/A" }, schema_version: { const: 1 } } } } }, "on x must test one property"],
+      ["a dependentSchemas on a $ref that is no branch", { dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/Kind" } } } } }, "isn't one of its branches"],
+      ["a dependentSchemas that forbids what else requires", { dependentSchemas: { y: { properties: { body: { $ref: "#/$defs/B" } } } } }, "both forbid and require y when its body is a A"],
+    ])("refuses %s, rather than loosen the type", (_what, overrides, message) => {
+      conditional(overrides);
+      expect(() => generate(dir)).toThrow(message);
+    });
+  });
+
   it.each([
     ["a field", { n: { type: "string", minLength: 2 } }, {}],
     ["a field, through a $ref", { n: { $ref: "#/$defs/Code" } }, { Code: { type: "string", minLength: 0 } }],

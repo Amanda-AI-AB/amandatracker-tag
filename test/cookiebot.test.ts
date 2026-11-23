@@ -27,7 +27,9 @@ describe("cookiebotSignal", () => {
   it.each([
     ["not an object", "yes", "window.Cookiebot is not an object"],
     ["null", null, "window.Cookiebot is not an object"],
+    ["an array", [], "window.Cookiebot is not an object"],
     ["an answer without consent", { hasResponse: true }, "window.Cookiebot has a response but no consent"],
+    ["a consent that is an array", { hasResponse: true, consent: [true, true] }, "window.Cookiebot has a response but no consent"],
     ["a category that isn't a boolean", answered("true", false), "window.Cookiebot.consent.statistics is not a boolean: true"],
     ["a missing category", { hasResponse: true, consent: { statistics: true } }, "window.Cookiebot.consent.marketing is not a boolean: undefined"],
   ])("throws ConsentError on a Cookiebot with %s", (_label, cookiebot, message) => {

@@ -27,7 +27,9 @@
 // The machine's withdraw is the transport's withdrawEvents, so that nothing goes after a decline
 // (AAI-86), with one exception the site opts into: with the config's consent.purge_on_withdrawal on,
 // forgetting a visitor first posts the withdrawal signal with their visitor id (withdrawal.ts,
-// AAI-785), so that their stored data is erased, and only then deletes their cookies. Its pagehide is registered before the transport's, so that the pings it hands over
+// AAI-785), so that their stored data is erased, and only then deletes their cookies. A grant after a
+// denial renews the visitor's ids and, with them, the transport's page key (transport.newPage,
+// AAI-1156), so that page_id and seq never link the withdrawn visitor to the fresh one. Its pagehide is registered before the transport's, so that the pings it hands over
 // as the page goes leave with the transport's own pagehide flush (consent.ts).
 
 import { buildEvent, pingId } from "../wire/payload";
@@ -141,7 +143,15 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
           },
           withdraw: () => transport.withdrawEvents(),
         },
-        identity,
+        // A grant after a denial renews the page key with the ids, so that page_id and seq never
+        // join the withdrawn visitor id to the fresh one (AAI-1156).
+        identity: {
+          forget: () => identity.forget(),
+          renew: () => {
+            identity.renew();
+            transport.newPage();
+          },
+        },
       });
       return machine;
     },

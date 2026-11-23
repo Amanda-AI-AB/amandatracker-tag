@@ -46,12 +46,13 @@ export interface FakeWindow extends TagWindow {
   OneTrust?: unknown;
   OnetrustActiveGroups?: unknown;
   OptanonWrapper?: unknown;
-  /** The page's Usercentrics (its Browser UI), when a test installs one. */
+  /** The page's Usercentrics, its Browser UI (v2) or its CMP (v3), when a test installs one. */
   UC_UI?: unknown;
+  __ucCmp?: unknown;
   /** Moves location to url, as the back button does, and fires popstate. */
   back(url: string): void;
-  /** Fires the window event `type`, such as one a consent manager dispatches. */
-  fire(type: string): void;
+  /** Fires the window event `type`, such as one a consent manager dispatches, with `event` when given. */
+  fire(type: string, event?: unknown): void;
 }
 
 /**
@@ -65,7 +66,7 @@ export function fakeWindow(
 ): FakeWindow {
   vi.stubGlobal("Document", FakeDocument);
   const location = { href, origin: new URL(href).origin } as Location;
-  const listeners: Record<string, (() => void)[]> = {};
+  const listeners: Record<string, ((event?: unknown) => void)[]> = {};
   const move = (url?: string | URL | null): void => {
     if (url != null) (location as { href: string }).href = new URL(String(url), location.href).href;
   };
@@ -81,15 +82,15 @@ export function fakeWindow(
     history,
     fetch: fetchMock as unknown as typeof fetch,
     fetchMock,
-    addEventListener: (type: string, listener: () => void) => {
+    addEventListener: (type: string, listener: (event?: unknown) => void) => {
       (listeners[type] = listeners[type] || []).push(listener);
     },
     back(url: string) {
       move(url);
       this.fire("popstate");
     },
-    fire(type: string) {
-      for (const listener of listeners[type] || []) listener();
+    fire(type: string, event?: unknown) {
+      for (const listener of listeners[type] || []) listener(event);
     },
   };
   return win as unknown as FakeWindow;

@@ -19,6 +19,7 @@
 import type { ErrorBoundary } from "./boundary";
 import type { ConsentSignal, NoCmpDecision, NoCmpPolicy } from "./consent";
 import { policyRequestInit, policyUrl } from "./endpoint";
+import { isRecord } from "./guards";
 
 export class PolicyError extends Error {
   override name = "PolicyError";
@@ -51,7 +52,7 @@ export async function fetchPolicyHint(fetchFn: typeof fetch, endpoint: string): 
     if (!(error instanceof SyntaxError)) throw error;
     throw new PolicyError(`GET ${url}: the body is not JSON`);
   }
-  const consent = typeof json === "object" && json !== null ? (json as Record<string, unknown>).consent : undefined;
+  const consent = isRecord(json) ? json.consent : undefined;
   if (consent !== "granted" && consent !== "denied") {
     throw new PolicyError(`GET ${url}: consent is not granted or denied: ${String(consent)}`);
   }

@@ -25,6 +25,7 @@
 
 import type { Consent, ConsentSource, ConsentState } from "../wire/generated";
 import { warn } from "./boundary";
+import { isRecord } from "./guards";
 
 export type { Consent, ConsentSource, ConsentState };
 
@@ -124,13 +125,11 @@ export function collectionMode(analytics: ConsentState, noCmp: NoCmpDecision | u
 
 /** A consent signal checked: only the categories and states the wire schema lists. */
 export function checkSignal(signal: unknown): ConsentSignal {
-  if (typeof signal !== "object" || signal === null || Array.isArray(signal)) {
-    throw new ConsentError("a consent signal is not an object");
-  }
+  if (!isRecord(signal)) throw new ConsentError("a consent signal is not an object");
   const checked: ConsentSignal = {};
   for (const key of Object.keys(signal)) {
     if (CATEGORIES.indexOf(key as Category) < 0) throw new ConsentError(`unknown consent category: ${key}`);
-    const state = (signal as Record<string, unknown>)[key];
+    const state = signal[key];
     if (state === undefined) continue;
     if (STATES.indexOf(state as ConsentState) < 0) {
       throw new ConsentError(`consent ${key} is not one of ${STATES.join(", ")}: ${String(state)}`);

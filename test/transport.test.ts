@@ -33,7 +33,7 @@ interface Harness {
   reports: ErrorReport[];
   pagehide(): void;
   /** The bodies posted with fetch, parsed. */
-  posted(): { seq?: number; e: { type: string; props?: { n: number } }[] }[];
+  posted(): { seq?: number; page_id?: string; e: { type: string; props?: { n: number } }[] }[];
   inits(): RequestInit[];
 }
 
@@ -172,6 +172,70 @@ describe("seq", () => {
     second.transport.event(pageview());
     expect(first.posted()[0]!.seq).toBe(1);
     expect(second.posted()[0]!.seq).toBe(1);
+  });
+});
+
+describe("page_id (AAI-1050)", () => {
+  const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it("puts the same UUIDv4 on every event batch of a page: by fetch, on each retry, by beacon and in pagehide's split halves", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness([{ ok: false, status: 503 }]);
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(RETRY_DELAYS_MS[0]!);
+    t.transport.event(click(1));
+    await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS);
+    t.transport.event(click(2));
+    t.pagehide();
+    const beaconed = t.beacon.mock.calls.map((call) => JSON.parse(call[1] as string));
+
+    const batches = [...t.posted(), ...beaconed];
+    expect(batches.map((b) => b.seq)).toEqual([1, 1, 2, 3]);
+    const pageId = batches[0]!.page_id;
+    expect(pageId).toMatch(UUID_V4);
+    for (const batch of batches) {
+      expect(batch.page_id).toBe(pageId);
+      expect(validate(batch), JSON.stringify(validate.errors)).toBe(true);
+    }
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("keeps it on the halves of a pagehide fetch the browser rejected", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = harness([{ ok: true, status: 204 }, new TypeError("keepalive quota")], { beacon: "missing" });
+    t.transport.event(pageview());
+    t.transport.event(click(1));
+    t.transport.event(click(2));
+    t.pagehide();
+    await vi.advanceTimersByTimeAsync(0);
+    const bodies = t.posted();
+    expect(bodies.map((b) => b.e.length)).toEqual([1, 2, 1, 1]);
+    expect(new Set(bodies.map((b) => b.page_id)).size).toBe(1);
+  });
+
+  it("makes a new one on a new page load: it lives in the transport's memory only", () => {
+    const first = harness();
+    first.transport.event(pageview());
+    const second = harness();
+    second.transport.event(pageview());
+    expect(first.posted()[0]!.page_id).toMatch(UUID_V4);
+    expect(second.posted()[0]!.page_id).toMatch(UUID_V4);
+    expect(second.posted()[0]!.page_id).not.toBe(first.posted()[0]!.page_id);
+  });
+
+  it("never puts page_id on a ping batch, by fetch or on pagehide", () => {
+    const t = harness();
+    t.transport.event(pageview());
+    t.transport.ping(pingOf("pageview"));
+    t.transport.ping(pingOf("click"));
+    t.pagehide();
+    const [events, ...pings] = t.posted();
+    expect(events).toHaveProperty("page_id");
+    expect(pings).toHaveLength(2);
+    for (const batch of pings) {
+      expect(batch).not.toHaveProperty("page_id");
+      expect(validate(batch), JSON.stringify(validate.errors)).toBe(true);
+    }
   });
 });
 
@@ -719,6 +783,44 @@ describe("withdrawEvents", () => {
     expect(t.reports).toEqual([]);
   });
 
+  it.each([
+    ["HTTP 503", { ok: false, status: 503 }],
+    ["network error", new TypeError("Failed to fetch")],
+  ] as const)("drops an event batch in flight that meets a %s after it, rather than retrying it", async (why, answer) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let settle: () => void = () => undefined;
+    const t = harness();
+    t.fetchMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve, reject) => {
+          settle = () => (answer instanceof Error ? reject(answer) : resolve(answer));
+        }),
+    );
+    t.transport.event(pageview());
+    t.transport.withdrawEvents();
+    settle();
+    await vi.advanceTimersByTimeAsync(60_000);
+    t.pagehide();
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+    expect(t.beacon).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      `amanda: dropped a batch of 1 events to ${URL_E}: ${why}, and the visitor declined since`,
+      ...(answer instanceof Error ? [answer] : []),
+    );
+    expect(t.reports).toEqual([]);
+  });
+
+  it("keeps a ping batch in flight, which is retried after a withdrawal", async () => {
+    let settle: () => void = () => undefined;
+    const t = harness();
+    t.fetchMock.mockImplementationOnce(() => new Promise((resolve) => (settle = () => resolve({ ok: false, status: 503 }))));
+    t.transport.ping(pingOf("pageview"));
+    t.transport.withdrawEvents();
+    settle();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps pings, buffered or awaiting a retry, and the events that come after", async () => {
     const t = harness([{ ok: false, status: 503 }]);
     t.transport.ping(pingOf("pageview"));
@@ -735,6 +837,101 @@ describe("withdrawEvents", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     harness().transport.withdrawEvents();
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("newPage", () => {
+  it("starts a fresh page_id, with seq again from 1, for the batches built after it", async () => {
+    const t = harness();
+    t.transport.event(pageview());
+    t.transport.event(pageview());
+    t.transport.newPage();
+    t.transport.event(pageview());
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(0);
+    const [a, b, c, d] = t.posted();
+    expect([a!.seq, b!.seq, c!.seq, d!.seq]).toEqual([1, 2, 1, 2]);
+    expect(b!.page_id).toBe(a!.page_id);
+    expect(d!.page_id).toBe(c!.page_id);
+    expect(c!.page_id).not.toBe(a!.page_id);
+    for (const batch of t.posted()) expect(validate(batch)).toBe(true);
+  });
+
+  it("leaves a batch built before it as it was, through its retry", async () => {
+    const t = harness([{ ok: false, status: 503 }]);
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(0);
+    t.transport.newPage();
+    t.transport.event(pageview());
+    await vi.advanceTimersByTimeAsync(60_000);
+    const [first, after, retry] = t.posted();
+    expect(retry).toEqual(first);
+    expect(after).toMatchObject({ seq: 1 });
+    expect(after!.page_id).not.toBe(first!.page_id);
+  });
+
+  /**
+   * A transport without sendBeacon whose first fetch, the pagehide flush's keepalive fetch of two
+   * clicks, stays in flight until `reject` is called; every later fetch gets a 204 (AAI-1204).
+   */
+  function pagehideInFlight() {
+    let reject: (error: Error) => void = () => undefined;
+    const t = harness([], { beacon: "missing" });
+    t.fetchMock.mockImplementationOnce(() => new Promise((_, rej) => (reject = rej)));
+    t.transport.event(click(1));
+    t.transport.event(click(2));
+    t.pagehide();
+    return { ...t, reject: (error: Error) => reject(error) };
+  }
+
+  it("keeps a pagehide batch's page_id in its split halves, with seqs from its own key", async () => {
+    const t = pagehideInFlight();
+    const before = t.posted()[0]!;
+    t.transport.newPage();
+    t.reject(new TypeError("Failed to fetch"));
+    await vi.advanceTimersByTimeAsync(0);
+    const halves = t.posted().slice(1);
+    expect(halves.map((h) => [h.page_id, h.seq, h.e.length])).toEqual([
+      [before.page_id, 2, 1],
+      [before.page_id, 3, 1],
+    ]);
+    // The new key's seq is untouched by the old key's split.
+    t.transport.event(pageview());
+    const after = t.posted().at(-1)!;
+    expect(after.seq).toBe(1);
+    expect(after.page_id).not.toBe(before.page_id);
+    for (const batch of t.posted()) expect(validate(batch)).toBe(true);
+  });
+
+  it("drops a pagehide batch rejected after a withdrawal and a re-grant, rather than splitting it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = pagehideInFlight();
+    t.transport.withdrawEvents();
+    t.transport.newPage();
+    const error = new TypeError("Failed to fetch");
+    t.reject(error);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      `amanda: dropped a batch of 2 events to ${URL_E}: network error on pagehide, and the visitor declined since`,
+      error,
+    );
+    expect(t.reports).toEqual([]);
+  });
+
+  it("drops a split half rejected after a withdrawal, rather than sending it without keepalive", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = pagehideInFlight();
+    const rejects: ((error: Error) => void)[] = [];
+    t.fetchMock.mockImplementation(() => new Promise((_, rej) => rejects.push(rej)));
+    t.reject(new TypeError("Failed to fetch"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(rejects).toHaveLength(2);
+    t.transport.withdrawEvents();
+    for (const reject of rejects) reject(new TypeError("Failed to fetch"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.fetchMock).toHaveBeenCalledTimes(3);
+    expect(warn.mock.calls.filter((call) => String(call[0]).endsWith("the visitor declined since"))).toHaveLength(2);
   });
 });
 

@@ -994,6 +994,83 @@ describe("the consent sources", () => {
       runAdapter(win, appended[0]!);
       expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "gcm" });
     });
+
+    describe("v3, window.__ucCmp", () => {
+      /** A v3 ConsentDetails: answered with the functional and marketing categories granted or not, or not answered yet. */
+      function consentDetails(answer?: { functional: boolean; marketing: boolean }) {
+        const type = answer ? "EXPLICIT" : "IMPLICIT";
+        return {
+          consent: { status: "SOME_ACCEPTED", required: answer === undefined, type },
+          services: {
+            essential1: { category: "essential", essential: true, consent: { given: true, type: "IMPLICIT" } },
+            // an opt-out default before the visitor answers: every service on
+            functional1: { category: "functional", essential: false, consent: { given: answer ? answer.functional : true, type } },
+            marketing1: { category: "marketing", essential: false, consent: { given: answer ? answer.marketing : true, type } },
+          },
+          categories: {},
+        };
+      }
+
+      /** window.__ucCmp, initialized, resolving getConsentDetails() to `current()`. */
+      function ucCmp(current: () => unknown) {
+        return { isInitialized: async () => true, getConsentDetails: async () => current() };
+      }
+
+      const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+      it("loads the adapter on a page with only __ucCmp", async () => {
+        const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+        win.__ucCmp = ucCmp(() => consentDetails());
+        const appended = injected(win);
+        await bootWithConsent(win).booted;
+        expect(appended).toHaveLength(1);
+        expect(appended[0]).toMatchObject({ src: `${DEFAULT_ENDPOINT}/adapters/0.0.0-test/usercentrics.js` });
+      });
+
+      it("drives the state machine across accept, reject and change, waiting while the visitor hasn't answered", async () => {
+        const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+        win.__ucCmp = ucCmp(() => consentDetails());
+        const appended = injected(win);
+        const { snapshots, machine, reports, booted } = bootWithConsent(win);
+        await booted;
+        expect(snapshots).toEqual([{ analytics: "unknown", ads: "unknown" }]);
+
+        runAdapter(win, appended[0]!);
+        await flush();
+        win.fire("UC_CONSENT", { detail: consentDetails() });
+        expect(machine.snapshot()).toEqual({ analytics: "unknown", ads: "unknown" });
+
+        win.fire("UC_CONSENT", { detail: consentDetails({ functional: true, marketing: true }) });
+        expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "granted", source: "usercentrics" });
+        expect(machine.mode()).toBe("identified");
+
+        win.fire("UC_CONSENT", { detail: consentDetails({ functional: false, marketing: false }) });
+        expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "denied", source: "usercentrics" });
+        expect(machine.mode()).toBe("declined");
+
+        win.fire("UC_CONSENT", { detail: consentDetails({ functional: true, marketing: false }) });
+        expect(machine.snapshot()).toEqual({ analytics: "granted", ads: "denied", source: "usercentrics" });
+        expect(reports).toEqual([]);
+      });
+
+      it("loads the adapter for a v3 Usercentrics that loads after the tag, and reads the answer it already had", async () => {
+        const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(CONFIG));
+        const appended = injected(win);
+        const { machine, booted } = bootWithConsent(win);
+        await booted;
+        expect(appended).toEqual([]);
+
+        const answered = consentDetails({ functional: false, marketing: true });
+        win.__ucCmp = ucCmp(() => answered);
+        win.fire("UC_CONSENT", { detail: answered });
+        win.fire("UC_UI_INITIALIZED");
+        expect(appended).toHaveLength(1);
+
+        runAdapter(win, appended[0]!);
+        await flush();
+        expect(machine.snapshot()).toEqual({ analytics: "denied", ads: "granted", source: "usercentrics" });
+      });
+    });
   });
 
   it("reports a refused amanda('consent', ...) and a dataLayer it can't follow, and still boots", async () => {
