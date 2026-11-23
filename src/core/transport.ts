@@ -59,14 +59,16 @@ export interface Transport {
   /**
    * The visitor declined: drops the buffered events and the event batches awaiting a retry, so
    * that none goes after the decline, with a warning saying how many. Pings, and a batch whose
-   * request is already in flight, are left as they are.
+   * request is already in flight, are left as they are, but an event batch whose pagehide fetch is
+   * in flight is no longer recovered (split and sent again) if that fetch is rejected (AAI-1204).
    */
   withdrawEvents(): void;
   /**
    * Starts a new page key: a fresh page_id, and seq again from 1, so that the event batches sent
    * from now on can't be joined to those sent before, and each key's seq stays gapless. Called
    * when consent is granted again after a withdrawal, with the fresh ids identity.renew() mints
-   * (AAI-1156). A batch built before keeps the body it was built with, through every retry.
+   * (AAI-1156). A batch built before keeps the body it was built with, through every retry, and
+   * the halves of its pagehide recovery keep its page_id, with seqs from its key (AAI-1204).
    */
   newPage(): void;
 }
@@ -79,16 +81,27 @@ type Item = WireEvent | WirePing;
  */
 type UnloadStep = "keepalive" | "split" | "plain";
 
+/** A page key: the page_id event batches carry, and the seq counter of the batches under it. */
+interface PageKey {
+  readonly id: string;
+  /** The seq of the last event batch built under this key. */
+  seq: number;
+}
+
 /** One batch as sent: its body keeps its seq through every retry. */
 interface Batch {
   readonly kind: BatchKind;
   readonly body: string;
   /** The items in body, which a rejected pagehide fetch splits into smaller batches. */
   readonly items: readonly Item[];
+  /** The page key it was built under, which the halves of a split take too (AAI-1204). */
+  readonly page: PageKey;
   /** The tries made so far. */
   tries: number;
   /** The pending retry's timer, while the batch awaits one. */
   timer?: unknown;
+  /** The visitor declined while its pagehide fetch was in flight: it isn't recovered (AAI-1204). */
+  withdrawn?: boolean;
 }
 
 /**
@@ -103,30 +116,32 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
   const buffers: { events: WireEvent[]; pings: WirePing[] } = { events: [], pings: [] };
   const awaitingRetry = new Set<Batch>();
   const flushTimers: Record<BatchKind, unknown> = { events: undefined, pings: undefined };
-  let seq = 0;
   /**
    * The pageload's key, on every event batch: one transport serves one pageload, and newPage
    * starts a new key when consent is granted again after a withdrawal.
    */
-  let pageId = uuidv4();
+  let page: PageKey = { id: uuidv4(), seq: 0 };
+  /** The event batches whose pagehide fetch is in flight, which withdrawEvents marks. */
+  const unloading = new Set<Batch>();
   /** The UTF-8 bytes of the tag's own keepalive fetches still in flight. */
   let keepaliveInFlight = 0;
   // Only a strict true marks the browser as automated: a missing or odd value sends nothing.
   const webdriver = win.navigator.webdriver === true;
 
-  /** The body of a batch of `items`; `batchSeq` is the seq an event batch carries. */
-  const bodyOf = (kind: BatchKind, items: readonly Item[], batchSeq: number): string => {
+  /** The body of a batch of `items` under `key`; `batchSeq` is the seq an event batch carries. */
+  const bodyOf = (kind: BatchKind, items: readonly Item[], key: PageKey, batchSeq: number): string => {
     if (kind === "pings") return JSON.stringify({ e: items } as PingBatch);
-    const batch: EventBatch = { seq: batchSeq, page_id: pageId, e: items as EventBatch["e"] };
+    const batch: EventBatch = { seq: batchSeq, page_id: key.id, e: items as EventBatch["e"] };
     if (webdriver) batch.webdriver = true;
     return JSON.stringify(batch);
   };
 
-  /** A new batch of `items`; an event batch takes the next seq. */
-  const newBatch = (kind: BatchKind, items: readonly Item[]): Batch => ({
+  /** A new batch of `items` under `key`, the current page key unless given; an event batch takes its next seq. */
+  const newBatch = (kind: BatchKind, items: readonly Item[], key: PageKey = page): Batch => ({
     kind,
-    body: bodyOf(kind, items, kind === "events" ? ++seq : 0),
+    body: bodyOf(kind, items, key, kind === "events" ? ++key.seq : 0),
     items,
+    page: key,
     tries: 0,
   });
 
@@ -143,6 +158,7 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
    */
   const unloadBatchesOf = (kind: BatchKind, budget: { left: number }): Batch[] => {
     const items: Item[] = buffers[kind].splice(0);
+    const key = page;
     const batches: Batch[] = [];
     let chunk: Item[] = [];
     let body = "";
@@ -151,14 +167,14 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     // Bodies are built with seq + 1, the seq they take when closed.
     const close = (): void => {
       if (chunk.length === 0) return;
-      if (kind === "events") seq++;
-      batches.push({ kind, body, items: chunk, tries: 0 });
+      if (kind === "events") key.seq++;
+      batches.push({ kind, body, items: chunk, page: key, tries: 0 });
       budget.left -= bodyBytes(body);
       chunk = [];
     };
     for (const item of items) {
       if (chunk.length < MAX_BATCH_ITEMS) {
-        const grown = bodyOf(kind, [...chunk, item], seq + 1);
+        const grown = bodyOf(kind, [...chunk, item], key, key.seq + 1);
         if (bodyBytes(grown) <= budget.left) {
           chunk.push(item);
           body = grown;
@@ -167,14 +183,14 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
         }
       }
       close();
-      const alone = bodyOf(kind, [item], seq + 1);
+      const alone = bodyOf(kind, [item], key, key.seq + 1);
       if (bodyBytes(alone) <= budget.left) {
         chunk = [item];
         body = alone;
         inGap = false;
         continue;
       }
-      if (!inGap && kind === "events") seq++;
+      if (!inGap && kind === "events") key.seq++;
       inGap = true;
       lost++;
     }
@@ -246,15 +262,18 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
     const init = batchRequestInit(batch.body, batch.kind, keepalive);
     const bytes = keepalive ? bodyBytes(batch.body) : 0;
     keepaliveInFlight += bytes;
+    if (batch.kind === "events") unloading.add(batch);
     const sent = win.fetch(url, init).then(
       (response) => {
         keepaliveInFlight -= bytes;
+        unloading.delete(batch);
         if (response.ok) return;
         if (response.status >= 500) return dropped(batch, `HTTP ${response.status} on pagehide`);
         refused(batch, response.status);
       },
       (error: unknown) => {
         keepaliveInFlight -= bytes;
+        unloading.delete(batch);
         // fetch rejects with a TypeError for the keepalive quota and for a network error alike.
         if (!(error instanceof TypeError)) throw error;
         recoverOnUnload(batch, step, error);
@@ -271,14 +290,17 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
    * one item that can't be split, goes once more without keepalive, at best effort, as the page may
    * not outlive it. A body rejected without keepalive is dropped. The same body is never sent with
    * keepalive twice (AAI-893): each step is smaller than the last, or doesn't count against the quota.
+   * The halves are built under the rejected batch's page key, never a newer one (AAI-1204), and an
+   * event batch the visitor withdrew while it was in flight is dropped rather than sent again.
    */
   const recoverOnUnload = (batch: Batch, step: UnloadStep, error: TypeError): void => {
+    if (batch.withdrawn === true) return dropped(batch, "network error on pagehide, and the visitor declined since", error);
     if (step === "plain") return dropped(batch, "network error on pagehide, without keepalive", error);
     if (step === "split" || batch.items.length === 1) return sendOnUnload(batch, "plain");
     const half = Math.ceil(batch.items.length / 2);
     for (const items of [batch.items.slice(0, half), batch.items.slice(half)]) {
       // Each half on its own: one that fails is reported, and the other still goes.
-      boundary.guard("transport", () => sendOnUnload(newBatch(batch.kind, items), "split"));
+      boundary.guard("transport", () => sendOnUnload(newBatch(batch.kind, items, batch.page), "split"));
     }
   };
 
@@ -357,10 +379,10 @@ export function createTransport(win: TransportWindow, endpoint: string, boundary
         awaitingRetry.delete(batch);
         dropped(batch, "the visitor declined");
       }
+      for (const batch of unloading) batch.withdrawn = true;
     },
     newPage() {
-      pageId = uuidv4();
-      seq = 0;
+      page = { id: uuidv4(), seq: 0 };
     },
   };
 }

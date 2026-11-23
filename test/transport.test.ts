@@ -831,6 +831,70 @@ describe("newPage", () => {
     expect(after).toMatchObject({ seq: 1 });
     expect(after!.page_id).not.toBe(first!.page_id);
   });
+
+  /**
+   * A transport without sendBeacon whose first fetch, the pagehide flush's keepalive fetch of two
+   * clicks, stays in flight until `reject` is called; every later fetch gets a 204 (AAI-1204).
+   */
+  function pagehideInFlight() {
+    let reject: (error: Error) => void = () => undefined;
+    const t = harness([], { beacon: "missing" });
+    t.fetchMock.mockImplementationOnce(() => new Promise((_, rej) => (reject = rej)));
+    t.transport.event(click(1));
+    t.transport.event(click(2));
+    t.pagehide();
+    return { ...t, reject: (error: Error) => reject(error) };
+  }
+
+  it("keeps a pagehide batch's page_id in its split halves, with seqs from its own key", async () => {
+    const t = pagehideInFlight();
+    const before = t.posted()[0]!;
+    t.transport.newPage();
+    t.reject(new TypeError("Failed to fetch"));
+    await vi.advanceTimersByTimeAsync(0);
+    const halves = t.posted().slice(1);
+    expect(halves.map((h) => [h.page_id, h.seq, h.e.length])).toEqual([
+      [before.page_id, 2, 1],
+      [before.page_id, 3, 1],
+    ]);
+    // The new key's seq is untouched by the old key's split.
+    t.transport.event(pageview());
+    const after = t.posted().at(-1)!;
+    expect(after.seq).toBe(1);
+    expect(after.page_id).not.toBe(before.page_id);
+    for (const batch of t.posted()) expect(validate(batch)).toBe(true);
+  });
+
+  it("drops a pagehide batch rejected after a withdrawal and a re-grant, rather than splitting it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = pagehideInFlight();
+    t.transport.withdrawEvents();
+    t.transport.newPage();
+    const error = new TypeError("Failed to fetch");
+    t.reject(error);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.fetchMock).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      `amanda: dropped a batch of 2 events to ${URL_E}: network error on pagehide, and the visitor declined since`,
+      error,
+    );
+    expect(t.reports).toEqual([]);
+  });
+
+  it("drops a split half rejected after a withdrawal, rather than sending it without keepalive", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const t = pagehideInFlight();
+    const rejects: ((error: Error) => void)[] = [];
+    t.fetchMock.mockImplementation(() => new Promise((_, rej) => rejects.push(rej)));
+    t.reject(new TypeError("Failed to fetch"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(rejects).toHaveLength(2);
+    t.transport.withdrawEvents();
+    for (const reject of rejects) reject(new TypeError("Failed to fetch"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(t.fetchMock).toHaveBeenCalledTimes(3);
+    expect(warn.mock.calls.filter((call) => String(call[0]).endsWith("the visitor declined since"))).toHaveLength(2);
+  });
 });
 
 describe("storage", () => {
