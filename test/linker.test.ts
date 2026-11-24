@@ -194,6 +194,32 @@ describe("the cross-domain linker (AAI-218)", () => {
     expect(from.reports).toEqual([]);
   });
 
+  it("never carries a withdrawn visitor's ids on a link decorated before the withdrawal (AAI-1228)", async () => {
+    const from = await booted("https://shop.example.com/", [GRANTED]);
+    const withdrawn = from.ids();
+    // target=_blank or a middle click: the page stays, its link decorated.
+    const decorated = from.middle("https://www.example.de/?x=1#top");
+    expect(decorated).toContain(withdrawn.visitorId);
+    (from.win.amanda as AmandaFunction)(...DENIED);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(from.ids().visitorId).toBeUndefined();
+
+    vi.setSystemTime(START + 30_000);
+    const href = from.follow(decorated);
+    expect(href).toBe("https://www.example.de/?x=1#top");
+    const to = await booted(href, [GRANTED]);
+    expect(to.ids().visitorId).not.toBe(withdrawn.visitorId);
+    expect([...from.reports, ...to.reports]).toEqual([]);
+  });
+
+  it("takes the parameter out of a link it doesn't decorate, outside the set too, and leaves the rest as written", async () => {
+    const from = await booted("https://shop.example.com/", [DENIED]);
+
+    expect(from.follow(`https://www.example.de/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}&q=a+b`)).toBe("https://www.example.de/?q=a+b");
+    expect(from.follow(`https://partner.example.org/?${LINKER_PARAM}=x#y`)).toBe("https://partner.example.org/#y");
+    expect(from.reports).toEqual([]);
+  });
+
   it.each([
     ["a domain outside the set", "https://partner.example.org/offer"],
     ["the page's own host", "https://shop.example.com/cart"],

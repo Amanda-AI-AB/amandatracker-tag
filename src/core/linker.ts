@@ -11,7 +11,10 @@
 // is left as it is. A link to a host outside the set, or to one under the same listed domain as the
 // page, which shares its cookies, is never decorated. The link is found as a click_special's is
 // (special-clicks.ts, watchLinkClicks), and its href is rewritten as written, the parameter added
-// (or replaced) and nothing else of it changed.
+// (or replaced) and nothing else of it changed. A decorated link keeps its href, so a click that
+// doesn't decorate (the visitor withdrew since, or the link leads off the set) takes the parameter
+// out of the link the visitor follows instead (AAI-1228): a withdrawn visitor's ids never go on, to
+// a domain whose consent was granted separately, from a link decorated before the withdrawal.
 //
 // Adopting: on a landing whose URL holds the parameter, on a page of the set, the ids are adopted
 // (identity.ts, adopt) when the value is one this version writes, decorated within the last
@@ -124,8 +127,8 @@ export function startLinker(
   }
   if (domains.length === 0) return;
   watchLinkClicks(win, boundary, (link, element) => {
-    if (!linksAcross(link, win.location.href, domains)) return;
-    const ids = identity.ids();
-    if (ids) win.Element.prototype.setAttribute.call(element, "href", decorate(link, linkerValue(ids, now())));
+    const ids = linksAcross(link, win.location.href, domains) ? identity.ids() : undefined;
+    const rewritten = ids ? decorate(link, linkerValue(ids, now())) : stripParams(link, LINKER);
+    if (rewritten !== link) win.Element.prototype.setAttribute.call(element, "href", rewritten);
   });
 }
