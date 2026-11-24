@@ -7,7 +7,8 @@
 // each with its subdomains: on shop.example.com with domains ["example.de"], links to
 // shop.example.com, cdn.shop.example.com, example.de and www.example.de are internal and ignored. A
 // link is found and its href read as a click_special's is (special-clicks.ts, watchLinkClicks), and
-// resolved against the page's URL, as the browser follows it. A link of another scheme (tel:,
+// resolved against the document's base URL (a <base href>'s, or else the page's), as the browser
+// follows it (AAI-1231). A link of another scheme (tel:,
 // mailto:, javascript:) is no outbound click.
 //
 // The per-site toggle is the config's features.outbound_clicks_enabled, on when absent (boot.ts).
@@ -26,6 +27,8 @@ export interface ClickOutboundInput extends Omit<PageviewInput, "type" | "referr
 
 /** What the outbound-click watcher listens on and reads: window, or a stand-in for it in tests. */
 export interface OutboundClickHost extends SpecialClickHost {
+  /** The document's base URL (a <base href>'s, or else the page's), which a link's href is relative to. */
+  readonly document: SpecialClickHost["document"] & { readonly baseURI: string };
   readonly location: { readonly href: string };
 }
 
@@ -41,20 +44,30 @@ export function within(host: string, domain: string): boolean {
 }
 
 /**
- * The hostname of the link href leaves the site by, resolved against the page's URL pageUrl: lower
- * case, without a trailing dot. Undefined when href is no http: or https: URL, or when its host is
- * pageUrl's own, or one of domains (as ownDomains reads them), or a subdomain of any of them.
+ * The http: or https: URL a link to href leads to, resolved against the document's base URL baseUrl
+ * as the browser follows it; undefined for a malformed href or another scheme.
  */
-export function outboundHost(href: string, pageUrl: string, domains: readonly string[]): string | undefined {
+export function followedUrl(href: string, baseUrl: string): URL | undefined {
   let url: URL;
   try {
-    url = new URL(href, pageUrl);
+    url = new URL(href, baseUrl);
   } catch (error) {
     // A malformed href goes nowhere when clicked.
     if (!(error instanceof TypeError)) throw error;
     return undefined;
   }
-  if (WEB_SCHEMES.indexOf(url.protocol) < 0) return undefined;
+  return WEB_SCHEMES.indexOf(url.protocol) < 0 ? undefined : url;
+}
+
+/**
+ * The hostname of the link href leaves the site by, resolved against the document's base URL
+ * baseUrl: lower case, without a trailing dot. Undefined when href is no http: or https: URL, or when
+ * its host is that of the page on pageUrl, or one of domains (as ownDomains reads them), or a
+ * subdomain of any of them.
+ */
+export function outboundHost(href: string, baseUrl: string, pageUrl: string, domains: readonly string[]): string | undefined {
+  const url = followedUrl(href, baseUrl);
+  if (!url) return undefined;
   const host = trimDot(url.hostname);
   const own = [trimDot(new URL(pageUrl).hostname), ...domains];
   for (const domain of own) if (within(host, domain)) return undefined;
@@ -82,7 +95,7 @@ export function watchOutboundClicks(
   onClick: (host: string) => void,
 ): void {
   watchLinkClicks(win, boundary, (href) => {
-    const host = outboundHost(href, win.location.href, domains);
+    const host = outboundHost(href, win.document.baseURI, win.location.href, domains);
     if (host === undefined) return;
     if (host.length > TRACKED_EVENT_MAX_LENGTH.link_host || !LINK_HOST_PATTERN.test(host)) {
       warn("amanda: an outbound link's host is not one the wire schema takes; its click is not sent");

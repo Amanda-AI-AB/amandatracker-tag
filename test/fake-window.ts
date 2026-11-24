@@ -6,13 +6,23 @@ import type { TagWindow } from "../src/core/boot";
 
 export const PAGE = "https://shop.example.com";
 
-/** A Document whose prototype's currentScript getter returns the script it was made with. */
+/**
+ * A Document whose prototype's currentScript getter returns the script it was made with, and whose
+ * baseURI is base, a <base href>'s, when a test sets it, or else the page's URL, as a browser's is.
+ */
 export class FakeDocument {
+  base: string | undefined;
+  location: { readonly href: string } | undefined;
+
   constructor(
     private readonly script: Element | null,
     readonly title = "Products",
     readonly referrer = "https://search.example/",
   ) {}
+
+  get baseURI(): string {
+    return this.base ?? this.location!.href;
+  }
 
   get currentScript(): Element | null {
     return this.script;
@@ -75,8 +85,10 @@ export function fakeWindow(
     replaceState: (_data: unknown, _unused: string, url?: string | URL | null) => move(url),
   } as unknown as History;
   const fetchMock = vi.fn(typeof response === "function" ? response : async () => response);
+  const document = new FakeDocument(script);
+  document.location = location;
   const win = {
-    document: new FakeDocument(script) as unknown as Document,
+    document: document as unknown as Document,
     location,
     navigator: { language: "sv-SE" },
     history,

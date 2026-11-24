@@ -17,7 +17,7 @@ import { decorate, LINKER_MAX_AGE_MS, linkedIds, linkerValue, linksAcross } from
 import type { AmandaFunction } from "../src/core/queue";
 import { defaultTarget } from "../src/core/telemetry";
 import { CookieJar } from "./cookie-jar";
-import { fakeWindow, jsonResponse, scriptTag } from "./fake-window";
+import { fakeWindow, jsonResponse, scriptTag, type FakeDocument } from "./fake-window";
 import { validator } from "./wire-validator";
 
 const CONFIG_URL = `${DEFAULT_ENDPOINT}/cfg/site_123.json`;
@@ -194,6 +194,23 @@ describe("the cross-domain linker (AAI-218)", () => {
     expect(from.reports).toEqual([]);
   });
 
+  it("decorates a relative link that a <base href> on another domain of the set sends there, as the browser follows it (AAI-1231)", async () => {
+    const from = await booted("https://shop.example.com/products", [GRANTED]);
+    (from.win.document as unknown as FakeDocument).base = "https://www.example.de/";
+
+    expect(from.follow("kasse")).toBe(`kasse?${LINKER_PARAM}=v1.${from.ids().visitorId}.${from.ids().sessionId}.${START}`);
+    expect(from.follow("https://shop.example.com/cart")).toBe("https://shop.example.com/cart");
+    expect(from.reports).toEqual([]);
+  });
+
+  it("never decorates a relative link that a <base href> keeps on the page's own domain (AAI-1231)", async () => {
+    const from = await booted("https://shop.example.com/products", [GRANTED]);
+    (from.win.document as unknown as FakeDocument).base = "https://www.example.com/";
+
+    expect(from.follow("kasse")).toBe("kasse");
+    expect(from.reports).toEqual([]);
+  });
+
   it("never carries a withdrawn visitor's ids on a link decorated before the withdrawal (AAI-1228)", async () => {
     const from = await booted("https://shop.example.com/", [GRANTED]);
     const withdrawn = from.ids();
@@ -346,13 +363,22 @@ describe("decorate", () => {
 
 describe("linksAcross", () => {
   it("is false for a page or link outside the set, and between hosts under one listed domain", () => {
-    expect(linksAcross("https://a.example.de/", "https://shop.example.com/", SET)).toBe(true);
-    expect(linksAcross("https://EXAMPLE.DE./", "https://shop.example.com/", SET)).toBe(true);
-    expect(linksAcross("https://example.org/", "https://shop.example.com/", SET)).toBe(false);
-    expect(linksAcross("https://example.de/", "https://example.net/", SET)).toBe(false);
-    expect(linksAcross("https://a.example.de/", "https://b.example.de/", SET)).toBe(false);
-    expect(linksAcross("ftp://example.de/", "https://shop.example.com/", SET)).toBe(false);
-    expect(linksAcross("https://example.de/", "https://shop.example.com/", [])).toBe(false);
+    const across = (href: string, pageUrl: string, domains = SET) => linksAcross(href, pageUrl, pageUrl, domains);
+    expect(across("https://a.example.de/", "https://shop.example.com/")).toBe(true);
+    expect(across("https://EXAMPLE.DE./", "https://shop.example.com/")).toBe(true);
+    expect(across("https://example.org/", "https://shop.example.com/")).toBe(false);
+    expect(across("https://example.de/", "https://example.net/")).toBe(false);
+    expect(across("https://a.example.de/", "https://b.example.de/")).toBe(false);
+    expect(across("ftp://example.de/", "https://shop.example.com/")).toBe(false);
+    expect(across("https://example.de/", "https://shop.example.com/", [])).toBe(false);
+  });
+
+  it("resolves a relative link against the document's base URL, and takes the page's host from its own URL (AAI-1231)", () => {
+    const page = "https://shop.example.com/products";
+    expect(linksAcross("kasse", "https://www.example.de/", page, SET)).toBe(true);
+    expect(linksAcross("kasse", page, page, SET)).toBe(false);
+    // A base on another domain of the set doesn't make the page's own links cross.
+    expect(linksAcross("https://shop.example.com/cart", "https://www.example.de/", page, SET)).toBe(false);
   });
 });
 

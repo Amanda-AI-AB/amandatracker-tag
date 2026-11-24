@@ -30,7 +30,7 @@ import { stripParams } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
 import { trimDot } from "./config";
 import { COOKIE_VERSION, LINKER_PARAM, LINKER_PARAMS, type Ids } from "./identity";
-import { within } from "./outbound";
+import { followedUrl, within } from "./outbound";
 import { watchLinkClicks, type SpecialClickHost } from "./special-clicks";
 
 /** How long a decorated link carries the ids: two minutes after the click that decorated it. */
@@ -49,6 +49,8 @@ export interface LinkerIdentity {
 
 /** What the linker reads, listens on and rewrites: window, or a stand-in for it in tests. */
 export interface LinkerHost extends SpecialClickHost {
+  /** The document's base URL (a <base href>'s, or else the page's), which a link's href is relative to. */
+  readonly document: SpecialClickHost["document"] & { readonly baseURI: string };
   readonly location: { readonly href: string };
   readonly history: Pick<History, "state" | "replaceState">;
   readonly Element: SpecialClickHost["Element"] & { readonly prototype: Pick<Element, "setAttribute"> };
@@ -76,20 +78,14 @@ function domainsOf(host: string, domains: readonly string[]): string[] {
 }
 
 /**
- * Whether a link to href, resolved against the page's URL pageUrl, carries the ids: when it is an
- * http: or https: URL whose host is on a domain of the set, the page's host is on one too, and no
- * domain of the set has both, which would share the cookies already.
+ * Whether a link to href, resolved against the document's base URL baseUrl as the browser follows
+ * it, carries the ids from the page on pageUrl: when it is an http: or https: URL whose host is on a
+ * domain of the set, the page's host is on one too, and no domain of the set has both, which would
+ * share the cookies already.
  */
-export function linksAcross(href: string, pageUrl: string, domains: readonly string[]): boolean {
-  let url: URL;
-  try {
-    url = new URL(href, pageUrl);
-  } catch (error) {
-    // A malformed href goes nowhere when clicked.
-    if (!(error instanceof TypeError)) throw error;
-    return false;
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+export function linksAcross(href: string, baseUrl: string, pageUrl: string, domains: readonly string[]): boolean {
+  const url = followedUrl(href, baseUrl);
+  if (!url) return false;
   const to = domainsOf(url.hostname, domains);
   const from = domainsOf(new URL(pageUrl).hostname, domains);
   return to.length > 0 && from.length > 0 && !to.some((domain) => from.indexOf(domain) >= 0);
@@ -126,7 +122,7 @@ export function startLinker(
   }
   if (domains.length === 0) return;
   watchLinkClicks(win, boundary, (link, element) => {
-    const ids = linksAcross(link, win.location.href, domains) ? identity.ids() : undefined;
+    const ids = linksAcross(link, win.document.baseURI, win.location.href, domains) ? identity.ids() : undefined;
     const rewritten = ids ? decorate(link, linkerValue(ids, now())) : stripParams(link, LINKER_PARAMS);
     if (rewritten !== link) win.Element.prototype.setAttribute.call(element, "href", rewritten);
   });
