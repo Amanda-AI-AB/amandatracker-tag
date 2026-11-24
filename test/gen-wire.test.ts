@@ -419,6 +419,24 @@ describe("gen-wire", () => {
       expect(out).toContain("export interface ThingWithC {\n  schema_version: 1;\n  x?: never;\n  y: string;\n  body: C;\n}");
     });
 
+    it("types a dependentSchemas on an anyOf of branches as never on every branch it doesn't name (AAI-1001)", () => {
+      conditional({
+        properties: {
+          schema_version: { const: 1 },
+          x: { type: "string", maxLength: 4 },
+          y: { type: "string" },
+          z: { const: true },
+          body: { oneOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }, { $ref: "#/$defs/C" }] },
+        },
+        dependentSchemas: { z: { properties: { body: { anyOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/C" }] } } } },
+        $defs: Object.fromEntries(["A", "B", "C"].map((tag) => [tag, { type: "object", additionalProperties: false, properties: { [tag.toLowerCase()]: { type: "string" } } }])),
+      });
+      const out = generate(dir);
+      expect(out).toContain("export interface ThingWithA {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  z?: true;\n  body: A;\n}");
+      expect(out).toContain("export interface ThingWithB {\n  schema_version: 1;\n  x?: never;\n  y?: never;\n  z?: never;\n  body: B;\n}");
+      expect(out).toContain("export interface ThingWithC {\n  schema_version: 1;\n  x?: string;\n  y: string;\n  z?: true;\n  body: C;\n}");
+    });
+
     it("types a dependentSchemas alone, with no if/then/else", () => {
       conditional({ if: undefined, then: undefined, else: undefined, dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/B" } } } } });
       const out = generate(dir);
@@ -439,6 +457,11 @@ describe("gen-wire", () => {
       ["a dependentSchemas with another keyword", { dependentSchemas: { x: { required: ["body"], properties: { body: { $ref: "#/$defs/A" } } } } }, "has keyword required"],
       ["a dependentSchemas on two properties", { dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/A" }, schema_version: { const: 1 } } } } }, "on x must test one property"],
       ["a dependentSchemas on a $ref that is no branch", { dependentSchemas: { x: { properties: { body: { $ref: "#/$defs/Kind" } } } } }, "isn't one of its branches"],
+      ["a dependentSchemas on an anyOf of one $ref", { dependentSchemas: { x: { properties: { body: { anyOf: [{ $ref: "#/$defs/A" }] } } } } }, "must test body with a $ref alone or an anyOf of two or more $refs"],
+      ["a dependentSchemas on an anyOf with a rule", { dependentSchemas: { x: { properties: { body: { anyOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B", title: "B" }] } } } } }, "must test body with a $ref alone or an anyOf of two or more $refs"],
+      ["a dependentSchemas on an anyOf with a $ref that is no branch", { dependentSchemas: { x: { properties: { body: { anyOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/Kind" }] } } } } }, "isn't one of its branches"],
+      ["a dependentSchemas on an anyOf naming a branch twice", { dependentSchemas: { x: { properties: { body: { anyOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/A" }] } } } } }, "the same branch twice"],
+      ["an if on an anyOf", { if: { required: ["body"], properties: { body: { anyOf: [{ $ref: "#/$defs/A" }, { $ref: "#/$defs/B" }] } } } }, "must test body with a $ref alone"],
       ["a dependentSchemas that forbids what else requires", { dependentSchemas: { y: { properties: { body: { $ref: "#/$defs/B" } } } } }, "both forbid and require y when its body is a A"],
     ])("refuses %s, rather than loosen the type", (_what, overrides, message) => {
       conditional(overrides);

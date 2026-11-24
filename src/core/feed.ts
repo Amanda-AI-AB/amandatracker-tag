@@ -25,11 +25,14 @@
 //                 pending item that is an event only goes as a declined one does, which is nowhere.
 //
 // The machine's withdraw is the transport's withdrawEvents, so that nothing goes after a decline
-// (AAI-86), with one exception the site opts into: with the config's consent.purge_on_withdrawal on,
+// (AAI-86), and an event batch already in flight then has the cookies its response may set again
+// deleted once more as it settles (identity.discard, AAI-1128); with one exception the site opts into: with the config's consent.purge_on_withdrawal on,
 // forgetting a visitor first posts the withdrawal signal with their visitor id (withdrawal.ts,
 // AAI-785), so that their stored data is erased, and only then deletes their cookies. A grant after a
 // denial renews the visitor's ids and, with them, the transport's page key (transport.newPage,
-// AAI-1156), so that page_id and seq never link the withdrawn visitor to the fresh one. Its pagehide is registered before the transport's, so that the pings it hands over
+// AAI-1156), so that page_id and seq never link the withdrawn visitor to the fresh one. The
+// cross-domain linker (linker.ts, AAI-218) reads the visitor's ids through the feed too, under
+// granted analytics only, and hands the ids it brought to the identity. Its pagehide is registered before the transport's, so that the pings it hands over
 // as the page goes leave with the transport's own pagehide flush (consent.ts).
 
 import { buildEvent, pingId } from "../wire/payload";
@@ -42,7 +45,8 @@ import type { EcommerceInput } from "./ecommerce";
 import type { PageExitInput } from "./engagement";
 import type { FormSubmitInput } from "./forms";
 import type { IdentifyInput } from "./identify";
-import { createIdentity, type IdentityHost } from "./identity";
+import { createIdentity, type Identity, type IdentityHost } from "./identity";
+import type { LinkerIdentity } from "./linker";
 import type { ClickOutboundInput } from "./outbound";
 import type { PageviewInput } from "./pageview";
 import { pingOf } from "./ping";
@@ -97,6 +101,11 @@ export interface Feed {
   clickSpecial(input: ClickSpecialInput): void;
   /** Feeds a click_outbound through the machine, as an event only: boot's `onClickOutbound` option. */
   clickOutbound(input: ClickOutboundInput): void;
+  /**
+   * The visitor's ids as the cross-domain linker reads and adopts them (linker.ts): the identity's,
+   * under granted analytics only. Boot's `linker` option.
+   */
+  readonly linker: LinkerIdentity;
 }
 
 /**
@@ -105,10 +114,16 @@ export interface Feed {
  */
 export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: TagTarget, tagVersion: string): Feed {
   let machine: ConsentMachine<FeedItem> | undefined;
+  let madeIdentity: Identity | undefined;
   const collect = (item: FeedItem): void => {
     // The boot makes the machine (consent) before it hands over its first item.
     if (!machine) throw new Error(`amanda: a ${item.type} came before the consent machine was made`);
     machine.collect(item);
+  };
+  /** The identity, which the boot makes with the machine before it starts the linker. */
+  const made = (): Identity => {
+    if (!madeIdentity) throw new Error("amanda: the linker started before the consent machine was made");
+    return madeIdentity;
   };
   return {
     consent(config) {
@@ -119,9 +134,14 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
           ? { beforeForget: withdrawalSender(win.fetch.bind(win), { endpoint: target.endpoint, site: config.site, tagVersion }, boundary) }
           : {},
       );
+      madeIdentity = identity;
       // Before createTransport, which registers the transport's own pagehide flush.
       win.addEventListener("pagehide", () => boundary.guard("consent", () => machine!.pagehide()));
-      const transport = createTransport(win, target.endpoint, boundary);
+      // A batch in flight as the visitor withdrew may come back with the collector's Set-Cookie for
+      // its ids, through a proxy: those cookies are deleted again as it settles (AAI-1128).
+      const transport = createTransport(win, target.endpoint, boundary, {
+        afterWithdrawn: (events) => identity.discard(events.map((e) => ({ visitorId: e.visitor_id, sessionId: e.session_id }))),
+      });
       const pingOptions = { clickIds: pingsIncludeClickIds(config) };
       machine = createConsent<FeedItem>({
         declinedMode: declinedMode(config),
@@ -164,5 +184,13 @@ export function createFeed(win: FeedWindow, boundary: ErrorBoundary, target: Tag
     formSubmit: collect,
     clickSpecial: collect,
     clickOutbound: collect,
+    linker: {
+      ids: () => {
+        const identity = made();
+        // The machine is made with the identity.
+        return machine!.mode() === "identified" ? identity.ids() : undefined;
+      },
+      adopt: (ids) => made().adopt(ids),
+    },
   };
 }

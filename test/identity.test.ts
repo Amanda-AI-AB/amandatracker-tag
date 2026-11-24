@@ -365,6 +365,58 @@ describe("withdrawal and renewal", () => {
   });
 });
 
+describe("discard (AAI-1128)", () => {
+  /** The collector's Set-Cookie for ids through a proxy (AAI-827), stored as its response comes. */
+  const respawn = (jar: CookieJar, ids: Ids): void => {
+    jar.serverSet({ name: VISITOR_COOKIE, value: `v1.${ids.visitorId}`, domain: "example.com", path: "/", maxAge: VISITOR_MAX_AGE_S });
+    jar.serverSet({ name: SESSION_COOKIE, value: `v1.${ids.sessionId}.${START}`, domain: "example.com", path: "/", maxAge: 1800 });
+  };
+
+  it("deletes again the cookies a response set for the forgotten ids after forget", () => {
+    const { jar, identity } = page();
+    const forgotten = identity.ids();
+    identity.forget();
+    respawn(jar, forgotten);
+
+    identity.discard([forgotten]);
+    expect(jar.live()).toEqual([]);
+  });
+
+  it("deletes both when either holds a stale id", () => {
+    const { jar, identity } = page();
+    const forgotten = identity.ids();
+    identity.forget();
+    jar.serverSet({ name: SESSION_COOKIE, value: `v1.${forgotten.sessionId}.${START}`, domain: "example.com", path: "/", maxAge: 1800 });
+
+    identity.discard([forgotten]);
+    expect(jar.live()).toEqual([]);
+  });
+
+  it("writes the fresh ids back when the visitor granted again before the response came", () => {
+    const { jar, identity } = page();
+    const forgotten = identity.ids();
+    identity.forget();
+    identity.renew();
+    const renewed = identity.ids();
+    respawn(jar, forgotten);
+
+    identity.discard([forgotten]);
+    expect(value(jar, VISITOR_COOKIE)).toBe(`v1.${renewed.visitorId}`);
+    expect(parseSession(value(jar, SESSION_COOKIE))?.id).toBe(renewed.sessionId);
+    expect(identity.ids()).toEqual(renewed);
+  });
+
+  it("leaves cookies holding no stale id as they are", () => {
+    const { jar, identity } = page();
+    const current = identity.ids();
+    const writes = jar.writes.length;
+
+    identity.discard([{ visitorId: "01934f6c-8d2a-7b3c-8d4e-5f6a7b8c9d01", sessionId: "01934f6c-8d2a-7b3c-8d4e-5f6a7b8c9d02" }]);
+    expect(jar.writes).toHaveLength(writes);
+    expect(value(jar, VISITOR_COOKIE)).toBe(`v1.${current.visitorId}`);
+  });
+});
+
 describe("identity driven by the consent machine", () => {
   /** The machine with the identity as a.js is to wire it (AAI-964): identified items carry ids(). */
   function machine(declinedMode: "off" | "pings" = "off") {

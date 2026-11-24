@@ -20,7 +20,10 @@
 // only on a grant. forget() deletes both cookies at once, those the collector re-issued through a
 // first-party proxy too (AAI-827; it never sets them HttpOnly), first handing the visitor id to
 // beforeForget, the withdrawal signal of a site that purges on withdrawal (AAI-785), and a grant after a denial renews
-// both ids, so earlier anonymous pings are never linked to the visitor (consent.ts).
+// both ids, so earlier anonymous pings are never linked to the visitor (consent.ts). discard() deletes
+// them once more when a response to a batch sent before the withdrawal set them again (AAI-1128).
+// adopt() takes the ids the cross-domain linker brought from another of the site's verified
+// domains (linker.ts, AAI-218), for the next ids() to write.
 //
 // Safari's ITP caps script-written cookies at 7 days, or 24 hours after a link with tracking
 // decoration: an accepted limitation. A first-party proxy the customer runs is the documented way
@@ -37,6 +40,14 @@ export const SESSION_COOKIE = "_amnda_ses";
 export const PROBE_COOKIE = "_amnda_probe";
 /** The cookies' format version, their values' first part. */
 export const COOKIE_VERSION = "v1";
+/**
+ * The query parameter the cross-domain linker carries the ids in, from one of the site's verified
+ * same-owner domains to another (linker.ts, AAI-218). No url or referrer the tag sends holds it
+ * (pageview.ts), and the collector strips it too (AAI-987).
+ */
+export const LINKER_PARAM = "_amnda_lnk";
+/** Every query parameter of the linker's, which no url or referrer the tag sends holds, and which the linker strips. */
+export const LINKER_PARAMS: readonly string[] = [LINKER_PARAM];
 
 /** The visitor cookie's lifetime: 13 months (CNIL), as 395 days, renewed on each event. */
 export const VISITOR_MAX_AGE_S = 395 * 24 * 60 * 60;
@@ -66,6 +77,21 @@ export interface Identity extends IdentityControl {
    * cookies are written again, with their lifetimes renewed.
    */
   ids(): Ids;
+  /**
+   * Deletes both cookies again when either holds an id of `stale`, the ids of a request sent before
+   * forget() whose response came after it: behind a proxy, the collector's Set-Cookie for those ids
+   * (AAI-827) would otherwise bring the forgotten visitor back (AAI-1128). When the visitor has
+   * granted again since, the fresh ids renew() minted are written back in their place. Cookies
+   * holding no stale id are left as they are.
+   */
+  discard(stale: readonly Ids[]): void;
+  /**
+   * Takes linked, the ids the cross-domain linker brought from another of the site's domains
+   * (linker.ts), as the visitor's: the next ids() returns them, in place of the cookies' or fresh
+   * ones, and writes them to the cookies. Nothing is written before then, so nothing is without
+   * granted consent; forget() and renew() drop them unused.
+   */
+  adopt(linked: Ids): void;
 }
 
 export interface IdentityOptions {
@@ -143,6 +169,8 @@ export function createIdentity(host: IdentityHost, options: IdentityOptions = {}
   // The registrable domain once found (undefined: host-only); null: the browser keeps no cookie.
   let domain: string | undefined | null;
   let resolved = false;
+  // The ids the linker brought, until ids() takes them or forget() and renew() drop them.
+  let linked: Ids | undefined;
 
   const hostname = (): string => new URL(host.location.href).hostname;
   const mint = (): string => uuidv7(now(), random(10));
@@ -167,8 +195,9 @@ export function createIdentity(host: IdentityHost, options: IdentityOptions = {}
   };
 
   const store = (): void => {
+    if (visitor === undefined || session === undefined) return;
     const target = resolveDomain();
-    if (target === null || visitor === undefined || session === undefined) return;
+    if (target === null) return;
     doc.cookie = cookieString(VISITOR_COOKIE, `${COOKIE_VERSION}.${visitor}`, VISITOR_MAX_AGE_S, target);
     doc.cookie = cookieString(
       SESSION_COOKIE,
@@ -185,13 +214,23 @@ export function createIdentity(host: IdentityHost, options: IdentityOptions = {}
       // The cookies are the record wherever the browser keeps them: one gone has expired, or was
       // deleted by a withdrawal in another tab, and its id never comes back from memory.
       const inMemory = resolved && domain === null;
-      visitor = parseVisitor(readCookie(cookies, VISITOR_COOKIE)) ?? (inMemory ? visitor : undefined) ?? mint();
-      const last = parseSession(readCookie(cookies, SESSION_COOKIE)) ?? (inMemory ? session : undefined);
-      session = { id: last && at - last.lastActivity < SESSION_TIMEOUT_MS ? last.id : mint(), lastActivity: at };
+      if (linked) {
+        visitor = linked.visitorId;
+        session = { id: linked.sessionId, lastActivity: at };
+        linked = undefined;
+      } else {
+        visitor = parseVisitor(readCookie(cookies, VISITOR_COOKIE)) ?? (inMemory ? visitor : undefined) ?? mint();
+        const last = parseSession(readCookie(cookies, SESSION_COOKIE)) ?? (inMemory ? session : undefined);
+        session = { id: last && at - last.lastActivity < SESSION_TIMEOUT_MS ? last.id : mint(), lastActivity: at };
+      }
       store();
       return { visitorId: visitor, sessionId: session.id };
     },
+    adopt(ids) {
+      linked = ids;
+    },
     renew() {
+      linked = undefined;
       visitor = mint();
       session = { id: mint(), lastActivity: now() };
       store();
@@ -203,11 +242,22 @@ export function createIdentity(host: IdentityHost, options: IdentityOptions = {}
       const forgotten = parseVisitor(readCookie(doc.cookie, VISITOR_COOKIE)) ?? (inMemory ? visitor : undefined);
       visitor = undefined;
       session = undefined;
+      linked = undefined;
       try {
         if (forgotten !== undefined && options.beforeForget) options.beforeForget(forgotten);
       } finally {
         deleteCookies();
       }
+    },
+    discard(stale) {
+      const cookies = doc.cookie;
+      const visitorId = parseVisitor(readCookie(cookies, VISITOR_COOKIE));
+      const sessionId = parseSession(readCookie(cookies, SESSION_COOKIE))?.id;
+      const respawned = stale.some((ids) => ids.visitorId === visitorId || ids.sessionId === sessionId);
+      if (!respawned) return;
+      deleteCookies();
+      // Undefined since forget(), unless a grant renewed them: those are the visitor's ids now.
+      store();
     },
   };
 

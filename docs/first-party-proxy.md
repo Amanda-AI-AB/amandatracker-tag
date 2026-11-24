@@ -7,19 +7,9 @@ full lifetime instead of expiring after 7 days.
 This is a pattern you run on your own infrastructure. Amanda does not host it for you (see
 [Why not a hosted tracking domain?](#why-not-a-hosted-tracking-domain)).
 
-> **Availability: planned, not yet working.** This guide describes how the tag is designed to work behind
-> a proxy. The tag fetches its config and loads its consent-manager adapters through the
-> `data-endpoint` you give it, and its transport posts to it (AAI-67, AAI-828, AAI-831). But `a.js`
-> doesn't feed pageviews to the transport yet (AAI-964), and the collector doesn't yet set the cookies
-> through your proxy (AAI-827). Until these land, a proxy set up as described here serves `a.js`, its
-> config and its adapters, but the tag sends no events yet. This note goes away when they are live.
-
 ## What it does, and why
 
-This section, like the rest of the guide, describes the design that the tickets in the availability note
-build.
-
-The tag is to store two first-party cookies on your domain (AAI-98), and only when the visitor has granted
+The tag stores two first-party cookies on your domain (AAI-98), and only when the visitor has granted
 analytics consent:
 
 | Cookie       | Holds                       | Lifetime            |
@@ -36,7 +26,7 @@ site's own. Since Safari 16.4 that means a server whose IP address shares the fi
 website's IP address (the same IPv4 /16 or IPv6 /64). It does not mean a subdomain that is merely a DNS
 alias for someone else's server.
 
-With the proxy in place, once those tickets land:
+With the proxy in place:
 
 1. The page loads `a.js` from `https://www.example.com/amnda/a.js`, a path on your own site.
 2. The tag sends events to `https://www.example.com/amnda/v1/e` (AAI-68, AAI-831), and reports its
@@ -48,8 +38,8 @@ With the proxy in place, once those tickets land:
    full lifetime.
 
 **Consent is unchanged.**
-- No cookie is to be set, by the tag or through the proxy, unless analytics consent is granted.
-- When consent is withdrawn, the tag is to delete both cookies straight away (AAI-98). The collector never
+- No cookie is set, by the tag or through the proxy, unless analytics consent is granted.
+- When consent is withdrawn, the tag deletes both cookies straight away (AAI-98). The collector never
   marks them `HttpOnly`, so the tag can always remove them.
 - The proxy changes where requests go, not what is collected or when.
 
@@ -120,9 +110,10 @@ Point both the script and its endpoint at your prefix:
 `referrerpolicy="strict-origin"` keeps the page's path and query out of the request for `a.js`, as the
 tag itself does for every request it makes.
 
-`data-endpoint` is to tell the tag to fetch its config and send its events through `/amnda` instead of
-the collection host, once its boot reads the attribute (AAI-831). If you install through Google Tag Manager, set the template's **Endpoint** field to
-`/amnda`.
+`data-endpoint` tells the tag to fetch its config, load its adapters and send its events through `/amnda`
+instead of the collection host. If you install through Google Tag Manager, set the template's
+**Endpoint override** (under *Advanced settings*) to `/amnda` instead: see
+[Google Tag Manager](google-tag-manager.md#sending-through-your-own-site).
 
 ## Examples
 
@@ -311,8 +302,6 @@ Azure Front Door all can. Configure it the same way:
 The proxy must run on the same CDN distribution as your website.
 
 ## Check it works
-
-Steps 2 to 6 check the full design, and cannot pass before the tickets in the availability note land.
 
 1. **The tag loads through your site:**
 

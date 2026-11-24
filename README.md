@@ -190,6 +190,23 @@ keeps the first one the browser accepts (a browser refuses a cookie on a public 
   The tag keeps no ref, in memory or in a cookie: the site calls identify on each page its user is
   logged in on. Like every event, the identify event goes only under granted analytics, never as a
   ping.
+- **The cross-domain linker, off by default.** On a site whose config lists `linker.domains` (the
+  site's DNS-verified same-owner domains, which the control plane publishes only while the site's
+  badge-gated linker setting is on, AAI-789), `src/core/linker.ts` carries a granted visitor's ids
+  from one of those domains to another, so the visitor is counted once. When the visitor clicks, or
+  middle-clicks, a link to another domain of the set, the tag adds
+  `_amnda_lnk=v1.<visitor id>.<session id>.<ms>` to its href. It decorates only under granted
+  analytics, never a link to a domain outside the set, and never one to a host under the page's own
+  listed domain, which shares its cookies. The landing page adopts the ids as the visitor's only
+  when it is on a domain of the set, the value is at most two minutes old, and the page's
+  `document.referrer` is on another domain of the set (AAI-1237), so a shared or bookmarked link
+  carries no one's identity, and a page elsewhere can't mint a link that plants its chosen ids over
+  the visitor's own. Browsers send the source page's origin cross-site by default; a source page
+  served with `Referrer-Policy: no-referrer` (or a link with `rel="noreferrer"`) sends none, and its
+  landing adopts nothing: the visitor is counted once on each domain, nothing worse. Like any id, they are written only under granted
+  consent: a decline drops them, and a later grant mints fresh ones. The parameter is taken out of
+  the address bar on every landing that has it, and no `url` or `referrer` the tag sends holds it.
+  Forms and links the browser opens from its context menu are not decorated.
 - **purchase().** `amanda('purchase', {order_id, revenue, currency, items})` (`src/core/purchase.ts`),
   on the order confirmation page, sends one `purchase` event carrying the order as its `purchase`:
   `order_id`, `revenue` (0 or more, in the currency's major unit), `currency` (ISO 4217; lower case
@@ -412,8 +429,9 @@ truth for what the tag sends and what the collector accepts:
 - `pubsub-message.json`: what the collector publishes to Pub/Sub. It holds the client's event,
   ping or withdrawal signal and the fields the collector derives (received time, region, country,
   device class). For an event it may also carry the ISO 3166-2 `subdivision`, `browser_family`,
-  `browser_major` and `os_family`; a ping's or a withdrawal signal's message leaves them off, as a
-  ping carries country-level geo only. An event's message also carries its batch's `seq` and
+  `browser_major` and `os_family`, and, for a site that turned city-level geo on (its config's
+  `geo.city`, off by default), the `city`; a ping's or a withdrawal signal's message leaves them
+  off, as a ping carries country-level geo only. An event's message also carries its batch's `seq` and
   `page_id` (when the batch had one), which the processor stores for the seq-gap loss metric; a
   ping's or a withdrawal signal's never does. It never includes the IP address.
 

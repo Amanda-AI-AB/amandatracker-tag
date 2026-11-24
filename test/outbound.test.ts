@@ -4,7 +4,7 @@ import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
 import { outboundHost, watchOutboundClicks, type ClickOutboundInput, type OutboundClickHost } from "../src/core/outbound";
 import type { SpecialClickEvent } from "../src/core/special-clicks";
 import { buildEvent } from "../src/wire/payload";
-import { fakeWindow, jsonResponse, PAGE, scriptTag } from "./fake-window";
+import { fakeWindow, jsonResponse, PAGE, scriptTag, type FakeDocument } from "./fake-window";
 import { validator } from "./wire-validator";
 
 const CONFIG = { schema_version: 1, site: "site_123", config_version: 7, domains: ["example.de", "Checkout.Example.NET."] };
@@ -67,7 +67,7 @@ function clickPage(options: { config?: object; onClickOutbound?: boolean } = {})
     for (const entry of listeners) if (entry.type === type) entry.listener(button === undefined ? { target } : { target, button });
   };
   const click = (target: unknown): void => dispatch("click", target, 0);
-  return { booted, reports, clicks, click, dispatch, listeners };
+  return { win, booted, reports, clicks, click, dispatch, listeners };
 }
 
 /** The wire event of a click_outbound, once identity and consent have made it one. */
@@ -150,6 +150,18 @@ describe("click_outbound (AAI-167)", () => {
     click(link(href));
 
     expect(clicks).toEqual([]);
+    expect(reports).toEqual([]);
+  });
+
+  it("resolves a relative link against a <base href>, as the browser follows it, and keeps the page's own host its own (AAI-1231)", async () => {
+    const { win, booted, clicks, click, reports } = clickPage();
+    await booted;
+    (win.document as unknown as FakeDocument).base = "https://partner.example.org/shop/";
+
+    click(link("offer"));
+    click(link(`${PAGE}/cart`));
+
+    expect(clicks.map((c) => c.link_host)).toEqual(["partner.example.org"]);
     expect(reports).toEqual([]);
   });
 
@@ -238,7 +250,7 @@ describe("click_outbound (AAI-167)", () => {
     const boundary = new ErrorBoundary((report) => reports.push(report), 1);
     let click: Listener = () => undefined;
     const host: OutboundClickHost = {
-      document: { addEventListener: (type, l) => (type === "click" ? (click = l) : undefined) },
+      document: { addEventListener: (type, l) => (type === "click" ? (click = l) : undefined), baseURI: PAGE_URL },
       Element: FakeElement as unknown as OutboundClickHost["Element"],
       location: { href: PAGE_URL },
     };
@@ -253,12 +265,17 @@ describe("click_outbound (AAI-167)", () => {
 
 describe("outboundHost", () => {
   it("resolves a relative href against the page, as the browser follows it", () => {
-    expect(outboundHost("../x", "https://a.example/b/c", [])).toBeUndefined();
-    expect(outboundHost("//b.example/x", "http://a.example/", [])).toBe("b.example");
+    expect(outboundHost("../x", "https://a.example/b/c", "https://a.example/b/c", [])).toBeUndefined();
+    expect(outboundHost("//b.example/x", "http://a.example/", "http://a.example/", [])).toBe("b.example");
+  });
+
+  it("resolves it against the document's base URL, and takes the page's own host from the page's URL (AAI-1231)", () => {
+    expect(outboundHost("x", "https://b.example/", "https://a.example/", [])).toBe("b.example");
+    expect(outboundHost("https://a.example/x", "https://b.example/", "https://a.example/", [])).toBeUndefined();
   });
 
   it("treats each own domain's subdomains as own, and nothing that merely ends with its name", () => {
-    expect(outboundHost("https://x.y.example.de/", "https://a.example/", ["example.de"])).toBeUndefined();
-    expect(outboundHost("https://myexample.de/", "https://a.example/", ["example.de"])).toBe("myexample.de");
+    expect(outboundHost("https://x.y.example.de/", "https://a.example/", "https://a.example/", ["example.de"])).toBeUndefined();
+    expect(outboundHost("https://myexample.de/", "https://a.example/", "https://a.example/", ["example.de"])).toBe("myexample.de");
   });
 });

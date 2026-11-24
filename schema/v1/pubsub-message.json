@@ -33,6 +33,12 @@
       "type": "string",
       "pattern": "^[A-Z]{2}-[A-Z0-9]{1,3}$"
     },
+    "city": {
+      "description": "The city derived from the client's IP address, by the geo database's English name, such as Stockholm: only for a site that turned city-level geo on (its ⚖️ setting, off by default, which the site's config publishes as geo.city), and only when one could be. Set on an event's message only: never on a ping's, which carries country-level geo only (06 §3), nor a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1144).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
     "device_class": {
       "$ref": "#/$defs/DeviceClass"
     },
@@ -53,6 +59,10 @@
       "minLength": 1,
       "maxLength": 64
     },
+    "is_bot": {
+      "description": "Set, as true, when the collector marked the payload a bot's (a known-bot User-Agent, its heuristics, or the batch's webdriver flag, 03 §5, AAI-76): stored, but excluded from aggregates and dashboards by default. Absent otherwise: the collector never sends false. Set on an event's or a ping's message only, never on a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1001). It is server-derived, so a ping's client field list (ping.json) doesn't change.",
+      "const": true
+    },
     "seq": {
       "description": "The seq of the event batch the event came in (batch.json), which the processor stores with it so that a job can count each pageload's missing batches (AAI-106). Set on an event's message only, never on a ping's, a withdrawal signal's or a tag error's, which dependentSchemas refuses (AAI-1146).",
       "type": "integer",
@@ -63,7 +73,7 @@
       "$ref": "batch.json#/$defs/PageId"
     },
     "event": {
-      "description": "The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision, browser family and major and OS family: the erasure needs none of them (AAI-1148). A tag error's message carries no geo or user-agent field at all.",
+      "description": "The client's payload: an event, an anonymous ping, a withdrawal signal (POST /v1/w, AAI-785), on which the processor erases the visitor's stored data, or a tag error (POST /v1/t, AAI-1142) that names its site, without its message (PublishedTagError). A withdrawal signal's message, like a ping's, leaves off the subdivision, city, browser family and major and OS family: the erasure needs none of them (AAI-1148). A tag error's message carries no geo or user-agent field at all.",
       "oneOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }, { "$ref": "withdrawal.json" }, { "$ref": "#/$defs/PublishedTagError" }]
     }
   },
@@ -75,6 +85,7 @@
     "properties": {
       "country": false,
       "subdivision": false,
+      "city": false,
       "device_class": false,
       "browser_family": false,
       "browser_major": false,
@@ -86,9 +97,11 @@
   },
   "dependentSchemas": {
     "subdivision": { "properties": { "event": { "$ref": "event.json" } } },
+    "city": { "properties": { "event": { "$ref": "event.json" } } },
     "browser_family": { "properties": { "event": { "$ref": "event.json" } } },
     "browser_major": { "properties": { "event": { "$ref": "event.json" } } },
     "os_family": { "properties": { "event": { "$ref": "event.json" } } },
+    "is_bot": { "properties": { "event": { "anyOf": [{ "$ref": "event.json" }, { "$ref": "ping.json" }] } } },
     "seq": { "properties": { "event": { "$ref": "event.json" } } },
     "page_id": { "properties": { "event": { "$ref": "event.json" } } }
   },

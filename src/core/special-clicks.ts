@@ -73,9 +73,17 @@ export function clickedScheme(host: SpecialClickHost, target: unknown): LinkSche
  * Element.prototype as the file's header says; undefined for any other target.
  */
 export function clickedHref(host: SpecialClickHost, target: unknown): string | undefined {
+  const link = clickedLink(host, target);
+  return link && hrefOf(host, link);
+}
+
+/** The <a> or <area> link with an href that target is or is inside, found as clickedHref finds it. */
+function clickedLink(host: SpecialClickHost, target: unknown): Element | undefined {
   if (!(target instanceof host.Element)) return undefined;
-  const link = host.Element.prototype.closest.call(target, LINK_SELECTOR);
-  if (link === null) return undefined;
+  return host.Element.prototype.closest.call(target, LINK_SELECTOR) || undefined;
+}
+
+function hrefOf(host: SpecialClickHost, link: Element): string | undefined {
   const href = host.Element.prototype.getAttribute.call(link, "href");
   return href === null ? undefined : href;
 }
@@ -108,9 +116,10 @@ export function watchSpecialClicks(win: SpecialClickHost, boundary: ErrorBoundar
 /**
  * Calls onHref with the href of each link the visitor clicks or middle-clicks, found as the file's
  * header says: the listeners are on the document in the capture phase and passive, and run inside the
- * boundary, as stage "pageview". Shared by click_special and click_outbound (outbound.ts).
+ * boundary, as stage "pageview". Shared by click_special, click_outbound (outbound.ts) and the
+ * cross-domain linker (linker.ts), which is handed the link too, to decorate it.
  */
-export function watchLinkClicks(win: SpecialClickHost, boundary: ErrorBoundary, onHref: (href: string) => void): void {
+export function watchLinkClicks(win: SpecialClickHost, boundary: ErrorBoundary, onHref: (href: string, link: Element) => void): void {
   /** A listener for clicks of button: each event type counts one button, so no click counts twice. */
   const listener =
     (button: number) =>
@@ -118,8 +127,9 @@ export function watchLinkClicks(win: SpecialClickHost, boundary: ErrorBoundary, 
       boundary.guard("pageview", () => {
         // A click event without a button, which only a page's script can dispatch, is a primary click.
         if ((event.button === undefined ? PRIMARY_BUTTON : event.button) !== button) return;
-        const href = clickedHref(win, event.target);
-        if (href !== undefined) onHref(href);
+        const link = clickedLink(win, event.target);
+        const href = link && hrefOf(win, link);
+        if (href !== undefined) onHref(href, link!);
       });
   win.document.addEventListener("click", listener(PRIMARY_BUTTON), { capture: true, passive: true });
   win.document.addEventListener("auxclick", listener(MIDDLE_BUTTON), { capture: true, passive: true });

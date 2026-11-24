@@ -21,6 +21,7 @@ import {
   gpcHonored,
   hasCmp,
   identifyEnabled,
+  linkerDomains,
   noCmpPolicy,
   outboundClicksEnabled,
   ownDomains,
@@ -46,6 +47,7 @@ import { pageExitInput, watchEngagement, type EngagementHost, type EngagementWat
 import { bootParam, currentScript, endpointFromScript, resolveEndpoint } from "./endpoint";
 import { formSubmitInput, watchForms, type FormHost, type FormSubmitInput } from "./forms";
 import { IDENTIFY_COMMAND, identifyCommand, identifyInput, type IdentifyInput } from "./identify";
+import { startLinker, type LinkerHost, type LinkerIdentity } from "./linker";
 import { followNoCmpPolicy, type NoCmpInput } from "./no-cmp";
 import { clickOutboundInput, watchOutboundClicks, type ClickOutboundInput } from "./outbound";
 import { pageviewInput, watchRoutes, type PageSource, type PageviewInput, type RouteSource } from "./pageview";
@@ -69,12 +71,16 @@ export interface TagWindow
     EngagementHost,
     FormHost,
     SpecialClickHost,
+    LinkerHost,
     ScrollHost,
     EcommerceHost,
     CmpHost,
     PrivacyHost {
   readonly document: Document;
   readonly location: Location;
+  readonly history: History;
+  /** The page's Element: the link watchers find and read links through it, and the linker decorates them. */
+  readonly Element: LinkerHost["Element"];
   readonly navigator: PageSource["navigator"] & GpcHost["navigator"] & PrivacyHost["navigator"] & TransportWindow["navigator"];
   fetch: typeof fetch;
   /** popstate, pagehide, pageshow and scroll, and the events of the consent managers the tag has adapters for. */
@@ -159,6 +165,14 @@ export interface BootOptions {
    * (no-cmp.ts). Without it, the tag follows no consent source.
    */
   readonly consent?: (config: SiteConfig) => ConsentInput & NoCmpInput;
+  /**
+   * The visitor's ids as the cross-domain linker reads and adopts them (linker.ts, AAI-218): in
+   * a.js, the feed's, made with the `consent` option's machine. With it, the booted tag adopts the
+   * ids a landing's link brought and takes them out of the address bar, before its first event,
+   * and, on a site whose config lists linker.domains, decorates the links the visitor follows to the
+   * set's other domains. Without it, the tag carries no ids across domains.
+   */
+  readonly linker?: LinkerIdentity;
   /**
    * The site and endpoint, given by the code that boots the tag rather than read from the installing
    * script tag: the npm package's init (src/npm/index.ts, AAI-222), bundled into a site's own code,
@@ -332,6 +346,9 @@ function start(win: TagWindow, tag: Tag, options: BootOptions, engagement: Engag
     if (adapter) commands[ADAPTER_COMMAND] = adapter;
     commands.consent = consentCommand(ladder);
   }
+  const { linker } = options;
+  // Before the queued commands and the first pageview, whose events are to carry the linked ids.
+  if (linker) boundary.guard("pageview", () => startLinker(win, boundary, linkerDomains(tag.config), linker, now));
   const { onIdentify } = options;
   if (onIdentify) {
     commands[IDENTIFY_COMMAND] = identifyCommand(identifyEnabled(tag.config), (ref) =>
