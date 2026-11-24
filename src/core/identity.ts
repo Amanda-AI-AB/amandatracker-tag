@@ -46,6 +46,8 @@ export const COOKIE_VERSION = "v1";
  * (pageview.ts), and the collector strips it too (AAI-987).
  */
 export const LINKER_PARAM = "_amnda_lnk";
+/** Every query parameter of the linker's, which no url or referrer the tag sends holds, and which the linker strips. */
+export const LINKER_PARAMS: readonly string[] = [LINKER_PARAM];
 
 /** The visitor cookie's lifetime: 13 months (CNIL), as 395 days, renewed on each event. */
 export const VISITOR_MAX_AGE_S = 395 * 24 * 60 * 60;

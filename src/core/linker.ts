@@ -29,7 +29,7 @@ import { TRACKED_EVENT_PATTERN } from "../wire/generated";
 import { stripParams } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
 import { trimDot } from "./config";
-import { COOKIE_VERSION, LINKER_PARAM, type Ids } from "./identity";
+import { COOKIE_VERSION, LINKER_PARAM, LINKER_PARAMS, type Ids } from "./identity";
 import { within } from "./outbound";
 import { watchLinkClicks, type SpecialClickHost } from "./special-clicks";
 
@@ -38,7 +38,6 @@ export const LINKER_MAX_AGE_MS = 2 * 60 * 1000;
 
 const UUID7 = TRACKED_EVENT_PATTERN.visitor_id.slice(1, -1);
 const VALUE = new RegExp(`^${COOKIE_VERSION}\\.(${UUID7})\\.(${UUID7})\\.(\\d{1,15})$`);
-const LINKER = [LINKER_PARAM];
 
 /** The visitor's ids as the linker reads and adopts them: the feed's, under its consent machine. */
 export interface LinkerIdentity {
@@ -98,7 +97,7 @@ export function linksAcross(href: string, pageUrl: string, domains: readonly str
 
 /** href, as written, with LINKER_PARAM set to value: added to its query, before its fragment. */
 export function decorate(href: string, value: string): string {
-  const clean = stripParams(href, LINKER);
+  const clean = stripParams(href, LINKER_PARAMS);
   const hash = clean.indexOf("#");
   const end = hash < 0 ? clean.length : hash;
   const query = clean.indexOf("?");
@@ -123,12 +122,12 @@ export function startLinker(
   if (value !== null) {
     const linked = domainsOf(new URL(href).hostname, domains).length > 0 ? linkedIds(value, now()) : undefined;
     if (linked) identity.adopt(linked);
-    win.history.replaceState(win.history.state, "", stripParams(href, LINKER));
+    win.history.replaceState(win.history.state, "", stripParams(href, LINKER_PARAMS));
   }
   if (domains.length === 0) return;
   watchLinkClicks(win, boundary, (link, element) => {
     const ids = linksAcross(link, win.location.href, domains) ? identity.ids() : undefined;
-    const rewritten = ids ? decorate(link, linkerValue(ids, now())) : stripParams(link, LINKER);
+    const rewritten = ids ? decorate(link, linkerValue(ids, now())) : stripParams(link, LINKER_PARAMS);
     if (rewritten !== link) win.Element.prototype.setAttribute.call(element, "href", rewritten);
   });
 }

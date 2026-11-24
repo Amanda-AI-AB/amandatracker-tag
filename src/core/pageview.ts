@@ -7,9 +7,7 @@ import type { Attribution } from "../wire/generated";
 import { stripFrom } from "../wire/payload";
 import { stripParams } from "./attribution";
 import type { ErrorBoundary } from "./boundary";
-import { LINKER_PARAM } from "./identity";
-
-const LINKER = [LINKER_PARAM];
+import { LINKER_PARAMS } from "./identity";
 
 /**
  * A pageview's page fields, as the tag knows them at the time. The transport (AAI-68), identity
@@ -54,9 +52,9 @@ export function pageviewInput(
     client_ts: Math.floor(now),
     // The linker's ids never leave in a URL, even where its boot couldn't take them out of the
     // address bar (linker.ts).
-    url: stripParams(page.location.href, LINKER),
+    url: stripParams(page.location.href, LINKER_PARAMS),
   };
-  if (referrer !== "") input.referrer = stripParams(referrer, LINKER);
+  if (referrer !== "") input.referrer = stripParams(referrer, LINKER_PARAMS);
   if (page.document.title !== "") input.page_title = page.document.title;
   const language = page.navigator.language;
   if (language) input.language = language;

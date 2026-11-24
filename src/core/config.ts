@@ -89,8 +89,8 @@ function checkLinker(linker: unknown): void {
  * linker.domains, read as ownDomains reads domains. None, the linker off, when it sets none.
  */
 export function linkerDomains(config: SiteConfig): string[] {
-  const linker = config.linker as { domains?: string[] } | undefined;
-  return ((linker && linker.domains) || []).map((domain) => hostnameOf(domain)!);
+  const linker = config.linker as { domains?: unknown } | undefined;
+  return hostnamesOf(linker && linker.domains);
 }
 
 /** A hostname, as the wire schema's LinkHost has it: what a browser's URL parser makes of one. */
@@ -138,8 +138,13 @@ export function trimDot(hostname: string): string {
  * dot. None when the config sets none.
  */
 export function ownDomains(config: SiteConfig): string[] {
+  return hostnamesOf(config.domains);
+}
+
+/** The hostnames of a list of domains that checkDomains has accepted; none when it is unset. */
+function hostnamesOf(domains: unknown): string[] {
   // checkDomains has accepted each, so each has a hostname.
-  return ((config.domains as string[] | undefined) || []).map((domain) => hostnameOf(domain)!);
+  return ((domains as string[] | undefined) || []).map((domain) => hostnameOf(domain)!);
 }
 
 /**
