@@ -18,8 +18,10 @@
 //
 // Adopting: on a landing whose URL holds the parameter, on a page of the set, the ids are adopted
 // (identity.ts, adopt) when the value is one this version writes, decorated within the last
-// LINKER_MAX_AGE_MS: a decorated URL that is shared, bookmarked or reloaded later carries no one's
-// identity to someone else. Adopted ids are written only when the first event goes under granted
+// LINKER_MAX_AGE_MS, and the document's referrer is a page on another domain of the set, one a link
+// would be decorated from (AAI-1237). A decorated URL that is shared, bookmarked or reloaded later
+// carries no one's identity to someone else, and a page outside the set can't mint a fresh value to
+// plant its chosen ids over the visitor's own. Adopted ids are written only when the first event goes under granted
 // consent; a decline drops them. The parameter is then taken out of the address bar
 // (history.replaceState) on every landing that holds it, the linker on or off, so that the page's
 // own links, a copied URL and the next page's referrer don't carry it on; and no url or referrer the
@@ -49,8 +51,11 @@ export interface LinkerIdentity {
 
 /** What the linker reads, listens on and rewrites: window, or a stand-in for it in tests. */
 export interface LinkerHost extends SpecialClickHost {
-  /** The document's base URL (a <base href>'s, or else the page's), which a link's href is relative to. */
-  readonly document: SpecialClickHost["document"] & { readonly baseURI: string };
+  /**
+   * The document's base URL (a <base href>'s, or else the page's), which a link's href is relative
+   * to, and its referrer, the page a landing came from ("" when none was sent).
+   */
+  readonly document: SpecialClickHost["document"] & { readonly baseURI: string; readonly referrer: string };
   readonly location: { readonly href: string };
   readonly history: Pick<History, "state" | "replaceState">;
   readonly Element: SpecialClickHost["Element"] & { readonly prototype: Pick<Element, "setAttribute"> };
@@ -78,17 +83,36 @@ function domainsOf(host: string, domains: readonly string[]): string[] {
 }
 
 /**
+ * Whether the ids go from a page on the host fromHost to one on toHost: when both hosts are on a
+ * domain of the set, and no domain of the set has both, which would share the cookies already.
+ */
+function across(fromHost: string, toHost: string, domains: readonly string[]): boolean {
+  const to = domainsOf(toHost, domains);
+  const from = domainsOf(fromHost, domains);
+  return to.length > 0 && from.length > 0 && !to.some((domain) => from.indexOf(domain) >= 0);
+}
+
+/**
  * Whether a link to href, resolved against the document's base URL baseUrl as the browser follows
- * it, carries the ids from the page on pageUrl: when it is an http: or https: URL whose host is on a
- * domain of the set, the page's host is on one too, and no domain of the set has both, which would
- * share the cookies already.
+ * it, carries the ids from the page on pageUrl: when it is an http: or https: URL, and the ids go
+ * across from the page's host to its host.
  */
 export function linksAcross(href: string, baseUrl: string, pageUrl: string, domains: readonly string[]): boolean {
   const url = followedUrl(href, baseUrl);
-  if (!url) return false;
-  const to = domainsOf(url.hostname, domains);
-  const from = domainsOf(new URL(pageUrl).hostname, domains);
-  return to.length > 0 && from.length > 0 && !to.some((domain) => from.indexOf(domain) >= 0);
+  return url !== undefined && across(new URL(pageUrl).hostname, url.hostname, domains);
+}
+
+/**
+ * Whether a landing on pageUrl may adopt the ids its URL carries (AAI-1237): when the document's
+ * referrer is an http: or https: page whose host the ids go across from to the landing's. The
+ * parameter's value is unsigned, so this is what keeps a page outside the set from minting one and
+ * planting its chosen ids over the visitor's own. No referrer (an empty one resolves to the page
+ * itself), as under a source page's Referrer-Policy: no-referrer, adopts nothing: the visitor is
+ * counted twice, nothing more.
+ */
+export function landsAcross(referrer: string, pageUrl: string, domains: readonly string[]): boolean {
+  const from = followedUrl(referrer, pageUrl);
+  return from !== undefined && across(from.hostname, new URL(pageUrl).hostname, domains);
 }
 
 /** href, as written, with LINKER_PARAM set to value: added to its query, before its fragment. */
@@ -116,7 +140,7 @@ export function startLinker(
   const href = win.location.href;
   const value = new URL(href).searchParams.get(LINKER_PARAM);
   if (value !== null) {
-    const linked = domainsOf(new URL(href).hostname, domains).length > 0 ? linkedIds(value, now()) : undefined;
+    const linked = landsAcross(win.document.referrer, href, domains) ? linkedIds(value, now()) : undefined;
     if (linked) identity.adopt(linked);
     win.history.replaceState(win.history.state, "", stripParams(href, LINKER_PARAMS));
   }

@@ -4,8 +4,8 @@
 // site's linker.domains to another carries their ids, and both pages' events carry the same visitor
 // and session; a link is never decorated for a visitor who hasn't granted, to a domain outside the
 // set, or on a site whose config lists no linker.domains. A landing adopts only a fresh value, on a
-// page of the set, and only under granted consent; the parameter never reaches a url or referrer the
-// tag sends.
+// page of the set, from a referrer on another domain of the set (AAI-1237), and only under granted
+// consent; the parameter never reaches a url or referrer the tag sends.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "../src/core/boot";
 import { ErrorBoundary, type ErrorReport } from "../src/core/boundary";
@@ -13,7 +13,7 @@ import { ConfigError, linkerDomains, parseConfig } from "../src/core/config";
 import { DEFAULT_ENDPOINT } from "../src/core/endpoint";
 import { createFeed } from "../src/core/feed";
 import { LINKER_PARAM, parseSession, parseVisitor, readCookie, SESSION_COOKIE, VISITOR_COOKIE } from "../src/core/identity";
-import { decorate, LINKER_MAX_AGE_MS, linkedIds, linkerValue, linksAcross } from "../src/core/linker";
+import { decorate, landsAcross, LINKER_MAX_AGE_MS, linkedIds, linkerValue, linksAcross } from "../src/core/linker";
 import type { AmandaFunction } from "../src/core/queue";
 import { defaultTarget } from "../src/core/telemetry";
 import { CookieJar } from "./cookie-jar";
@@ -29,6 +29,8 @@ const VISITOR = "01934f6c-8d2a-7b3c-8d4e-5f6a7b8c9d01";
 const SESSION = "01934f6c-8d2a-7b3c-ad4e-5f6a7b8c9d02";
 const GRANTED = ["consent", { analytics: "granted", ads: "granted" }];
 const DENIED = ["consent", { analytics: "denied", ads: "denied" }];
+/** A landing's referrer from shop.example.com, another domain of the set: its origin, as browsers send it cross-site. */
+const FROM_SET: PageOptions = { referrer: "https://shop.example.com/" };
 const validateBatch = validator("batch.json");
 
 beforeEach(() => {
@@ -60,11 +62,18 @@ class FakeLink {
   }
 }
 
+interface PageOptions {
+  /** The config's linker section, none when null; by default, one listing SET. */
+  readonly linker?: unknown;
+  /** The document's referrer; by default, a search engine's, outside the set. */
+  readonly referrer?: string;
+}
+
 /**
  * The site's page on href, with the tag booted on it as a.js boots it, the site's config carrying
- * linker (no linker section when null), and the site's queued calls.
+ * the options' linker section, its document the options' referrer, and the site's queued calls.
  */
-function page(href: string, queued: unknown[][], linker: unknown = { domains: SET }) {
+function page(href: string, queued: unknown[][], { linker = { domains: SET }, referrer }: PageOptions = {}) {
   const config = {
     schema_version: 1,
     site: "site_123",
@@ -74,6 +83,7 @@ function page(href: string, queued: unknown[][], linker: unknown = { domains: SE
   };
   const jar = new CookieJar(new URL(href).hostname, () => Date.now());
   const win = fakeWindow(scriptTag(SNIPPET), jsonResponse(null, 404), href);
+  if (referrer !== undefined) (win.document as unknown as FakeDocument).referrer = referrer;
   win.fetchMock.mockImplementation(async (url: string) => (url === CONFIG_URL ? jsonResponse(config) : jsonResponse(null, 204)));
   const listeners: { type: string; listener: (event: { target: unknown; button?: number }) => void }[] = [];
   Object.assign(win.document, {
@@ -146,8 +156,8 @@ function page(href: string, queued: unknown[][], linker: unknown = { domains: SE
 }
 
 /** Boots a page and lets its first batch go. */
-async function booted(href: string, queued: unknown[][], linker: unknown = { domains: SET }) {
-  const p = page(href, queued, linker);
+async function booted(href: string, queued: unknown[][], options: PageOptions = {}) {
+  const p = page(href, queued, options);
   await p.booted;
   await vi.advanceTimersByTimeAsync(0);
   return p;
@@ -163,7 +173,7 @@ describe("the cross-domain linker (AAI-218)", () => {
     expect(decorated).toBe(`https://www.example.de/kasse?step=2&${LINKER_PARAM}=v1.${ids.visitorId}.${ids.sessionId}.${START}#pay`);
 
     vi.setSystemTime(START + 5_000);
-    const to = await booted(new URL(decorated).href, [GRANTED]);
+    const to = await booted(new URL(decorated).href, [GRANTED], FROM_SET);
 
     const [event] = to.events();
     // The wire's url drops the fragment, as every event's does.
@@ -224,7 +234,7 @@ describe("the cross-domain linker (AAI-218)", () => {
     vi.setSystemTime(START + 30_000);
     const href = from.follow(decorated);
     expect(href).toBe("https://www.example.de/?x=1#top");
-    const to = await booted(href, [GRANTED]);
+    const to = await booted(href, [GRANTED], FROM_SET);
     expect(to.ids().visitorId).not.toBe(withdrawn.visitorId);
     expect([...from.reports, ...to.reports]).toEqual([]);
   });
@@ -256,10 +266,10 @@ describe("the cross-domain linker (AAI-218)", () => {
     ["linker.domains empty, as the publisher sends while the linker is off", { domains: [] }],
     ["a linker section without domains", {}],
   ])("is off with %s: no link is decorated, and a landing's ids are not adopted", async (_, linker) => {
-    const from = await booted("https://shop.example.com/", [GRANTED], linker);
+    const from = await booted("https://shop.example.com/", [GRANTED], { linker });
     expect(from.follow("https://www.example.de/")).toBe("https://www.example.de/");
 
-    const to = await booted(`https://www.example.de/?a=1&${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [GRANTED], linker);
+    const to = await booted(`https://www.example.de/?a=1&${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [GRANTED], { ...FROM_SET, linker });
 
     const [event] = to.events();
     expect(event!.visitor_id).not.toBe(VISITOR);
@@ -272,7 +282,7 @@ describe("the cross-domain linker (AAI-218)", () => {
     const from = await booted("https://staging.example.net/", [GRANTED]);
     expect(from.follow("https://example.de/")).toBe("https://example.de/");
 
-    const to = await booted(`https://staging.example.net/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [GRANTED]);
+    const to = await booted(`https://staging.example.net/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [GRANTED], FROM_SET);
     expect(to.events()[0]!.visitor_id).not.toBe(VISITOR);
     expect(to.win.location.href).toBe("https://staging.example.net/");
   });
@@ -284,7 +294,7 @@ describe("the cross-domain linker (AAI-218)", () => {
     ["without a session", `v1.${VISITOR}.${START}`],
     ["holding no UUIDv7", `v1.not-a-uuid.${SESSION}.${START}`],
   ])("does not adopt a value %s, and takes it out of the URL all the same", async (_, value) => {
-    const to = await booted(`https://example.de/p?${LINKER_PARAM}=${encodeURIComponent(value)}`, [GRANTED]);
+    const to = await booted(`https://example.de/p?${LINKER_PARAM}=${encodeURIComponent(value)}`, [GRANTED], FROM_SET);
 
     const [event] = to.events();
     expect(event!.visitor_id).not.toBe(VISITOR);
@@ -293,13 +303,13 @@ describe("the cross-domain linker (AAI-218)", () => {
   });
 
   it("adopts a fresh value two minutes old, the limit", async () => {
-    const to = await booted(`https://example.de/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START - LINKER_MAX_AGE_MS}`, [GRANTED]);
+    const to = await booted(`https://example.de/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START - LINKER_MAX_AGE_MS}`, [GRANTED], FROM_SET);
 
     expect(to.events()[0]).toMatchObject({ visitor_id: VISITOR, session_id: SESSION });
   });
 
   it("holds the landing's ids while consent is undecided, and adopts them on the grant", async () => {
-    const to = await booted(`https://example.de/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, []);
+    const to = await booted(`https://example.de/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [], FROM_SET);
     expect(to.jar.cookie).toBe("");
     expect(to.win.location.href).toBe("https://example.de/");
 
@@ -312,7 +322,7 @@ describe("the cross-domain linker (AAI-218)", () => {
   });
 
   it("drops the landing's ids when the visitor declines: a later grant mints fresh ones", async () => {
-    const to = await booted(`https://example.de/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [DENIED]);
+    const to = await booted(`https://example.de/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [DENIED], FROM_SET);
     expect(to.jar.cookie).toBe("");
 
     (to.win.amanda as AmandaFunction)(...GRANTED);
@@ -326,13 +336,37 @@ describe("the cross-domain linker (AAI-218)", () => {
   });
 
   it("takes the place of the landing domain's own earlier ids", async () => {
-    const p = page(`https://example.de/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [GRANTED]);
+    const p = page(`https://example.de/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [GRANTED], FROM_SET);
     const earlier = "01934f6c-0000-7000-8000-000000000001";
     p.jar.cookie = `${VISITOR_COOKIE}=v1.${earlier}; Max-Age=1000; Domain=.example.de; Path=/; SameSite=Lax; Secure`;
     await p.booted;
     await vi.advanceTimersByTimeAsync(0);
 
     expect(p.events()[0]).toMatchObject({ visitor_id: VISITOR });
+  });
+
+  it.each([
+    ["a page outside the set, which could have minted the value (AAI-1237)", "https://search.example/"],
+    ["no referrer, as under a source page's Referrer-Policy: no-referrer", ""],
+    ["a page under the landing's own listed domain, which shares its cookies", "https://www.example.de/"],
+    ["the landing page itself", "https://example.de/"],
+    ["a page of another scheme", "android-app://com.example.mail/"],
+  ])("adopts nothing from a landing whose referrer is %s, and takes the parameter out all the same", async (_, referrer) => {
+    const to = await booted(`https://example.de/p?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [GRANTED], { referrer });
+
+    const [event] = to.events();
+    expect(event!.visitor_id).not.toBe(VISITOR);
+    expect(event!.url).toBe("https://example.de/p");
+    expect(to.win.location.href).toBe("https://example.de/p");
+    expect(to.reports).toEqual([]);
+  });
+
+  it("adopts from a referrer on a subdomain of another domain of the set, with a path", async () => {
+    const to = await booted(`https://example.de/?${LINKER_PARAM}=v1.${VISITOR}.${SESSION}.${START}`, [GRANTED], {
+      referrer: "https://cdn.shop.example.com/cart?x=1",
+    });
+
+    expect(to.events()[0]).toMatchObject({ visitor_id: VISITOR, session_id: SESSION });
   });
 
   it("leaves the parameter out of a referrer the tag sends", async () => {
@@ -379,6 +413,19 @@ describe("linksAcross", () => {
     expect(linksAcross("kasse", page, page, SET)).toBe(false);
     // A base on another domain of the set doesn't make the page's own links cross.
     expect(linksAcross("https://shop.example.com/cart", "https://www.example.de/", page, SET)).toBe(false);
+  });
+});
+
+describe("landsAcross", () => {
+  it("is true only for a referrer on another domain of the set than the landing's (AAI-1237)", () => {
+    expect(landsAcross("https://shop.example.com/", "https://www.example.de/p", SET)).toBe(true);
+    expect(landsAcross("https://example.de/", "https://example.com/", SET)).toBe(true);
+    expect(landsAcross("https://search.example/", "https://www.example.de/p", SET)).toBe(false);
+    expect(landsAcross("https://www.example.de/", "https://example.de/", SET)).toBe(false);
+    expect(landsAcross("https://shop.example.com/", "https://staging.example.net/", SET)).toBe(false);
+    expect(landsAcross("", "https://www.example.de/p", SET)).toBe(false);
+    expect(landsAcross("https://exa mple.com/", "https://www.example.de/p", SET)).toBe(false);
+    expect(landsAcross("https://shop.example.com/", "https://www.example.de/p", [])).toBe(false);
   });
 });
 

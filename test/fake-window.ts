@@ -9,6 +9,7 @@ export const PAGE = "https://shop.example.com";
 /**
  * A Document whose prototype's currentScript getter returns the script it was made with, and whose
  * baseURI is base, a <base href>'s, when a test sets it, or else the page's URL, as a browser's is.
+ * Its referrer is a search engine's unless a test sets another.
  */
 export class FakeDocument {
   base: string | undefined;
@@ -17,7 +18,7 @@ export class FakeDocument {
   constructor(
     private readonly script: Element | null,
     readonly title = "Products",
-    readonly referrer = "https://search.example/",
+    public referrer = "https://search.example/",
   ) {}
 
   get baseURI(): string {

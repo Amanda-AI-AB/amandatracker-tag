@@ -198,8 +198,12 @@ keeps the first one the browser accepts (a browser refuses a cookie on a public 
   `_amnda_lnk=v1.<visitor id>.<session id>.<ms>` to its href. It decorates only under granted
   analytics, never a link to a domain outside the set, and never one to a host under the page's own
   listed domain, which shares its cookies. The landing page adopts the ids as the visitor's only
-  when it is on a domain of the set and the value is at most two minutes old, so a shared or
-  bookmarked link carries no one's identity. Like any id, they are written only under granted
+  when it is on a domain of the set, the value is at most two minutes old, and the page's
+  `document.referrer` is on another domain of the set (AAI-1237), so a shared or bookmarked link
+  carries no one's identity, and a page elsewhere can't mint a link that plants its chosen ids over
+  the visitor's own. Browsers send the source page's origin cross-site by default; a source page
+  served with `Referrer-Policy: no-referrer` (or a link with `rel="noreferrer"`) sends none, and its
+  landing adopts nothing: the visitor is counted once on each domain, nothing worse. Like any id, they are written only under granted
   consent: a decline drops them, and a later grant mints fresh ones. The parameter is taken out of
   the address bar on every landing that has it, and no `url` or `referrer` the tag sends holds it.
   Forms and links the browser opens from its context menu are not decorated.
